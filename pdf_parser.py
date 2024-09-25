@@ -85,11 +85,23 @@ def parse_pdf(path, parser_type: ParserType, **kwargs) -> List[Dict]:
 
             # Output text
             res_txt = messages[0].content[0].text.value
-            print(res_txt)
+            pages = res_txt.text.split("<page break>")
+            for page_no, page in enumerate(pages, start=1):
+                if page.strip() == "":
+                    continue
+                docs.append(
+                    {
+                        "metadata": {
+                            "title": os.path.basename(path),
+                            "page": page_no,
+                        },
+                        "content": page,
+                    }
+                )
 
     return docs
 
 
 if __name__ == "__main__":
-    path = "test_example_3.pdf"
-    parse_pdf(path, ParserType.LLM_PARSE, model="gpt-4o")
+    path = "test_example_3.png"
+    docs = parse_pdf(path, ParserType.LLM_PARSE)
