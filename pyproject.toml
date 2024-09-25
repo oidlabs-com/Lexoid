@@ -12,6 +12,9 @@ pymupdf4llm = "^0.0.17"
 openai = "^1.47.0"
 
 
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.5"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
