@@ -10,6 +10,7 @@ python = "^3.10"
 google-generativeai = "^0.8.1"
 pymupdf4llm = "^0.0.17"
 openai = "^1.47.0"
+pikepdf = "^9.3.0"
 
 
 [tool.poetry.group.dev.dependencies]
