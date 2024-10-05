@@ -16,10 +16,14 @@ class ParserType(Enum):
     STATIC_PARSE = "static-parse"
 
 
-def parse_pdf(path, parser_type: ParserType, **kwargs) -> List[Dict]:
+def parse_pdf(
+    path, parser_type: ParserType, raw: bool = False, **kwargs
+) -> List[Dict] | str:
     docs = []
     if parser_type == ParserType.STATIC_PARSE:
         if "framework" not in kwargs or kwargs["framework"] == "pymupdf":
+            if raw:
+                return pymupdf4llm.to_markdown(path)
             chunks = pymupdf4llm.to_markdown(path, page_chunks=True)
             for chunk in chunks:
                 metadata = chunk["metadata"]
@@ -32,12 +36,16 @@ def parse_pdf(path, parser_type: ParserType, **kwargs) -> List[Dict]:
                         "content": chunk["text"],
                     }
                 )
-    elif parser_type == ParserType.LLM_PARSE:
+    else:  # parser_type == ParserType.LLM_PARSE:
         if "model" not in kwargs or kwargs["model"] == "gemini-1.5-flash":
             model = genai.GenerativeModel("gemini-1.5-flash")
             file = genai.upload_file(path)
             response = model.generate_content([PDF_PARSER_PROMPT, file])
+            raw_text = ""
             for part in response.parts:
+                raw_text += part.text
+                if raw:
+                    continue
                 pages = part.text.split("<page break>")
                 for page_no, page in enumerate(pages, start=1):
                     if page.strip() == "":
@@ -51,6 +59,8 @@ def parse_pdf(path, parser_type: ParserType, **kwargs) -> List[Dict]:
                             "content": page,
                         }
                     )
+            if raw:
+                return raw_text
         elif kwargs["model"].startswith("gpt"):
             client = OpenAI()
             pdf_assistant = client.beta.assistants.create(
@@ -85,6 +95,8 @@ def parse_pdf(path, parser_type: ParserType, **kwargs) -> List[Dict]:
 
             # Output text
             res_txt = messages[0].content[0].text.value
+            if raw:
+                return res_txt
             pages = res_txt.text.split("<page break>")
             for page_no, page in enumerate(pages, start=1):
                 if page.strip() == "":
