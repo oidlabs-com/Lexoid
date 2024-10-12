@@ -1,22 +1,23 @@
 import os
 import tempfile
 import threading
-from enum import Enum
-from typing import Dict, List
 import pymupdf4llm
 import google.generativeai as genai
+import pikepdf
+import pdfplumber
+import pandas as pd
+from enum import Enum
+from typing import Dict, List
 from openai import OpenAI
 from openai.types.beta.threads.message_create_params import (
     Attachment,
     AttachmentToolFileSearch,
 )
-from prompt_templates import PDF_PARSER_PROMPT
-import pikepdf
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
-import pdfplumber
-import pandas as pd
 from pdfplumber.utils import extract_text, get_bbox_overlap, obj_to_bbox
+
+from pdf_parser.prompt_templates import PDF_PARSER_PROMPT
 
 
 class ParserType(Enum):
