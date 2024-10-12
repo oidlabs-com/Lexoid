@@ -12,6 +12,11 @@ from openai.types.beta.threads.message_create_params import (
 )
 from prompt_templates import PDF_PARSER_PROMPT
 import pikepdf
+from pdfminer.high_level import extract_pages
+from pdfminer.layout import LTTextContainer
+import pdfplumber
+import pandas as pd
+from pdfplumber.utils import extract_text, get_bbox_overlap, obj_to_bbox
 
 
 class ParserType(Enum):
@@ -29,6 +34,33 @@ def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
             with pikepdf.new() as new_pdf:
                 new_pdf.pages.extend(pdf.pages[start:end])
                 new_pdf.save(output_path)
+
+
+def process_pdf_with_pdfplumber(path: str) -> List[str]:
+    with pdfplumber.open(path) as pdf:
+        all_text = []
+
+        for page in pdf.pages:
+            filtered_page = page
+            chars = filtered_page.chars
+
+            for table in page.find_tables():
+                first_table_char = page.crop(table.bbox).chars[0]
+                filtered_page = filtered_page.filter(
+                    lambda obj: get_bbox_overlap(obj_to_bbox(obj), table.bbox) is None
+                )
+                chars = filtered_page.chars
+
+                df = pd.DataFrame(table.extract())
+                df.columns = df.iloc[0]
+                markdown = df.drop(0).to_markdown(index=False)
+
+                chars.append(first_table_char | {"text": markdown})
+
+            page_text = extract_text(chars, layout=True)
+            all_text.append(page_text)
+
+    return all_text
 
 
 def parse_pdf_chunk(
@@ -53,6 +85,43 @@ def parse_pdf_chunk(
                         "content": chunk["text"],
                     }
                 )
+        elif kwargs["framework"] == "pdfminer":
+            pages = list(extract_pages(path))
+            for page_num, page_layout in enumerate(pages, start=1):
+                page_text = ""
+                for element in page_layout:
+                    if isinstance(element, LTTextContainer):
+                        page_text += element.get_text()
+
+                if raw:
+                    docs.append(page_text)
+                else:
+                    docs.append(
+                        {
+                            "metadata": {
+                                "title": os.path.basename(path),
+                                "page": page_num,
+                            },
+                            "content": page_text,
+                        }
+                    )
+            if raw:
+                return "\n".join(docs)
+        elif kwargs["framework"] == "pdfplumber":
+            page_texts = process_pdf_with_pdfplumber(path)
+            if raw:
+                return "<page break>".join(page_texts)
+            else:
+                for page_num, page_text in enumerate(page_texts, start=1):
+                    docs.append(
+                        {
+                            "metadata": {
+                                "title": os.path.basename(path),
+                                "page": page_num,
+                            },
+                            "content": page_text,
+                        }
+                    )
     else:  # parser_type == ParserType.LLM_PARSE:
         if "model" not in kwargs:
             kwargs["model"] = "gemini-1.5-flash"
@@ -175,5 +244,9 @@ def parse_pdf(
 
 if __name__ == "__main__":
     path = "table.pdf"
-    docs = parse_pdf(path, ParserType.LLM_PARSE, pages_per_split=5)
+    docs = parse_pdf(
+        path, ParserType.STATIC_PARSE, pages_per_split=5, framework="pdfplumber"
+    )
     print(f"Parsed {len(docs)} chunks from the PDF.")
+    print("Sample of parsed content:")
+    print(docs[0]["content"][:500] if docs else "No content parsed.")
