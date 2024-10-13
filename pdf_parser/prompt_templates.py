@@ -19,7 +19,7 @@ You are a highly capable document parsing agent. Your primary task is to analyze
 
 - Maintain the hierarchy and styling of headings and subheadings using appropriate HTML tags or Markdown.
 
-- For images, describe their content and position, and use placeholder `<img>` tags to represent their location in the document. Capture the image meaning in the alt attribute. Don't specify src if not known
+- For images, if there is text within the image, try to recreate the structure within the image. If there is not text, describe the image content and position, and use placeholder `<img>` tags to represent their location in the document. Capture the image meaning in the alt attribute. Don't specify src if not known.
 
 - For emojis, output the correct emoji character rather than the image.
 
