@@ -71,6 +71,11 @@ def parse_pdf_chunk(
 ) -> List[Dict] | str:
     assert os.path.exists(path)
 
+    if kwargs["split"]:
+        start = int(path.split("_")[1])
+    else:
+        start = 0
+
     docs = []
     if parser_type == ParserType.STATIC_PARSE:
         if "framework" not in kwargs or kwargs["framework"] == "pymupdf":
@@ -82,8 +87,8 @@ def parse_pdf_chunk(
                 docs.append(
                     {
                         "metadata": {
-                            "title": os.path.basename(path),
-                            "page": metadata["page"],
+                            "title": kwargs["title"],
+                            "page": start + metadata["page"],
                         },
                         "content": chunk["text"],
                     }
@@ -102,8 +107,8 @@ def parse_pdf_chunk(
                     docs.append(
                         {
                             "metadata": {
-                                "title": os.path.basename(path),
-                                "page": page_num,
+                                "title": kwargs["title"],
+                                "page": start + page_num,
                             },
                             "content": page_text,
                         }
@@ -119,8 +124,8 @@ def parse_pdf_chunk(
                     docs.append(
                         {
                             "metadata": {
-                                "title": os.path.basename(path),
-                                "page": page_num,
+                                "title": kwargs["title"],
+                                "page": start + page_num,
                             },
                             "content": page_text,
                         }
@@ -144,8 +149,8 @@ def parse_pdf_chunk(
                     docs.append(
                         {
                             "metadata": {
-                                "title": os.path.basename(path),
-                                "page": page_no,
+                                "title": kwargs["title"],
+                                "page": start + page_no,
                             },
                             "content": page,
                         }
@@ -195,8 +200,8 @@ def parse_pdf_chunk(
                 docs.append(
                     {
                         "metadata": {
-                            "title": os.path.basename(path),
-                            "page": page_no,
+                            "title": kwargs["title"],
+                            "page": start + page_no,
                         },
                         "content": page,
                     }
@@ -212,8 +217,12 @@ def parse_pdf(
     pages_per_split: int = 4,
     **kwargs,
 ) -> List[Dict] | str:
+    kwargs["title"] = os.path.basename(path)
+
     if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
         return parse_pdf_chunk(path, parser_type, raw, **kwargs)
+
+    kwargs["split"] = True
 
     with tempfile.TemporaryDirectory() as temp_dir:
         split_pdf(path, temp_dir, pages_per_split)
