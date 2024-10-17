@@ -1,6 +1,6 @@
 import os
 import tempfile
-import threading
+import multiprocessing
 import pymupdf4llm
 import google.generativeai as genai
 import pikepdf
@@ -72,7 +72,7 @@ def parse_pdf_chunk(
     assert os.path.exists(path)
 
     if kwargs["split"]:
-        start = int(path.split("_")[1])
+        start = int(os.path.basename(path).split("_")[1])
     else:
         start = 0
 
@@ -210,16 +210,30 @@ def parse_pdf_chunk(
     return docs
 
 
+def process_chunk(args):
+    file_paths, parser_type, raw, kwargs = args
+    local_docs = []
+    for file_path in file_paths:
+        result = parse_pdf_chunk(file_path, parser_type, raw, **kwargs)
+        if isinstance(result, list):
+            local_docs.extend(result)
+        else:
+            local_docs.append(result)
+    return local_docs
+
+
 def parse_pdf(
     path,
     parser_type: ParserType,
     raw: bool = False,
     pages_per_split: int = 4,
+    max_processes: int = 4,
     **kwargs,
 ) -> List[Dict] | str:
     kwargs["title"] = os.path.basename(path)
 
     if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
+        kwargs["split"] = False
         return parse_pdf_chunk(path, parser_type, raw, **kwargs)
 
     kwargs["split"] = True
@@ -228,27 +242,29 @@ def parse_pdf(
         split_pdf(path, temp_dir, pages_per_split)
         split_files = [os.path.join(temp_dir, f) for f in sorted(os.listdir(temp_dir))]
 
-        all_docs = []
-        threads = []
+        chunk_size = max(1, len(split_files) // max_processes)
+        file_chunks = [
+            split_files[i : i + chunk_size]
+            for i in range(0, len(split_files), chunk_size)
+        ]
 
-        def thread_parse(file_path, thread_idx):
-            result = parse_pdf_chunk(file_path, parser_type, raw, **kwargs)
-            all_docs.extend(
-                [(res, thread_idx) for res in result]
-                if isinstance(result, list)
-                else [(result, thread_idx)]
-            )
+        # Prepare arguments for each process
+        process_args = [(chunk, parser_type, raw, kwargs) for chunk in file_chunks]
 
-        for idx, split_file in enumerate(split_files):
-            thread = threading.Thread(target=thread_parse, args=(split_file, idx))
-            threads.append(thread)
-            thread.start()
+        if max_processes == 1 or len(file_chunks) == 1:
+            # Process sequentially if max_processes is 1 or there's only one chunk
+            all_docs = [
+                process_chunk((chunk, parser_type, raw, kwargs))
+                for chunk in file_chunks
+            ]
+        else:
+            # Use multiprocessing for multiple chunks
+            with multiprocessing.Pool(processes=max_processes) as pool:
+                all_docs = pool.map(process_chunk, process_args)
 
-        for thread in threads:
-            thread.join()
+        # Flatten the list of lists
+        all_docs = [item for sublist in all_docs for item in sublist]
 
-    all_docs = sorted(all_docs, key=lambda x: x[1])
-    all_docs = [doc for doc, _ in all_docs]
     if raw:
         return "\n".join(all_docs)
     return all_docs
