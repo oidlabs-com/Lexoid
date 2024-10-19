@@ -1,14 +1,16 @@
 import os
 import tempfile
-import multiprocessing
+import base64
+import requests
+import mimetypes
 import pymupdf4llm
-import google.generativeai as genai
 import pikepdf
 import pdfplumber
 import pandas as pd
 from enum import Enum
 from typing import Dict, List
 from openai import OpenAI
+from concurrent.futures import ThreadPoolExecutor
 from openai.types.beta.threads.message_create_params import (
     Attachment,
     AttachmentToolFileSearch,
@@ -134,29 +136,63 @@ def parse_pdf_chunk(
         if "model" not in kwargs:
             kwargs["model"] = "gemini-1.5-flash"
         if kwargs["model"].startswith("gemini"):
-            model = genai.GenerativeModel(kwargs["model"])
-            file = genai.upload_file(path)
-            response = model.generate_content([PDF_PARSER_PROMPT, file])
-            raw_text = ""
-            for part in response.parts:
-                raw_text += part.text
-                if raw:
-                    continue
-                pages = part.text.split("<page break>")
-                for page_no, page in enumerate(pages, start=1):
-                    if page.strip() == "":
-                        continue
-                    docs.append(
-                        {
-                            "metadata": {
-                                "title": kwargs["title"],
-                                "page": start + page_no,
+            api_key = os.environ.get("GOOGLE_API_KEY")
+            if not api_key:
+                raise ValueError("GOOGLE_API_KEY environment variable is not set")
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{kwargs['model']}:generateContent?key={api_key}"
+
+            with open(path, "rb") as file:
+                file_content = file.read()
+
+            mime_type, _ = mimetypes.guess_type(path)
+            base64_file = base64.b64encode(file_content).decode("utf-8")
+
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": PDF_PARSER_PROMPT},
+                            {
+                                "inline_data": {
+                                    "mime_type": mime_type,
+                                    "data": base64_file,
+                                }
                             },
-                            "content": page,
-                        }
-                    )
+                        ]
+                    }
+                ]
+            }
+
+            headers = {"Content-Type": "application/json"}
+
+            response = requests.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+
+            result = response.json()
+            raw_text = ""
+            for candidate in result.get("candidates", []):
+                for part in candidate.get("content", {}).get("parts", []):
+                    if "text" in part:
+                        raw_text += part["text"]
+
             if raw:
                 return raw_text
+
+            pages = raw_text.split("<page break>")
+            for page_no, page in enumerate(pages, start=1):
+                if page.strip() == "":
+                    continue
+                docs.append(
+                    {
+                        "metadata": {
+                            "title": kwargs["title"],
+                            "page": start + page_no,
+                        },
+                        "content": page,
+                    }
+                )
+
         elif kwargs["model"].startswith("gpt"):
             client = OpenAI()
             pdf_assistant = client.beta.assistants.create(
@@ -227,7 +263,7 @@ def parse_pdf(
     parser_type: ParserType,
     raw: bool = False,
     pages_per_split: int = 4,
-    max_processes: int = 4,
+    max_threads: int = 4,
     **kwargs,
 ) -> List[Dict] | str:
     kwargs["title"] = os.path.basename(path)
@@ -242,25 +278,22 @@ def parse_pdf(
         split_pdf(path, temp_dir, pages_per_split)
         split_files = [os.path.join(temp_dir, f) for f in sorted(os.listdir(temp_dir))]
 
-        chunk_size = max(1, len(split_files) // max_processes)
+        chunk_size = max(1, len(split_files) // max_threads)
         file_chunks = [
             split_files[i : i + chunk_size]
             for i in range(0, len(split_files), chunk_size)
         ]
 
-        # Prepare arguments for each process
         process_args = [(chunk, parser_type, raw, kwargs) for chunk in file_chunks]
 
-        if max_processes == 1 or len(file_chunks) == 1:
-            # Process sequentially if max_processes is 1 or there's only one chunk
+        if max_threads == 1 or len(file_chunks) == 1:
             all_docs = [
                 process_chunk((chunk, parser_type, raw, kwargs))
                 for chunk in file_chunks
             ]
         else:
-            # Use multiprocessing for multiple chunks
-            with multiprocessing.Pool(processes=max_processes) as pool:
-                all_docs = pool.map(process_chunk, process_args)
+            with ThreadPoolExecutor(max_workers=max_threads) as executor:
+                all_docs = list(executor.map(process_chunk, process_args))
 
         # Flatten the list of lists
         all_docs = [item for sublist in all_docs for item in sublist]
