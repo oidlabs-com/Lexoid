@@ -93,7 +93,12 @@ def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     client.beta.threads.messages.create(
         thread_id=thread.id,
         role="user",
-        attachments=[{"type": "file_search", "file_id": file.id}],
+        attachments=[
+            {
+                "file_id": file.id,
+                "tools": [{"type": "file_search"}],
+            }
+        ],
         content=PARSER_PROMPT,
     )
     run = client.beta.threads.runs.create_and_poll(
