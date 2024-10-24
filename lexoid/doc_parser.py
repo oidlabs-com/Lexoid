@@ -17,14 +17,39 @@ class ParserType(Enum):
 def parse_pdf_chunk(
     path: str, parser_type: ParserType, raw: bool, **kwargs
 ) -> List[Dict] | str:
+    """
+    Parses a PDF document chunk using the specified parser type.
+
+    Args:
+        path (str): The file path of the PDF document.
+        parser_type (ParserType): The type of parser to use (LLM_PARSE or STATIC_PARSE).
+        raw (bool): Whether to return raw text or structured data.
+        **kwargs: Additional arguments for the parser.
+
+    Returns:
+        List[Dict] | str: Parsed document data as a list of dictionaries or raw text.
+    """
     if parser_type == ParserType.STATIC_PARSE:
         return parse_static_doc(path, raw, **kwargs)
     else:
         return parse_llm_doc(path, raw, **kwargs)
 
 
-def process_chunk(args):
-    file_paths, parser_type, raw, kwargs = args
+def process_chunk(
+    file_paths: List[str], parser_type: ParserType, raw: bool, kwargs: Dict
+) -> List[Dict | str]:
+    """
+    Processes a list of PDF file paths and parses each using the specified parser type.
+
+    Args:
+        file_paths (list): List of file paths to PDF documents.
+        parser_type (ParserType): The type of parser to use.
+        raw (bool): Whether to return raw text or structured data.
+        kwargs (dict): Additional arguments for the parser.
+
+    Returns:
+        List[Dict | str]: List of parsed documents with raw text or metadata.
+    """
     local_docs = []
     for file_path in file_paths:
         result = parse_pdf_chunk(file_path, parser_type, raw, **kwargs)
@@ -36,13 +61,27 @@ def process_chunk(args):
 
 
 def parse_doc(
-    path,
+    path: str,
     parser_type: ParserType,
     raw: bool = False,
     pages_per_split: int = 4,
     max_threads: int = 4,
     **kwargs
 ) -> List[Dict] | str:
+    """
+    Parses a PDF document, optionally splitting it into chunks and using multithreading.
+
+    Args:
+        path (str): The file path of the PDF document.
+        parser_type (ParserType): The type of parser to use (LLM_PARSE or STATIC_PARSE).
+        raw (bool, optional): Whether to return raw text or structured data. Defaults to False.
+        pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
+        max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
+        **kwargs: Additional arguments for the parser.
+
+    Returns:
+        List[Dict] | str: Parsed document data as a list of dictionaries or raw text.
+    """
     kwargs["title"] = os.path.basename(path)
 
     if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
@@ -65,12 +104,11 @@ def parse_doc(
 
         if max_threads == 1 or len(file_chunks) == 1:
             all_docs = [
-                process_chunk((chunk, parser_type, raw, kwargs))
-                for chunk in file_chunks
+                process_chunk(chunk, parser_type, raw, kwargs) for chunk in file_chunks
             ]
         else:
             with ThreadPoolExecutor(max_workers=max_threads) as executor:
-                all_docs = list(executor.map(process_chunk, process_args))
+                all_docs = list(executor.map(process_chunk, *zip(*process_args)))
 
         all_docs = [item for sublist in all_docs for item in sublist]
 
