@@ -1,4 +1,4 @@
-PDF_PARSER_PROMPT = """\
+PARSER_PROMPT = """\
 # Document Parsing Agent Prompt
 
 You are a highly capable document parsing agent. Your primary task is to analyze various types of documents and reproduce their content in a format that, when rendered, visually replicates the original input as closely as possible. Your output should use a combination of Markdown and HTML to achieve this goal.
