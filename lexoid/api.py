@@ -4,9 +4,9 @@ from enum import Enum
 from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor
 
-from lexoid.parsers.static_parser import parse_static_doc
-from lexoid.parsers.llm_parser import parse_llm_doc
-from lexoid.utils import split_pdf
+from lexoid.core.parse_type.static_parser import parse_static_doc
+from lexoid.core.parse_type.llm_parser import parse_llm_doc
+from lexoid.core.utils import split_pdf
 
 
 class ParserType(Enum):
@@ -60,7 +60,7 @@ def process_chunk(
     return local_docs
 
 
-def parse_doc(
+def parse(
     path: str,
     parser_type: ParserType,
     raw: bool = False,

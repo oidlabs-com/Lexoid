@@ -5,8 +5,8 @@ import mimetypes
 from openai import OpenAI
 from typing import List, Dict
 
-from lexoid.prompt_templates import PARSER_PROMPT
-from lexoid.utils import convert_image_to_pdf
+from lexoid.core.prompt_templates import PARSER_PROMPT
+from lexoid.core.utils import convert_image_to_pdf
 
 
 def parse_llm_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
