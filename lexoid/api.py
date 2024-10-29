@@ -16,8 +16,8 @@ from lexoid.core.utils import (
 
 
 class ParserType(Enum):
-    LLM_PARSE = "llm-parse"
-    STATIC_PARSE = "static-parse"
+    LLM_PARSE = "LLM_PARSE"
+    STATIC_PARSE = "STATIC_PARSE"
 
 
 def parse_chunk(
@@ -27,7 +27,7 @@ def parse_chunk(
     Parses a file using the specified parser type.
 
     Args:
-        path (str): The file path of the PDF document.
+        path (str): The file path or URL.
         parser_type (ParserType): The type of parser to use (LLM_PARSE or STATIC_PARSE).
         raw (bool): Whether to return raw text or structured data.
         **kwargs: Additional arguments for the parser.
@@ -68,7 +68,7 @@ def parse_chunk_list(
 
 def parse(
     path: str,
-    parser_type: ParserType,
+    parser_type: str = "LLM_PARSE",
     raw: bool = False,
     pages_per_split: int = 4,
     max_threads: int = 4,
@@ -79,7 +79,7 @@ def parse(
 
     Args:
         path (str): The file path or URL.
-        parser_type (ParserType): The type of parser to use (LLM_PARSE or STATIC_PARSE).
+        parser_type (str, optional): The type of parser to use ("LLM_PARSE" or "STATIC_PARSE"). Defaults to "LLM_PARSE".
         raw (bool, optional): Whether to return raw text or structured data. Defaults to False.
         pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
         max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
@@ -90,6 +90,7 @@ def parse(
     """
     kwargs["title"] = os.path.basename(path)
     as_pdf = kwargs.pop("as_pdf", False)
+    parser_type = ParserType[parser_type]
 
     with tempfile.TemporaryDirectory() as temp_dir:
         if path.startswith(("http://", "https://")):
