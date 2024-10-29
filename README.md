@@ -1,23 +1,27 @@
 # Lexoid
 
-Lexoid is an efficient document parsing library with support for both LLM-based and non-LLM based (static) parsing of PDF documents.
+Lexoid is an efficient document parsing library that supports both LLM-based and non-LLM-based (static) PDF document parsing.
 
 ## Usage
+[Example Notebook](https://github.com/oidlabs-com/Lexoid/blob/main/examples/example_notebook.ipynb)
 
-To parse a PDF document using Lexoid, you can use the `parse_doc` function from the `lexoid.doc_parser` module. Here's a basic example:
+Here's a quick example to parse documents using Lexoid:
+``` python
+from lexoid.api import parse
+from lexoid.api import ParserType
 
-```python
-from lexoid.doc_parser import parse_doc, ParserType
+parsed_md = parse("https://www.justice.gov/eoir/immigration-law-advisor", parser_type="LLM_PARSE", raw=True)
+# or
+pdf_path = "path/to/immigration-law-advisor.pdf"
+parsed_md = parse(pdf_path, parser_type="LLM_PARSE", raw=True)
 
-pdf_path = "path/to/document.pdf"
-parsed_md = parse_doc(pdf_path, ParserType.LLM_PARSE, raw=True)
 print(parsed_md)
 ```
 
 ### Parameters
-
-- `path`: The file path to the PDF document.
-- `parser_type`: The type of parser to use (`ParserType.STATIC_PARSE` or `ParserType.LLM_PARSE`).
-- `raw`: If `True`, returns raw text; otherwise, returns structured data.
-- `pages_per_split`: Number of pages per split when processing large documents.
-- `max_threads`: Maximum number of threads to use for processing.
+- path (str): The file path or URL.
+- parser_type (str, optional): The type of parser to use ("LLM_PARSE" or "STATIC_PARSE"). Defaults to "LLM_PARSE".
+- raw (bool, optional): Whether to return raw text or structured data. Defaults to False.
+- pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
+- max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
+- **kwargs: Additional arguments for the parser.
