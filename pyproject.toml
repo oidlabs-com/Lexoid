@@ -19,6 +19,7 @@ markdownify = "^0.13.1"
 pyqt5 = "^5.15.11"
 pyqtwebengine = "^5.15.7"
 pypdfium2 = "^4.30.0"
+markdown = "^3.7"
 
 
 [tool.poetry.group.dev.dependencies]

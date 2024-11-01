@@ -8,6 +8,7 @@ from PIL import Image
 from bs4 import BeautifulSoup
 from difflib import SequenceMatcher
 from urllib.parse import urlparse
+from markdown import markdown
 from markdownify import markdownify as md
 import mimetypes
 import sys
@@ -44,7 +45,8 @@ def convert_image_to_pdf(image_path: str) -> bytes:
 
 
 def remove_html_tags(text: str):
-    return re.sub(HTML_TAG_PATTERN, "", text)
+    html = markdown(text, extensions=["tables"])
+    return re.sub(HTML_TAG_PATTERN, "", html)
 
 
 def calculate_similarity(text1: str, text2: str, ignore_html=True) -> float:
