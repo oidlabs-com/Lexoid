@@ -4,8 +4,15 @@ import requests
 import mimetypes
 from openai import OpenAI
 from typing import List, Dict
+import io
+from PIL import Image
+import pypdfium2 as pdfium
 
-from lexoid.core.prompt_templates import PARSER_PROMPT
+from lexoid.core.prompt_templates import (
+    PARSER_PROMPT,
+    GPT_SYSTEM_PROMPT,
+    GPT_USER_PROMPT,
+)
 from lexoid.core.utils import convert_image_to_pdf
 
 
@@ -79,40 +86,78 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     ]
 
 
+def convert_pdf_page_to_base64(
+    pdf_document: pdfium.PdfDocument, page_number: int
+) -> str:
+    """Convert a PDF page to a base64-encoded PNG string."""
+    page = pdf_document[page_number]
+    # Render with 4x scaling for better quality
+    pil_image = page.render(scale=4).to_pil()
+
+    # Convert to base64
+    img_byte_arr = io.BytesIO()
+    pil_image.save(img_byte_arr, format="PNG")
+    img_byte_arr.seek(0)
+    return base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
+
+
 def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     client = OpenAI()
-    pdf_assistant = client.beta.assistants.create(
-        model=kwargs["model"],
-        description="An assistant to extract the contents of documents.",
-        tools=[{"type": "file_search"}],
-        name="Document assistant",
-    )
-    thread = client.beta.threads.create()
-    file = client.files.create(file=open(path, "rb"), purpose="assistants")
 
-    client.beta.threads.messages.create(
-        thread_id=thread.id,
-        role="user",
-        attachments=[
+    # Handle different input types
+    mime_type, _ = mimetypes.guess_type(path)
+    if mime_type and mime_type.startswith("image"):
+        # Single image processing
+        with open(path, "rb") as img_file:
+            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+            images = [(0, image_base64)]
+    else:
+        # PDF processing
+        pdf_document = pdfium.PdfDocument(path)
+        images = [
+            (page_num, convert_pdf_page_to_base64(pdf_document, page_num))
+            for page_num in range(len(pdf_document))
+        ]
+
+    # Process each page/image
+    all_results = []
+    for page_num, image_base64 in images:
+        messages = [
             {
-                "file_id": file.id,
-                "tools": [{"type": "file_search"}],
-            }
-        ],
-        content=PARSER_PROMPT,
-    )
-    run = client.beta.threads.runs.create_and_poll(
-        thread_id=thread.id, assistant_id=pdf_assistant.id, timeout=1000
-    )
+                "role": "system",
+                "content": GPT_SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{GPT_USER_PROMPT} (Page {page_num + 1})",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                    },
+                ],
+            },
+        ]
 
-    if run.status != "completed":
-        raise Exception("Run failed:", run.status)
+        # Get completion from GPT-4 Vision
+        response = client.chat.completions.create(
+            model=kwargs["model"],
+            messages=messages,
+        )
 
-    messages = list(client.beta.threads.messages.list(thread_id=thread.id))
-    res_txt = messages[0].content[0].text.value
+        # Extract the response text
+        page_text = response.choices[0].message.content
+        all_results.append((page_num, page_text))
+
+    # Sort results by page number and combine
+    all_results.sort(key=lambda x: x[0])
+    combined_text = "<page break>".join(text for _, text in all_results)
 
     if raw:
-        return res_txt
+        return combined_text
 
     return [
         {
@@ -122,6 +167,6 @@ def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             },
             "content": page,
         }
-        for page_no, page in enumerate(res_txt.split("<page break>"), start=1)
+        for page_no, page in enumerate(combined_text.split("<page break>"), start=1)
         if page.strip()
     ]

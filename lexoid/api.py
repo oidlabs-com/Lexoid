@@ -62,7 +62,7 @@ def parse_chunk_list(
         if isinstance(result, list):
             local_docs.extend(result)
         else:
-            local_docs.append(result)
+            local_docs.append(result.replace("<page break>", "\n\n"))
     return local_docs
 
 
