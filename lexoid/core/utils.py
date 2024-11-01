@@ -1,9 +1,12 @@
 import os
 import io
+import re
 import pikepdf
+import pypdfium2
 import requests
 from PIL import Image
 from bs4 import BeautifulSoup
+from difflib import SequenceMatcher
 from urllib.parse import urlparse
 from markdownify import markdownify as md
 import mimetypes
@@ -13,6 +16,9 @@ from PyQt5.QtCore import QUrl, QMarginsF
 from PyQt5.QtGui import QPageLayout, QPageSize
 from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtWebEngineWidgets import QWebEngineView
+
+
+HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
@@ -34,6 +40,33 @@ def convert_image_to_pdf(image_path: str) -> bytes:
         pdf_buffer = io.BytesIO()
         img_rgb.save(pdf_buffer, format="PDF")
         return pdf_buffer.getvalue()
+
+
+def remove_html_tags(text: str):
+    return re.sub(HTML_TAG_PATTERN, "", text)
+
+
+def calculate_similarity(text1: str, text2: str, ignore_html=True) -> float:
+    """Calculate similarity ratio between two texts using SequenceMatcher."""
+    if ignore_html:
+        text1 = remove_html_tags(text1)
+        text2 = remove_html_tags(text2)
+    return SequenceMatcher(None, text1, text2).ratio()
+
+
+def convert_pdf_page_to_image(
+    pdf_document: pypdfium2.PdfDocument, page_number: int
+) -> bytes:
+    """Convert a PDF page to an image."""
+    page = pdf_document[page_number]
+    # Render with 4x scaling for better quality
+    pil_image = page.render(scale=4).to_pil()
+
+    # Convert to bytes
+    img_byte_arr = io.BytesIO()
+    pil_image.save(img_byte_arr, format="PNG")
+    img_byte_arr.seek(0)
+    return img_byte_arr.getvalue()
 
 
 def is_supported_file_type(url: str) -> bool:
