@@ -16,13 +16,20 @@ class BenchmarkResult:
 
 
 def run_benchmark_config(
-    input_path: str, ground_truth: str, config: Dict
+    input_path: str, ground_truth: str, config: Dict, output_save_dir: str = None
 ) -> BenchmarkResult:
     """Run a single benchmark configuration."""
     try:
         start_time = time.time()
         result = parse(input_path, raw=True, **config)
         execution_time = time.time() - start_time
+
+        if output_save_dir:
+            filename = (
+                ", ".join([f"{key}={value}" for key, value in config.items()]) + ".md"
+            )
+            with open(os.path.join(output_save_dir, filename), "w") as fp:
+                fp.write(result)
 
         similarity = calculate_similarity(result, ground_truth)
 
@@ -148,8 +155,9 @@ def main():
     input_path = "examples/inputs/table.pdf"
     ground_truth_path = "examples/outputs/table.md"
 
-    output_path = "outputs/benchmark_results.md"
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    output_dir = f"tests/outputs/benchmark_{int(time.time())}/"
+    result_path = os.path.join(output_dir, "results.md")
+    os.makedirs(output_dir, exist_ok=True)
 
     # Specify which attributes to test
     test_attributes = [
@@ -176,15 +184,15 @@ def main():
 
     for i, config in enumerate(configs, 1):
         print(f"Progress: {i}/{total_configs} - Testing config: {config}")
-        result = run_benchmark_config(input_path, ground_truth, config)
+        result = run_benchmark_config(input_path, ground_truth, config, output_dir)
         results.append(result)
 
     # Format and save results
     markdown_report = format_results(results)
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(result_path, "w", encoding="utf-8") as f:
         f.write(markdown_report)
 
-    print(f"\nBenchmark complete! Results saved to {output_path}")
+    print(f"\nBenchmark complete! Results saved to {result_path}")
 
     # Print top 3 configurations
     top_results = sorted(results, key=lambda x: x.similarity, reverse=True)[:3]
