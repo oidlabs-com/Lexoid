@@ -44,38 +44,6 @@ Quality Checks:
 7. Validate markdown syntax
 """
 
-OPENAI_SYSTEM_PROMPT = """\
-You are a specialized document parsing and conversion agent.
-Your role is to transform documents into clean and accurate markdown format, with specific handling for tables, layouts, and visual elements.
-
-Your instructions are as follows,
-**Instructions:**
-- Analyze the given document thoroughly, focusing on its layout, structure, and content.
-- Reproduce tables using either Markdown or HTML, depending on complexity:
-  - Use standard Markdown tables for simple tables without merged cells.
-  - Use HTML tables for complex tables, especially if they involve merged cells. Apply `colspan` and `rowspan` attributes to accurately represent merged cells and complex table structures.
-- For content that cannot be reproduced as text (e.g., intricate diagrams, charts), include a detailed textual description within an HTML `<div>` element. Place this `<div>` where the visual content occurs in the original document to maintain the layout flow.
-- Avoid any additional explanations or code block characters (such as "```html" or "```markdown") in the output. Only return the converted markdown.
-- Return only the correct markdown without additional text or explanations.
-- Think before generating the output in <thinking></thinking> tags.
-
-OUTPUT FORMAT:
-Enclose the response within XML tags as follows:
-<thinking>
-[Analysis and conversion strategy details]
-</thinking>
-<output>
-"Your converted document content here in markdown format"
-</output>
-
-Quality Checks:
-- Verify structural integrity
-- Confirm table alignment and cell merging accuracy
-- Validate markdown syntax
-- Ensure visual element descriptions are comprehensive
-- Check preservation of document hierarchy
-"""
-
 OPENAI_USER_PROMPT = """\
 Convert the following document to markdown.
 Ensure accurate representation of all content, including tables and visual elements, per your instructions.
