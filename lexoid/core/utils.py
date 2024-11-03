@@ -1,23 +1,23 @@
-import os
 import io
+import mimetypes
+import os
 import re
+import sys
+from difflib import SequenceMatcher
+from urllib.parse import urlparse
+
 import pikepdf
 import pypdfium2
 import requests
-from PIL import Image
 from bs4 import BeautifulSoup
-from difflib import SequenceMatcher
-from urllib.parse import urlparse
 from markdown import markdown
 from markdownify import markdownify as md
-import mimetypes
-import sys
-from PyQt5.QtWidgets import QApplication
-from PyQt5.QtCore import QUrl, QMarginsF
+from PIL import Image
+from PyQt5.QtCore import QMarginsF, QUrl
 from PyQt5.QtGui import QPageLayout, QPageSize
 from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtWebEngineWidgets import QWebEngineView
-
+from PyQt5.QtWidgets import QApplication
 
 # Source: https://stackoverflow.com/a/12982689
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")

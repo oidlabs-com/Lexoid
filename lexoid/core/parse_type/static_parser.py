@@ -1,8 +1,9 @@
 import os
-import pymupdf4llm
-import pdfplumber
+from typing import Dict, List
+
 import pandas as pd
-from typing import List, Dict
+import pdfplumber
+import pymupdf4llm
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import extract_text, get_bbox_overlap, obj_to_bbox

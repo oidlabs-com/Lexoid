@@ -1,10 +1,14 @@
 import os
 import time
-from typing import Dict, List
 from dataclasses import dataclass
+from typing import Dict, List
+
+from dotenv import load_dotenv
 
 from lexoid.api import parse
 from lexoid.core.utils import calculate_similarity
+
+load_dotenv()
 
 
 @dataclass
