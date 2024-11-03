@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.1"
+version = "0.1.2"
 description = ""
 authors = []
 readme = "README.md"
@@ -20,6 +20,9 @@ pyqt5 = "^5.15.11"
 pyqtwebengine = "^5.15.7"
 pypdfium2 = "^4.30.0"
 markdown = "^3.7"
+pytest = "^8.3.2"
+python-dotenv = "^1.0.0"
+loguru = "^0.7.2"
 
 
 [tool.poetry.group.dev.dependencies]
