@@ -12,12 +12,15 @@ from lexoid.core.utils import (
     read_html_content,
     download_file,
     convert_to_pdf,
+    has_image_in_pdf,
+    has_table_in_pdf,
 )
 
 
 class ParserType(Enum):
     LLM_PARSE = "LLM_PARSE"
     STATIC_PARSE = "STATIC_PARSE"
+    AUTO = "AUTO"
 
 
 def parse_chunk(
@@ -28,14 +31,18 @@ def parse_chunk(
 
     Args:
         path (str): The file path or URL.
-        parser_type (ParserType): The type of parser to use (LLM_PARSE or STATIC_PARSE).
+        parser_type (ParserType): The type of parser to use (LLM_PARSE, STATIC_PARSE, or AUTO).
         raw (bool): Whether to return raw text or structured data.
         **kwargs: Additional arguments for the parser.
 
     Returns:
         List[Dict] | str: Parsed document data as a list of dictionaries or raw text.
     """
-    if parser_type == ParserType.STATIC_PARSE:
+    if parser_type == ParserType.STATIC_PARSE or (
+        parser_type == ParserType.AUTO
+        and not has_image_in_pdf(path)
+        and not has_table_in_pdf(path)
+    ):
         return parse_static_doc(path, raw, **kwargs)
     else:
         return parse_llm_doc(path, raw, **kwargs)
@@ -79,7 +86,7 @@ def parse(
 
     Args:
         path (str): The file path or URL.
-        parser_type (str, optional): The type of parser to use ("LLM_PARSE" or "STATIC_PARSE"). Defaults to "LLM_PARSE".
+        parser_type (str, optional): The type of parser to use ("LLM_PARSE", "STATIC_PARSE", or "AUTO"). Defaults to "LLM_PARSE".
         raw (bool, optional): Whether to return raw text or structured data. Defaults to False.
         pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
         max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.

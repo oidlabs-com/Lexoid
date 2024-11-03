@@ -1,13 +1,14 @@
 import os
 import io
+import sys
+import camelot
 import pikepdf
 import requests
+import mimetypes
 from PIL import Image
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from markdownify import markdownify as md
-import mimetypes
-import sys
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QUrl, QMarginsF
 from PyQt5.QtGui import QPageLayout, QPageSize
@@ -164,3 +165,14 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
             dst.write(src.read())
 
     return output_path
+
+
+def has_image_in_pdf(path: str):
+    with open(path, "rb") as fp:
+        content = fp.read()
+    return "/Image" in str(content)
+
+
+def has_table_in_pdf(path: str):
+    tables = camelot.read_pdf(path)
+    return len(tables) > 0
