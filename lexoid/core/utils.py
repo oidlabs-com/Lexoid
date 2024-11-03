@@ -176,3 +176,9 @@ def has_image_in_pdf(path: str):
 def has_table_in_pdf(path: str):
     tables = camelot.read_pdf(path)
     return len(tables) > 0
+
+
+def parser_router(path: str):
+    if has_table_in_pdf(path) or has_image_in_pdf(path):
+        return "LLM_PARSE"
+    return "STATIC_PARSE"
