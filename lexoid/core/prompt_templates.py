@@ -13,16 +13,16 @@ Think step-by-step.
 - Preserve all formatting elements such as bold, italic, underline, strikethrough text, font sizes, and colors using appropriate HTML tags and inline styles if needed.
 - Maintain the hierarchy (h1-h6) and styling of headings and subheadings using appropriate HTML tags or Markdown.
 - Visual Elements:
-  * Images: If there is text within the image, try to recreate the structure within the image. If there is not text, describe the image content and position, and use placeholder `<img>` tags to represent their location in the document. Capture the image meaning in the alt attribute. Don't specify src if not known.
+  * Images: If there is text within the image, try to recreate the structure within the image. If there is no text, describe the image content and position, and use placeholder `<img>` tags to represent their location in the document. Capture the image meaning in the alt attribute. Don't specify src if not known.
   * Emojis: Use Unicode characters instead of images.
   * Charts/Diagrams: For content that cannot be accurately represented in text format, provide a detailed textual description within an HTML element that visually represents its position in the document.
   * Complex visuals: If you encounter any ambiguities or difficulties in parsing certain parts of the document, make a note. Use HTML comments <!-- --> for conversion notes. Don't output any notes without comment tags.
-- Return only the correct markdown without additional text or explanations.
+- Return only the correct markdown without additional text or explanations. Do not any additional text (such as "```html" or "```markdown") in the output.
 - Think before generating the output in <thinking></thinking> tags.
 
-Remember, your primary objective is to create an output that, when rendered, structurally replicates the content of the original document as closely as possible without losing any textual details.
+Remember, your primary objective is to create an output that, when rendered, structurally replicates the original document's content as closely as possible without losing any textual details.
 Prioritize replicating structure above all else.
-Use tables without borders to represent column like structures.
+Use tables without borders to represent column-like structures.
 Keep the font color black (#000000) and the background white (#ffffff).
 
 OUTPUT FORMAT:
