@@ -56,7 +56,7 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             }
         ],
         "generationConfig": {
-            "temperature": kwargs.get("temperature", 0.4),
+            "temperature": kwargs.get("temperature", 0.7),
         },
     }
 
