@@ -1,11 +1,18 @@
-import os
 import base64
-import requests
+import io
 import mimetypes
-from openai import OpenAI
-from typing import List, Dict
+import os
+from typing import Dict, List
 
-from lexoid.core.prompt_templates import PARSER_PROMPT
+import pypdfium2 as pdfium
+import requests
+from loguru import logger
+from openai import OpenAI
+
+from lexoid.core.prompt_templates import (
+    OPENAI_USER_PROMPT,
+    PARSER_PROMPT,
+)
 from lexoid.core.utils import convert_image_to_pdf
 
 
@@ -47,7 +54,10 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
                     {"inline_data": {"mime_type": mime_type, "data": base64_file}},
                 ]
             }
-        ]
+        ],
+        "generationConfig": {
+            "temperature": kwargs.get("temperature", 0.7),
+        },
     }
 
     headers = {"Content-Type": "application/json"}
@@ -56,6 +66,7 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     response.raise_for_status()
 
     result = response.json()
+
     raw_text = "".join(
         part["text"]
         for candidate in result.get("candidates", [])
@@ -63,8 +74,14 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
         if "text" in part
     )
 
+    result = ""
+    if "<output>" in raw_text:
+        result = raw_text.split("<output>")[1].strip()
+    if "</output>" in result:
+        result = result.split("</output>")[0].strip()
+
     if raw:
-        return raw_text
+        return result
 
     return [
         {
@@ -74,45 +91,91 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             },
             "content": page,
         }
-        for page_no, page in enumerate(raw_text.split("<page break>"), start=1)
+        for page_no, page in enumerate(result.split("<page break>"), start=1)
         if page.strip()
     ]
 
 
+def convert_pdf_page_to_base64(
+    pdf_document: pdfium.PdfDocument, page_number: int
+) -> str:
+    """Convert a PDF page to a base64-encoded PNG string."""
+    page = pdf_document[page_number]
+    # Render with 4x scaling for better quality
+    pil_image = page.render(scale=4).to_pil()
+
+    # Convert to base64
+    img_byte_arr = io.BytesIO()
+    pil_image.save(img_byte_arr, format="PNG")
+    img_byte_arr.seek(0)
+    return base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
+
+
 def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     client = OpenAI()
-    pdf_assistant = client.beta.assistants.create(
-        model=kwargs["model"],
-        description="An assistant to extract the contents of documents.",
-        tools=[{"type": "file_search"}],
-        name="Document assistant",
-    )
-    thread = client.beta.threads.create()
-    file = client.files.create(file=open(path, "rb"), purpose="assistants")
 
-    client.beta.threads.messages.create(
-        thread_id=thread.id,
-        role="user",
-        attachments=[
+    # Handle different input types
+    mime_type, _ = mimetypes.guess_type(path)
+    if mime_type and mime_type.startswith("image"):
+        # Single image processing
+        with open(path, "rb") as img_file:
+            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+            images = [(0, image_base64)]
+    else:
+        # PDF processing
+        pdf_document = pdfium.PdfDocument(path)
+        images = [
+            (page_num, convert_pdf_page_to_base64(pdf_document, page_num))
+            for page_num in range(len(pdf_document))
+        ]
+
+    # Process each page/image
+    all_results = []
+    for page_num, image_base64 in images:
+        messages = [
             {
-                "file_id": file.id,
-                "tools": [{"type": "file_search"}],
-            }
-        ],
-        content=PARSER_PROMPT,
-    )
-    run = client.beta.threads.runs.create_and_poll(
-        thread_id=thread.id, assistant_id=pdf_assistant.id, timeout=1000
-    )
+                "role": "system",
+                "content": PARSER_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": f"{OPENAI_USER_PROMPT} (Page {page_num + 1})",
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                    },
+                ],
+            },
+        ]
 
-    if run.status != "completed":
-        raise Exception("Run failed:", run.status)
+        # Get completion from GPT-4 Vision
+        response = client.chat.completions.create(
+            model=kwargs["model"],
+            temperature=kwargs.get("temperature", 0.7),
+            messages=messages,
+        )
 
-    messages = list(client.beta.threads.messages.list(thread_id=thread.id))
-    res_txt = messages[0].content[0].text.value
+        # Extract the response text
+        page_text = response.choices[0].message.content
+        if kwargs.get("verbose", None):
+            logger.debug(f"Page {page_num + 1} response: {page_text}")
+        result = ""
+        if "<output>" in page_text:
+            result = page_text.split("<output>")[1].strip()
+        if "</output>" in result:
+            result = result.split("</output>")[0].strip()
+        all_results.append((page_num, result))
+
+    # Sort results by page number and combine
+    all_results.sort(key=lambda x: x[0])
+    combined_text = "<page break>".join(text for _, text in all_results)
 
     if raw:
-        return res_txt
+        return combined_text
 
     return [
         {
@@ -122,6 +185,6 @@ def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             },
             "content": page,
         }
-        for page_no, page in enumerate(res_txt.split("<page break>"), start=1)
+        for page_no, page in enumerate(combined_text.split("<page break>"), start=1)
         if page.strip()
     ]
