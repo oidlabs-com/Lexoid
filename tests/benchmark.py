@@ -156,8 +156,8 @@ def format_results(results: List[BenchmarkResult]) -> str:
 
 
 def main():
-    input_path = "examples/inputs/table.pdf"
-    ground_truth_path = "examples/outputs/table.md"
+    input_path = "examples/inputs/test_1.pdf"
+    ground_truth_path = "examples/outputs/test_1.md"
 
     output_dir = f"tests/outputs/benchmark_{int(time.time())}/"
     result_path = os.path.join(output_dir, "results.md")

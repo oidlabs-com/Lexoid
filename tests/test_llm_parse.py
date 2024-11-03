@@ -17,8 +17,8 @@ os.makedirs(output_dir, exist_ok=True)
     ["gpt-4o", "gpt-4o-mini", "gemini-1.5-flash", "gemini-1.5-pro"],
 )
 def test_llm_parse(models):
-    input_data = "examples/inputs/table.pdf"
-    expected_ouput_path = "examples/outputs/table.md"
+    input_data = "examples/inputs/test_1.pdf"
+    expected_ouput_path = "examples/outputs/test_1.md"
     config = {"parser_type": "LLM_PARSE", "model": models, "verbose": True}
     result = parse(input_data, raw=True, **config)
     assert isinstance(result, str)
