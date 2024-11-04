@@ -13,7 +13,7 @@ from lexoid.core.utils import (
     read_html_content,
     download_file,
     convert_to_pdf,
-    parser_router,
+    router,
     split_pdf,
 )
 
@@ -40,7 +40,7 @@ def parse_chunk(
         List[Dict] | str: Parsed document data as a list of dictionaries or raw text.
     """
     if parser_type == ParserType.AUTO:
-        parser_type = ParserType[parser_router(path)]
+        parser_type = ParserType[router(path)]
     if parser_type == ParserType.STATIC_PARSE:
         return parse_static_doc(path, raw, **kwargs)
     else:
