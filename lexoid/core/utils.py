@@ -214,7 +214,7 @@ def has_table_in_pdf(path: str):
     return len(tables) > 0
 
 
-def parser_router(path: str):
+def router(path: str):
     if has_table_in_pdf(path) or has_image_in_pdf(path):
         return "LLM_PARSE"
     return "STATIC_PARSE"
