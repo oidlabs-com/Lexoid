@@ -162,5 +162,4 @@ cython_debug/
 #.idea/
 
 # Custom
-inputs/
-outputs/
+test/outputs/

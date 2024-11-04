@@ -1,18 +1,20 @@
-import tempfile
 import os
-from enum import Enum
-from typing import List, Dict
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
+from enum import Enum
+from typing import Dict, List
 
-from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.parse_type.llm_parser import parse_llm_doc
+from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
-    split_pdf,
+    convert_to_pdf,
+    download_file,
     is_supported_file_type,
     read_html_content,
     download_file,
     convert_to_pdf,
     parser_router,
+    split_pdf,
 )
 
 
@@ -66,7 +68,7 @@ def parse_chunk_list(
         if isinstance(result, list):
             local_docs.extend(result)
         else:
-            local_docs.append(result)
+            local_docs.append(result.replace("<page break>", "\n\n"))
     return local_docs
 
 
@@ -76,7 +78,7 @@ def parse(
     raw: bool = False,
     pages_per_split: int = 4,
     max_threads: int = 4,
-    **kwargs
+    **kwargs,
 ) -> List[Dict] | str:
     """
     Parses a document or URL, optionally splitting it into chunks and using multithreading.
