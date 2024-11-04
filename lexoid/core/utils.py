@@ -170,7 +170,7 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
 def has_image_in_pdf(path: str):
     with open(path, "rb") as fp:
         content = fp.read()
-    return "/Image" in str(content)
+    return "Image" in list(map(lambda x: x.strip(), (str(content).split("/"))))
 
 
 def has_table_in_pdf(path: str):
