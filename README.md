@@ -6,6 +6,7 @@ Lexoid is an efficient document parsing library that supports both LLM-based and
 ```
 1. make setup
 2. source .venv/bin/activate
+3. To build .whl for testing: poetry build
 ```
 
 ## Usage
