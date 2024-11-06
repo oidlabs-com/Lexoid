@@ -2,7 +2,6 @@ import io
 import os
 import re
 import sys
-import camelot
 import pikepdf
 import pypdfium2
 import requests
@@ -209,12 +208,13 @@ def has_image_in_pdf(path: str):
     return "Image" in list(map(lambda x: x.strip(), (str(content).split("/"))))
 
 
-def has_table_in_pdf(path: str):
-    tables = camelot.read_pdf(path)
-    return len(tables) > 0
+def has_hyperlink_in_pdf(path: str):
+    with open(path, "rb") as fp:
+        content = fp.read()
+    return "URI" in list(map(lambda x: x.strip(), (str(content).split("/"))))
 
 
 def router(path: str):
-    if has_table_in_pdf(path) or has_image_in_pdf(path):
-        return "LLM_PARSE"
-    return "STATIC_PARSE"
+    if not has_image_in_pdf(path) and has_hyperlink_in_pdf(path):
+        return "STATIC_PARSE"
+    return "LLM_PARSE"
