@@ -5,7 +5,6 @@ import os
 
 import pytest
 from dotenv import load_dotenv
-
 from lexoid.api import parse
 from lexoid.core.utils import calculate_similarity
 
@@ -54,3 +53,22 @@ async def test_jpg_parse(models):
         f.write(result)
     score = calculate_similarity(result, expected_ouput)
     assert round(score, 3) > 0.8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sample",
+    [
+        "examples/inputs/test_explicit_hyperlink_n_img.pdf",
+        "examples/inputs/test_hidden_link_with_image.pdf",  # currently fails
+        "examples/inputs/test_with_hidden_links_no_img.pdf",
+    ],
+)
+async def test_auto_routing(sample):
+    patterns = ["http", "https", "www"]
+    model_type = "gemini-1.5-pro"
+    config = {"parser_type": "AUTO", "model": model_type, "verbose": True}
+    result = parse(sample, raw=True, **config)
+    assert isinstance(result, str)
+    found = [True if p in result else False for p in patterns]
+    assert any(found)

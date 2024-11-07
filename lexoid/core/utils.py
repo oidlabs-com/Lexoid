@@ -1,18 +1,18 @@
 import io
+import mimetypes
 import os
 import re
 import sys
+from difflib import SequenceMatcher
+from urllib.parse import urlparse
+
 import pikepdf
 import pypdfium2
 import requests
-import mimetypes
-from PIL import Image
-from markdown import markdown
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from markdown import markdown
 from markdownify import markdownify as md
-from difflib import SequenceMatcher
-from PyQt5.QtCore import QUrl, QMarginsF
+from PIL import Image
 from PyQt5.QtCore import QMarginsF, QUrl
 from PyQt5.QtGui import QPageLayout, QPageSize
 from PyQt5.QtPrintSupport import QPrinter
@@ -205,16 +205,26 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
 def has_image_in_pdf(path: str):
     with open(path, "rb") as fp:
         content = fp.read()
-    return "Image" in list(map(lambda x: x.strip(), (str(content).split("/"))))
+    return "Image".lower() in list(
+        map(lambda x: x.strip(), (str(content).lower().split("/")))
+    )
 
 
 def has_hyperlink_in_pdf(path: str):
     with open(path, "rb") as fp:
         content = fp.read()
-    return "URI" in list(map(lambda x: x.strip(), (str(content).split("/"))))
+    # URI tag is used if Links are hidden.
+    return "URI".lower() in list(
+        map(lambda x: x.strip(), (str(content).lower().split("/")))
+    )
 
 
 def router(path: str):
+    # Naive routing strategy for now.
+    # Current routing strategy,
+    # 1. If the PDF has hidden hyperlinks (as alias) and no images: STATIC_PARSE
+    # 2. Others scenarios: LLM_PARSE
+    # If you have other needs, do reach out or create an issue.
     if not has_image_in_pdf(path) and has_hyperlink_in_pdf(path):
         return "STATIC_PARSE"
     return "LLM_PARSE"
