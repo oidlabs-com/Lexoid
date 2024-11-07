@@ -223,7 +223,7 @@ def router(path: str):
     # Naive routing strategy for now.
     # Current routing strategy,
     # 1. If the PDF has hidden hyperlinks (as alias) and no images: STATIC_PARSE
-    # 2. Others scenarios: LLM_PARSE
+    # 2. Other scenarios: LLM_PARSE
     # If you have other needs, do reach out or create an issue.
     if not has_image_in_pdf(path) and has_hyperlink_in_pdf(path):
         return "STATIC_PARSE"
