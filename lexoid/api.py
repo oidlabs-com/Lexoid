@@ -1,6 +1,6 @@
 import os
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
 from typing import Dict, List
 
@@ -11,8 +11,6 @@ from lexoid.core.utils import (
     download_file,
     is_supported_file_type,
     read_html_content,
-    download_file,
-    convert_to_pdf,
     router,
     split_pdf,
 )
@@ -77,18 +75,18 @@ def parse(
     parser_type: str = "LLM_PARSE",
     raw: bool = False,
     pages_per_split: int = 4,
-    max_threads: int = 4,
+    max_processes: int = 4,
     **kwargs,
 ) -> List[Dict] | str:
     """
-    Parses a document or URL, optionally splitting it into chunks and using multithreading.
+    Parses a document or URL, optionally splitting it into chunks and using multiprocessing.
 
     Args:
         path (str): The file path or URL.
         parser_type (str, optional): The type of parser to use ("LLM_PARSE", "STATIC_PARSE", or "AUTO"). Defaults to "LLM_PARSE".
         raw (bool, optional): Whether to return raw text or structured data. Defaults to False.
         pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
-        max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
+        max_processes (int, optional): Maximum number of processes for parallel processing. Defaults to 4.
         **kwargs: Additional arguments for the parser.
 
     Returns:
@@ -121,7 +119,7 @@ def parse(
         split_pdf(path, temp_dir, pages_per_split)
         split_files = [os.path.join(temp_dir, f) for f in sorted(os.listdir(temp_dir))]
 
-        chunk_size = max(1, len(split_files) // max_threads)
+        chunk_size = max(1, len(split_files) // max_processes)
         file_chunks = [
             split_files[i : i + chunk_size]
             for i in range(0, len(split_files), chunk_size)
@@ -129,13 +127,10 @@ def parse(
 
         process_args = [(chunk, parser_type, raw, kwargs) for chunk in file_chunks]
 
-        if max_threads == 1 or len(file_chunks) == 1:
-            all_docs = [
-                parse_chunk_list(chunk, parser_type, raw, kwargs)
-                for chunk in file_chunks
-            ]
+        if max_processes == 1 or len(file_chunks) == 1:
+            all_docs = [parse_chunk_list(*args) for args in process_args]
         else:
-            with ThreadPoolExecutor(max_workers=max_threads) as executor:
+            with ProcessPoolExecutor(max_workers=max_processes) as executor:
                 all_docs = list(executor.map(parse_chunk_list, *zip(*process_args)))
 
         all_docs = [item for sublist in all_docs for item in sublist]
