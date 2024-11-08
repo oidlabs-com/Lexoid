@@ -47,7 +47,7 @@ Keep the font color black (#000000) and the background white (#ffffff).
 OUTPUT FORMAT:
 Enclose the response within XML tags as follows:
 <thinking>
-[Step-by-step analysis and conversion strategy]
+[Step-by-step analysis and generation strategy]
 </thinking>
 <output>
 "Your converted document content here in markdown format"
