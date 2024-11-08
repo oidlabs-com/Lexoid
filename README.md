@@ -31,3 +31,12 @@ print(parsed_md)
 - pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
 - max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
 - **kwargs: Additional arguments for the parser.
+
+## Benchmark
+
+| Rank | Model | Similarity | Time (s) |
+|------|-----------|------------|----------|
+| 1 | gpt-4o | 0.806 | 34.10 |
+| 2 | gemini-1.5-pro | 0.734 | 16.88 |
+| 3 | gpt-4o-mini | 0.690 | 12.65 |
+| 4 | gemini-1.5-flash | 0.628 | 4.74 |

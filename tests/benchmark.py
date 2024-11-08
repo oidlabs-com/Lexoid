@@ -1,7 +1,10 @@
+from glob import glob
 import os
 import time
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Tuple
+from statistics import mean
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -19,6 +22,30 @@ class BenchmarkResult:
     error: str = None
 
 
+def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, str]]:
+    """Get matching input and ground truth file pairs."""
+    if os.path.isfile(input_path):
+        # Single file mode
+        base_name = Path(input_path).stem
+        ground_truth_path = os.path.join(output_dir, f"{base_name}.md")
+        if os.path.exists(ground_truth_path):
+            return [(input_path, ground_truth_path)]
+        return []
+
+    # Directory mode
+    input_files = glob(os.path.join(input_path, "*"))
+    pairs = []
+
+    for input_file in input_files:
+        base_name = Path(input_file).stem
+        ground_truth_path = os.path.join(output_dir, f"{base_name}.md")
+
+        if os.path.exists(ground_truth_path):
+            pairs.append((input_file, ground_truth_path))
+
+    return pairs
+
+
 def run_benchmark_config(
     input_path: str, ground_truth: str, config: Dict, output_save_dir: str = None
 ) -> BenchmarkResult:
@@ -30,7 +57,9 @@ def run_benchmark_config(
 
         if output_save_dir:
             filename = (
-                ", ".join([f"{key}={value}" for key, value in config.items()]) + ".md"
+                f"{Path(input_path).stem}_"
+                + ", ".join([f"{key}={value}" for key, value in config.items()])
+                + ".md"
             )
             with open(os.path.join(output_save_dir, filename), "w") as fp:
                 fp.write(result)
@@ -44,6 +73,33 @@ def run_benchmark_config(
         return BenchmarkResult(
             config=config, similarity=0.0, execution_time=0.0, error=str(e)
         )
+
+
+def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
+    """Aggregate multiple benchmark results into a single result."""
+    if not results:
+        return None
+
+    valid_results = [r for r in results if r.error is None]
+    if valid_results:
+        avg_similarity = mean(r.similarity for r in valid_results)
+        avg_execution_time = mean(r.execution_time for r in valid_results)
+        error = (
+            None
+            if len(valid_results) == len(results)
+            else f"Failed: {len(results) - len(valid_results)}/{len(results)}"
+        )
+    else:
+        avg_similarity = 0.0
+        avg_execution_time = 0.0
+        error = f"Failed: {len(results)}/{len(results)}"
+
+    return BenchmarkResult(
+        config=results[0].config,
+        similarity=avg_similarity,
+        execution_time=avg_execution_time,
+        error=error,
+    )
 
 
 def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[Dict]:
@@ -135,14 +191,12 @@ def format_results(results: List[BenchmarkResult]) -> str:
 
     for i, result in enumerate(sorted_results, 1):
         config = result.config
-        error_msg = result.error[:50] + "..." if result.error else "-"
-
-        model_framework = config.get("model", config.get("framework", "-"))
+        error_msg = result.error if result.error else "-"
 
         row = [
             str(i),
             config.get("parser_type", "-"),
-            model_framework,
+            config.get("model", config.get("framework", "-")),
             str(config.get("pages_per_split", "-")),
             str(config.get("max_threads", "-")),
             str(config.get("as_pdf", "-")),
@@ -155,41 +209,79 @@ def format_results(results: List[BenchmarkResult]) -> str:
     return "\n".join(md_lines)
 
 
-def main():
-    input_path = "examples/inputs/test_1.pdf"
-    ground_truth_path = "examples/outputs/test_1.md"
+def run_benchmarks(
+    input_path: str,
+    output_dir: str,
+    test_attributes: List[str],
+    benchmark_output_dir: str,
+) -> List[BenchmarkResult]:
+    """Run all benchmarks for given input(s) and return results."""
+    # Get input/output file pairs
+    file_pairs = get_input_output_pairs(input_path, output_dir)
+    if not file_pairs:
+        print("No matching input/output file pairs found!")
+        return []
 
-    output_dir = f"tests/outputs/benchmark_{int(time.time())}/"
-    result_path = os.path.join(output_dir, "results.md")
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Specify which attributes to test
-    test_attributes = [
-        "parser_type",
-        "model",
-        "framework",
-        # "pages_per_split",
-        # "max_threads",
-        "as_pdf",
-    ]
-
-    # Read ground truth
-    with open(ground_truth_path, "r", encoding="utf-8") as f:
-        ground_truth = f.read()
-
-    # Generate test configurations
-    configs = generate_test_configs(input_path, test_attributes)
+    # Generate test configurations based on first input file
+    configs = generate_test_configs(file_pairs[0][0], test_attributes)
 
     # Run benchmarks
     results = []
     total_configs = len(configs)
+    total_files = len(file_pairs)
 
-    print(f"Running {total_configs} benchmark configurations...")
+    print(
+        f"Running {total_configs} configurations across {total_files} file{'s' if total_files > 1 else ''}..."
+    )
 
     for i, config in enumerate(configs, 1):
         print(f"Progress: {i}/{total_configs} - Testing config: {config}")
-        result = run_benchmark_config(input_path, ground_truth, config, output_dir)
+
+        # Run benchmark for each file
+        file_results = []
+        for input_file, ground_truth_path in file_pairs:
+            with open(ground_truth_path, "r", encoding="utf-8") as f:
+                ground_truth = f.read()
+            result = run_benchmark_config(
+                input_file, ground_truth, config, benchmark_output_dir
+            )
+            file_results.append(result)
+
+        # Aggregate results if multiple files
+        if len(file_results) > 1:
+            result = aggregate_results(file_results)
+        else:
+            result = file_results[0]
+
         results.append(result)
+
+    return results
+
+
+def main():
+    # Can be either a single file or directory
+    input_path = "examples/inputs"
+    output_dir = "examples/outputs"
+
+    benchmark_output_dir = f"tests/outputs/benchmark_{int(time.time())}/"
+    result_path = os.path.join(benchmark_output_dir, "results.md")
+    os.makedirs(benchmark_output_dir, exist_ok=True)
+
+    # Specify which attributes to test
+    test_attributes = [
+        # "parser_type",
+        "model",
+        # "framework",
+        # "pages_per_split",
+        # "max_threads",
+        # "as_pdf",
+    ]
+
+    results = run_benchmarks(
+        input_path, output_dir, test_attributes, benchmark_output_dir
+    )
+    if not results:
+        return
 
     # Format and save results
     markdown_report = format_results(results)
