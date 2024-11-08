@@ -200,3 +200,31 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
             dst.write(src.read())
 
     return output_path
+
+
+def has_image_in_pdf(path: str):
+    with open(path, "rb") as fp:
+        content = fp.read()
+    return "Image".lower() in list(
+        map(lambda x: x.strip(), (str(content).lower().split("/")))
+    )
+
+
+def has_hyperlink_in_pdf(path: str):
+    with open(path, "rb") as fp:
+        content = fp.read()
+    # URI tag is used if Links are hidden.
+    return "URI".lower() in list(
+        map(lambda x: x.strip(), (str(content).lower().split("/")))
+    )
+
+
+def router(path: str):
+    # Naive routing strategy for now.
+    # Current routing strategy,
+    # 1. If the PDF has hidden hyperlinks (as alias) and no images: STATIC_PARSE
+    # 2. Other scenarios: LLM_PARSE
+    # If you have other needs, do reach out or create an issue.
+    if not has_image_in_pdf(path) and has_hyperlink_in_pdf(path):
+        return "STATIC_PARSE"
+    return "LLM_PARSE"
