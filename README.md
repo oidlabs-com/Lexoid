@@ -35,9 +35,9 @@ print(parsed_md)
 
 ## Benchmark
 
-| Rank | Model | Similarity | Time (s) |
+| Rank | Model/Framework | Similarity | Time (s) |
 |------|-----------|------------|----------|
-| 1 | gpt-4o | 0.806 | 34.10 |
-| 2 | gemini-1.5-pro | 0.734 | 16.88 |
-| 3 | gpt-4o-mini | 0.690 | 12.65 |
-| 4 | gemini-1.5-flash | 0.628 | 4.74 |
+| 1 | gpt-4o | 0.799 | 21.77|
+| 2 | gemini-1.5-pro | 0.742 | 15.77 |
+| 3 | gpt-4o-mini | 0.721 | 14.86 |
+| 4 | gemini-1.5-flash | 0.702 | 4.56 |
