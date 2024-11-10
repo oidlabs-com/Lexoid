@@ -1,5 +1,5 @@
-# python3 -m pytest tests/test_llm_parse.py -v
-# With logs: python3 -m pytest tests/test_llm_parse.py -v -s
+# python3 -m pytest tests/test_parser.py -v
+# With logs: python3 -m pytest tests/test_parser.py -v -s
 
 import os
 
@@ -64,7 +64,7 @@ async def test_jpg_parse(models):
         "examples/inputs/test_with_hidden_links_no_img.pdf",
     ],
 )
-async def test_auto_routing(sample):
+async def test_url_detection_auto_routing(sample):
     patterns = ["http", "https", "www"]
     model_type = "gemini-1.5-pro"
     config = {"parser_type": "AUTO", "model": model_type, "verbose": True}
@@ -72,3 +72,40 @@ async def test_auto_routing(sample):
     assert isinstance(result, str)
     found = [True if p in result else False for p in patterns]
     assert any(found)
+
+
+@pytest.mark.asyncio
+async def test_url_detection_multi_page_auto_routing():
+    sample = "examples/inputs/sample_test_doc.pdf"
+    patterns = ["http", "https", "www"]
+    model_type = "gemini-1.5-pro"
+    config = {"parser_type": "AUTO", "model": model_type, "verbose": True}
+    results = parse(sample, pages_per_split=1, **config)
+
+    assert len(results) == 6
+    for res in results:
+        content = res["content"]
+        if res["metadata"]["page"] == 1:
+            # Page 1: Fails to detect the URL
+            found = [True if p in content else False for p in patterns]
+            assert not any(found)
+        elif res["metadata"]["page"] == 2:
+            # Page 2: Detects the URL
+            found = [True if p in content else False for p in patterns]
+            assert any(found)
+        elif res["metadata"]["page"] == 3:
+            # Page 3: Does not contain any URL
+            found = [True if p in content else False for p in patterns]
+            assert not any(found)
+        elif res["metadata"]["page"] == 4:
+            # Page 4: Detects the URL
+            found = [True if p in content else False for p in patterns]
+            assert any(found)
+        elif res["metadata"]["page"] == 5:
+            # Page 5: Partially Detects the URL (finds www.apple.com but missing alias URL https:...)
+            found = [True if p in content else False for p in patterns[1:]]
+            assert not all(found)  # not all b'cauz it fails to detect https://
+        elif res["metadata"]["page"] == 6:
+            # Page 6: Detects the URL
+            found = True if "https://github" in content else False
+            assert found

@@ -3,6 +3,7 @@ import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
 from typing import Dict, List
+from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import parse_llm_doc
 from lexoid.core.parse_type.static_parser import parse_static_doc
@@ -40,8 +41,10 @@ def parse_chunk(
     if parser_type == ParserType.AUTO:
         parser_type = ParserType[router(path)]
     if parser_type == ParserType.STATIC_PARSE:
+        logger.debug("Using static parser")
         return parse_static_doc(path, raw, **kwargs)
     else:
+        logger.debug("Using LLM parser")
         return parse_llm_doc(path, raw, **kwargs)
 
 
