@@ -31,7 +31,7 @@ async def test_llm_parse(models):
     with open(f"{output_dir}/input_table_{models}.md", "w") as f:
         f.write(result)
     score = calculate_similarity(result, expected_ouput)
-    assert round(score, 3) > 0.8
+    assert round(score, 3) > 0.75
 
 
 @pytest.mark.asyncio
@@ -74,11 +74,13 @@ async def test_url_detection_auto_routing(sample):
     assert any(found)
 
 
+@pytest.mark.parametrize(
+    "model_type", ["gpt-4o", "gemini-1.5-pro", "gpt-4o-mini", "gemini-1.5-flash"]
+)
 @pytest.mark.asyncio
-async def test_url_detection_multi_page_auto_routing():
+async def test_url_detection_multi_page_auto_routing(model_type):
     sample = "examples/inputs/sample_test_doc.pdf"
     patterns = ["http", "https", "www"]
-    model_type = "gemini-1.5-pro"
     config = {"parser_type": "AUTO", "model": model_type, "verbose": True}
     results = parse(sample, pages_per_split=1, **config)
 

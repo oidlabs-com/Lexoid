@@ -1,4 +1,3 @@
-import os
 from typing import Dict, List
 
 import pandas as pd
@@ -65,7 +64,7 @@ def parse_with_pdfminer(path: str, raw: bool, **kwargs) -> List[Dict] | str:
 def parse_with_pdfplumber(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     page_texts = process_pdf_with_pdfplumber(path)
     if raw:
-        return "<page break>".join(page_texts)
+        return "<page-break>".join(page_texts)
     return [
         {
             "metadata": {"title": kwargs["title"], "page": kwargs["start"] + page_num},
