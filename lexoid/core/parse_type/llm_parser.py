@@ -79,6 +79,8 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
         result = raw_text.split("<output>")[1].strip()
     if "</output>" in result:
         result = result.split("</output>")[0].strip()
+    if kwargs["pages_per_split"] == 1:
+        result = result.replace("<page break>", "\n\n")
 
     if raw:
         return result
@@ -172,7 +174,8 @@ def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
 
     # Sort results by page number and combine
     all_results.sort(key=lambda x: x[0])
-    combined_text = "<page break>".join(text for _, text in all_results)
+    all_texts = [text for _, text in all_results]
+    combined_text = "<page break>".join(all_texts)
 
     if raw:
         return combined_text
@@ -185,6 +188,6 @@ def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             },
             "content": page,
         }
-        for page_no, page in enumerate(combined_text.split("<page break>"), start=1)
+        for page_no, page in enumerate(all_texts, start=1)
         if page.strip()
     ]

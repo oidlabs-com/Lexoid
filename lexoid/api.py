@@ -100,6 +100,7 @@ def parse(
         List[Dict] | str: Parsed document data as a list of dictionaries or raw text.
     """
     kwargs["title"] = os.path.basename(path)
+    kwargs["pages_per_split"] = pages_per_split
     as_pdf = kwargs.pop("as_pdf", False)
     parser_type = ParserType[parser_type]
 
