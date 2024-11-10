@@ -40,6 +40,10 @@ def parse_chunk(
     """
     if parser_type == ParserType.AUTO:
         parser_type = ParserType[router(path)]
+
+    kwargs["start"] = (
+        int(os.path.basename(path).split("_")[1]) - 1 if kwargs.get("split") else 0
+    )
     if parser_type == ParserType.STATIC_PARSE:
         logger.debug("Using static parser")
         return parse_static_doc(path, raw, **kwargs)

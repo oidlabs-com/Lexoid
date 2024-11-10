@@ -11,19 +11,18 @@ from pdfplumber.utils import extract_text, get_bbox_overlap, obj_to_bbox
 
 def parse_static_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     framework = kwargs.get("framework", "pymupdf")
-    start = int(os.path.basename(path).split("_")[1]) if kwargs.get("split") else 0
 
     if framework == "pymupdf":
-        return parse_with_pymupdf(path, raw, start, **kwargs)
+        return parse_with_pymupdf(path, raw, **kwargs)
     elif framework == "pdfminer":
-        return parse_with_pdfminer(path, raw, start, **kwargs)
+        return parse_with_pdfminer(path, raw, **kwargs)
     elif framework == "pdfplumber":
-        return parse_with_pdfplumber(path, raw, start, **kwargs)
+        return parse_with_pdfplumber(path, raw, **kwargs)
     else:
         raise ValueError(f"Unsupported framework: {framework}")
 
 
-def parse_with_pymupdf(path: str, raw: bool, start: int, **kwargs) -> List[Dict] | str:
+def parse_with_pymupdf(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     if raw:
         return pymupdf4llm.to_markdown(path)
     chunks = pymupdf4llm.to_markdown(path, page_chunks=True)
@@ -31,7 +30,7 @@ def parse_with_pymupdf(path: str, raw: bool, start: int, **kwargs) -> List[Dict]
         {
             "metadata": {
                 "title": kwargs["title"],
-                "page": start + chunk["metadata"]["page"],
+                "page": kwargs["start"] + chunk["metadata"]["page"],
             },
             "content": chunk["text"],
         }
@@ -39,7 +38,7 @@ def parse_with_pymupdf(path: str, raw: bool, start: int, **kwargs) -> List[Dict]
     ]
 
 
-def parse_with_pdfminer(path: str, raw: bool, start: int, **kwargs) -> List[Dict] | str:
+def parse_with_pdfminer(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     pages = list(extract_pages(path))
     docs = []
     for page_num, page_layout in enumerate(pages, start=1):
@@ -53,22 +52,23 @@ def parse_with_pdfminer(path: str, raw: bool, start: int, **kwargs) -> List[Dict
         else:
             docs.append(
                 {
-                    "metadata": {"title": kwargs["title"], "page": start + page_num},
+                    "metadata": {
+                        "title": kwargs["title"],
+                        "page": kwargs["start"] + page_num,
+                    },
                     "content": page_text,
                 }
             )
     return "\n".join(docs) if raw else docs
 
 
-def parse_with_pdfplumber(
-    path: str, raw: bool, start: int, **kwargs
-) -> List[Dict] | str:
+def parse_with_pdfplumber(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     page_texts = process_pdf_with_pdfplumber(path)
     if raw:
         return "<page break>".join(page_texts)
     return [
         {
-            "metadata": {"title": kwargs["title"], "page": start + page_num},
+            "metadata": {"title": kwargs["title"], "page": kwargs["start"] + page_num},
             "content": page_text,
         }
         for page_num, page_text in enumerate(page_texts, start=1)

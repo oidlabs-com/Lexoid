@@ -87,25 +87,25 @@ async def test_url_detection_multi_page_auto_routing():
         content = res["content"]
         if res["metadata"]["page"] == 1:
             # Page 1: Fails to detect the URL
-            found = [True if p in content else False for p in patterns]
+            found = [p in content for p in patterns]
             assert not any(found)
         elif res["metadata"]["page"] == 2:
             # Page 2: Detects the URL
-            found = [True if p in content else False for p in patterns]
+            found = [p in content for p in patterns]
             assert any(found)
         elif res["metadata"]["page"] == 3:
             # Page 3: Does not contain any URL
-            found = [True if p in content else False for p in patterns]
+            found = [p in content for p in patterns]
             assert not any(found)
         elif res["metadata"]["page"] == 4:
             # Page 4: Detects the URL
-            found = [True if p in content else False for p in patterns]
+            found = [p in content for p in patterns]
             assert any(found)
         elif res["metadata"]["page"] == 5:
-            # Page 5: Partially Detects the URL (finds www.apple.com but missing alias URL https:...)
-            found = [True if p in content else False for p in patterns[1:]]
-            assert not all(found)  # not all b'cauz it fails to detect https://
+            # Page 5: Detects all the URLs
+            found = [p in content for p in patterns]
+            assert all(found)
         elif res["metadata"]["page"] == 6:
             # Page 6: Detects the URL
-            found = True if "https://github" in content else False
+            found = "https://github" in content
             assert found

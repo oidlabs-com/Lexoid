@@ -8,7 +8,7 @@ Think step-by-step.
 - Analyze the given document thoroughly, identify formatting patterns, choose optimal markup, implement conversion and verify quality.
 - Your primary goal is to ensure structural fidelity of the input is replicated. Preserve all content without loss.
 - Use a combination of Markdown and HTML in your output. HTML can be used anywhere in the document, not just for complex structures. Choose the format that best replicates the original structural appearance. However, keep the font colors black and the background colors white.
-- For PDF documents, insert a `<page break>` tag between the content of each page to maintain the original page structure.
+- For multi-page PDF documents, insert a `<page break>` tag between the content of each page to maintain the original page structure. Do NOT add page breaks for single-page PDFs.
 - When reproducing tables, use HTML tables (<table>, <tr>, <td>) if they better represent the original layout. Utilize `colspan` and `rowspan` attributes as necessary to accurately represent merged cells.
 - Preserve all formatting elements such as bold, italic, underline, strikethrough text, font sizes, and colors using appropriate HTML tags and inline styles if needed.
 - Maintain the hierarchy (h1-h6) and styling of headings and subheadings using appropriate HTML tags or Markdown.
