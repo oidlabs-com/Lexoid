@@ -40,7 +40,7 @@ Think step-by-step.
     '6' has a closed loop vs 'G's open curve
     '0' is typically more oval than 'O'
     '8' has a more angular top than 'B'
-- {custom_instructions}
+{custom_instructions}
 - Return only the correct markdown without additional text or explanations. Do not any additional text (such as "```html" or "```markdown") in the output.
 - Think before generating the output in <thinking></thinking> tags.
 
@@ -76,4 +76,3 @@ Ensure accurate representation of all content, including tables and visual eleme
 """
 
 INSTRUCTIONS_ADD_PG_BREAK = "Insert a `<page-break>` tag between the content of each page to maintain the original page structure."
-INSTRUCTIONS_NO_PG_BREAK = "DO NOT add any `<page-breaks>` tags."

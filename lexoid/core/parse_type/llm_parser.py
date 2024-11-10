@@ -8,7 +8,6 @@ import pypdfium2 as pdfium
 import requests
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
-    INSTRUCTIONS_NO_PG_BREAK,
     OPENAI_USER_PROMPT,
     PARSER_PROMPT,
 )
@@ -48,9 +47,9 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
         base64_file = base64.b64encode(file_content).decode("utf-8")
 
     # Ideally, we do this ourselves. But, for now this might be a good enough.
-    custom_instruction = f"""Total number of pages: {kwargs["pages_per_split"]}. {INSTRUCTIONS_ADD_PG_BREAK}"""
+    custom_instruction = f"""- Total number of pages: {kwargs["pages_per_split"]}. {INSTRUCTIONS_ADD_PG_BREAK}"""
     if kwargs["pages_per_split"] == 1:
-        custom_instruction = INSTRUCTIONS_NO_PG_BREAK
+        custom_instruction = ""
 
     payload = {
         "contents": [
@@ -89,9 +88,6 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
         result = raw_text.split("<output>")[1].strip()
     if "</output>" in result:
         result = result.split("</output>")[0].strip()
-    if kwargs["pages_per_split"] == 1:
-        # preventive measure, in-case the model accidentally adds a page-break.
-        result = result.replace("<page-break>", "\n\n")
 
     if raw:
         return result
