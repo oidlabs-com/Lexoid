@@ -250,6 +250,88 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
     return split_by_headings(url, markdown_content, heading_pattern)
 
 
+def extract_urls_from_markdown(content: str) -> List[str]:
+    """
+    Extracts URLs from markdown content using regex.
+    Matches both [text](url) and bare http(s):// URLs.
+
+    Args:
+        content (str): Markdown content to search for URLs
+
+    Returns:
+        List[str]: List of unique URLs found
+    """
+    # Match markdown links [text](url) and bare URLs
+    markdown_pattern = r"\[([^\]]+)\]\((https?://[^\s\)]+)\)"
+    bare_url_pattern = r"(?<!\()(https?://[^\s\)]+)"
+
+    urls = []
+    # Extract URLs from markdown links
+    urls.extend(match.group(2) for match in re.finditer(markdown_pattern, content))
+    # Extract bare URLs
+    urls.extend(match.group(0) for match in re.finditer(bare_url_pattern, content))
+
+    return list(set(urls))  # Remove duplicates
+
+
+def recursive_read_html(
+    url: str, depth: int, raw: bool, visited_urls: set = None
+) -> Union[str, List[Dict]]:
+    """
+    Recursively reads HTML content from URLs up to specified depth.
+
+    Args:
+        url (str): The URL to parse
+        depth (int): How many levels deep to recursively parse
+        raw (bool): Whether to return raw text or structured data
+        visited_urls (set): Set of already visited URLs to prevent cycles
+
+    Returns:
+        Union[str, List[Dict]]: Combined content from all parsed URLs
+    """
+    if visited_urls is None:
+        visited_urls = set()
+
+    if url in visited_urls:
+        return "" if raw else []
+
+    visited_urls.add(url)
+
+    try:
+        content = read_html_content(url, raw)
+    except Exception as e:
+        print(f"Error processing URL {url}: {str(e)}")
+        return "" if raw else []
+
+    if depth <= 1:
+        return content
+
+    # Extract URLs from the content
+    if raw:
+        urls = extract_urls_from_markdown(content)
+    else:
+        # Extract URLs from all content sections
+        urls = []
+        for doc in content:
+            urls.extend(extract_urls_from_markdown(doc["content"]))
+
+    # Recursively process each URL
+    for sub_url in urls:
+        if sub_url not in visited_urls:
+            sub_content = recursive_read_html(sub_url, depth - 1, raw, visited_urls)
+
+            if raw:
+                if sub_content:
+                    content += f"\n\n--- Begin content from {sub_url} ---\n\n"
+                    content += sub_content
+                    content += f"\n\n--- End content from {sub_url} ---\n\n"
+            else:
+                if isinstance(sub_content, list):
+                    content.extend(sub_content)
+
+    return content
+
+
 def save_webpage_as_pdf(url: str, output_path: str) -> str:
     """
     Saves a webpage as a PDF file using PyQt5.

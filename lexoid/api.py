@@ -2,7 +2,7 @@ import os
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
-from typing import Dict, List
+from typing import Union, Dict, List
 from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import parse_llm_doc
@@ -11,7 +11,7 @@ from lexoid.core.utils import (
     convert_to_pdf,
     download_file,
     is_supported_file_type,
-    read_html_content,
+    recursive_read_html,
     router,
     split_pdf,
 )
@@ -84,7 +84,7 @@ def parse(
     pages_per_split: int = 4,
     max_processes: int = 4,
     **kwargs,
-) -> List[Dict] | str:
+) -> Union[List[Dict], str]:
     """
     Parses a document or URL, optionally splitting it into chunks and using multiprocessing.
 
@@ -97,11 +97,12 @@ def parse(
         **kwargs: Additional arguments for the parser.
 
     Returns:
-        List[Dict] | str: Parsed document data as a list of dictionaries or raw text.
+        Union[List[Dict], str]: Parsed document data as a list of dictionaries or raw text.
     """
     kwargs["title"] = os.path.basename(path)
     kwargs["pages_per_split"] = pages_per_split
     as_pdf = kwargs.pop("as_pdf", False)
+    depth = kwargs.pop("depth", 1)
     parser_type = ParserType[parser_type]
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -112,7 +113,7 @@ def parse(
                 pdf_path = os.path.join(temp_dir, "webpage.pdf")
                 path = convert_to_pdf(path, pdf_path)
             else:
-                return read_html_content(path, raw)
+                return recursive_read_html(path, depth, raw)
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
