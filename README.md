@@ -34,7 +34,7 @@ print(parsed_md)
 - **kwargs: Additional arguments for the parser.
 
 ## Benchmark
-
+Initial results (_more updates soon_)
 | Rank | Model/Framework | Similarity | Time (s) |
 |------|-----------|------------|----------|
 | 1 | gpt-4o | 0.799 | 21.77|
