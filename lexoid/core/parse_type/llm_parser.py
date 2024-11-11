@@ -6,14 +6,14 @@ from typing import Dict, List
 
 import pypdfium2 as pdfium
 import requests
-from loguru import logger
-from openai import OpenAI
-
 from lexoid.core.prompt_templates import (
+    INSTRUCTIONS_ADD_PG_BREAK,
     OPENAI_USER_PROMPT,
     PARSER_PROMPT,
 )
 from lexoid.core.utils import convert_image_to_pdf
+from loguru import logger
+from openai import OpenAI
 
 
 def parse_llm_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
@@ -46,11 +46,20 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             file_content = file.read()
         base64_file = base64.b64encode(file_content).decode("utf-8")
 
+    # Ideally, we do this ourselves. But, for now this might be a good enough.
+    custom_instruction = f"""- Total number of pages: {kwargs["pages_per_split"]}. {INSTRUCTIONS_ADD_PG_BREAK}"""
+    if kwargs["pages_per_split"] == 1:
+        custom_instruction = ""
+
     payload = {
         "contents": [
             {
                 "parts": [
-                    {"text": PARSER_PROMPT},
+                    {
+                        "text": PARSER_PROMPT.format(
+                            custom_instructions=custom_instruction
+                        )
+                    },
                     {"inline_data": {"mime_type": mime_type, "data": base64_file}},
                 ]
             }
@@ -91,7 +100,7 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             },
             "content": page,
         }
-        for page_no, page in enumerate(result.split("<page break>"), start=1)
+        for page_no, page in enumerate(result.split("<page-break>"), start=1)
         if page.strip()
     ]
 
@@ -172,7 +181,8 @@ def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
 
     # Sort results by page number and combine
     all_results.sort(key=lambda x: x[0])
-    combined_text = "<page break>".join(text for _, text in all_results)
+    all_texts = [text for _, text in all_results]
+    combined_text = "<page-break>".join(all_texts)
 
     if raw:
         return combined_text
@@ -185,6 +195,6 @@ def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             },
             "content": page,
         }
-        for page_no, page in enumerate(combined_text.split("<page break>"), start=1)
+        for page_no, page in enumerate(all_texts, start=1)
         if page.strip()
     ]
