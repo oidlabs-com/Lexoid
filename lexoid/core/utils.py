@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from difflib import SequenceMatcher
+from typing import Union, List, Dict
 from urllib.parse import urlparse
 
 import pikepdf
@@ -121,19 +122,132 @@ def download_file(url: str, temp_dir: str) -> str:
     return file_path
 
 
-def read_html_content(url: str) -> str:
+def find_dominant_heading_level(markdown_content: str) -> str:
     """
-    Reads the content of an HTML page from the given URL and converts it to markdown.
+    Finds the most common heading level that occurs more than once.
+    Also checks for underline style headings (---).
+
+    Args:
+        markdown_content (str): The markdown content to analyze
+
+    Returns:
+        str: The dominant heading pattern (e.g., '##' or 'underline')
+    """
+    # Check for underline style headings first
+    underline_pattern = r"^[^\n]+\n-+$"
+    underline_matches = re.findall(underline_pattern, markdown_content, re.MULTILINE)
+    if len(underline_matches) > 1:
+        return "underline"
+
+    # Find all hash-style headings in the markdown content
+    heading_patterns = ["#####", "####", "###", "##", "#"]
+    heading_counts = {}
+
+    for pattern in heading_patterns:
+        # Look for headings at the start of a line
+        regex = f"^{pattern} .*$"
+        matches = re.findall(regex, markdown_content, re.MULTILINE)
+        if len(matches) > 1:  # Only consider headings that appear more than once
+            heading_counts[pattern] = len(matches)
+
+    if not heading_counts:
+        return "#"  # Default to h1 if no repeated headings found
+
+    return min(heading_counts.keys(), key=len)
+
+
+def split_by_headings(
+    url: str, markdown_content: str, heading_pattern: str
+) -> List[Dict]:
+    """
+    Splits markdown content by the specified heading pattern and structures it.
+
+    Args:
+        url (str): The URL of the HTML page
+        markdown_content (str): The markdown content to split
+        heading_pattern (str): The heading pattern to split on (e.g., '##' or 'underline')
+
+    Returns:
+        List[Dict]: List of dictionaries containing metadata and content
+    """
+    structured_content = []
+
+    if heading_pattern == "underline":
+        # Split by underline headings
+        pattern = r"^([^\n]+)\n-+$"
+        sections = re.split(pattern, markdown_content, flags=re.MULTILINE)
+        # Remove empty sections and strip whitespace
+        sections = [section.strip() for section in sections if section.strip()]
+
+        # Handle content before first heading if it exists
+        if sections and not re.match(r"^[^\n]+\n-+$", sections[0], re.MULTILINE):
+            structured_content.append(
+                {
+                    "metadata": {"title": url, "page": "Introduction"},
+                    "content": sections.pop(0),
+                }
+            )
+
+        # Process sections pairwise (heading, content)
+        for i in range(0, len(sections), 2):
+            if i + 1 < len(sections):
+                structured_content.append(
+                    {
+                        "metadata": {"title": url, "page": sections[i]},
+                        "content": sections[i + 1],
+                    }
+                )
+    else:
+        # Split by hash headings
+        regex = f"^{heading_pattern} .*$"
+        sections = re.split(regex, markdown_content, flags=re.MULTILINE)
+        headings = re.findall(regex, markdown_content, flags=re.MULTILINE)
+
+        # Remove empty sections and strip whitespace
+        sections = [section.strip() for section in sections if section.strip()]
+
+        # Handle content before first heading if it exists
+        if len(sections) > len(headings):
+            structured_content.append(
+                {
+                    "metadata": {"title": url, "page": "Introduction"},
+                    "content": sections.pop(0),
+                }
+            )
+
+        # Process remaining sections
+        for heading, content in zip(headings, sections):
+            clean_heading = heading.replace(heading_pattern, "").strip()
+            structured_content.append(
+                {"metadata": {"title": url, "page": clean_heading}, "content": content}
+            )
+
+    return structured_content
+
+
+def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
+    """
+    Reads the content of an HTML page from the given URL and converts it to markdown or structured content.
 
     Args:
         url (str): The URL of the HTML page.
+        raw (bool): Whether to return raw markdown text or structured data.
 
     Returns:
-        str: The markdown content of the HTML page.
+        Union[str, List[Dict]]: Either raw markdown content or structured data with metadata and content sections.
     """
     response = requests.get(url)
     soup = BeautifulSoup(response.content, "html.parser")
-    return md(str(soup))
+    markdown_content = md(str(soup))
+
+    if raw:
+        return markdown_content
+
+    # Find the dominant heading level
+    heading_pattern = find_dominant_heading_level(markdown_content)
+
+    # Split content by headings and structure it
+    return split_by_headings(url, markdown_content, heading_pattern)
 
 
 def save_webpage_as_pdf(url: str, output_path: str) -> str:

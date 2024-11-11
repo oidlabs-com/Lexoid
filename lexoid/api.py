@@ -112,7 +112,7 @@ def parse(
                 pdf_path = os.path.join(temp_dir, "webpage.pdf")
                 path = convert_to_pdf(path, pdf_path)
             else:
-                return read_html_content(path)
+                return read_html_content(path, raw)
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
