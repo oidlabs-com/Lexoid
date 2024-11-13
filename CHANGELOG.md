@@ -20,3 +20,14 @@
 - Conversion of PDFs to images before parsing with OpenAI models
 
 ### Fixed
+
+
+## [0.1.3] - 2024-11-12
+
+### Added
+* `AUTO` parse mode
+
+### Changed
+* Switch from multithreading to multiprocessing
+
+### Fixed
