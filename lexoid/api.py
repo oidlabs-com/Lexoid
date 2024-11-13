@@ -2,6 +2,8 @@ import os
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
+from glob import glob
+from time import time
 from typing import Dict, List
 from loguru import logger
 
@@ -106,10 +108,12 @@ def parse(
 
     with tempfile.TemporaryDirectory() as temp_dir:
         if path.startswith(("http://", "https://")):
+            download_dir = os.path.join(temp_dir, "downloads/")
+            os.makedirs(download_dir, exist_ok=True)
             if is_supported_file_type(path):
-                path = download_file(path, temp_dir)
+                path = download_file(path, download_dir)
             elif as_pdf:
-                pdf_path = os.path.join(temp_dir, "webpage.pdf")
+                pdf_path = os.path.join(download_dir, f"webpage_{int(time())}.pdf")
                 path = convert_to_pdf(path, pdf_path)
             else:
                 return read_html_content(path)
@@ -125,7 +129,7 @@ def parse(
         kwargs["split"] = True
 
         split_pdf(path, temp_dir, pages_per_split)
-        split_files = [os.path.join(temp_dir, f) for f in sorted(os.listdir(temp_dir))]
+        split_files = sorted(glob(os.path.join(temp_dir, "*.pdf")))
 
         chunk_size = max(1, len(split_files) // max_processes)
         file_chunks = [
