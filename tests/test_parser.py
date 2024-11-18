@@ -117,5 +117,12 @@ async def test_url_detection_multi_page_auto_routing(model_type):
 @pytest.mark.parametrize("depth", [1, 2])
 async def test_recursive_url_parsing(depth):
     results = parse("https://example.com/", depth=depth)
-
     assert len(results) == depth
+
+
+@pytest.mark.asyncio
+async def test_url_parsing_in_pdf():
+    sample = "examples/inputs/sample_test_doc.pdf"
+    parser_type = "AUTO"
+    results = parse(sample, parser_type, pages_per_split=1, depth=2)
+    assert len(results) > 10, results
