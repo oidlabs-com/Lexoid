@@ -111,3 +111,11 @@ async def test_url_detection_multi_page_auto_routing(model_type):
             # Page 6: Detects the URL
             found = "https://github" in content
             assert found
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("depth", [1, 2])
+async def test_recursive_url_parsing(depth):
+    results = parse("https://example.com/", depth=depth)
+
+    assert len(results) == depth
