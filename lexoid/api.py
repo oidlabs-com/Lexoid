@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
@@ -104,8 +105,8 @@ def parse(
     """
     kwargs["title"] = os.path.basename(path)
     kwargs["pages_per_split"] = pages_per_split
-    as_pdf = kwargs.pop("as_pdf", False)
-    depth = kwargs.pop("depth", 1)
+    as_pdf = kwargs.get("as_pdf", False)
+    depth = kwargs.get("depth", 1)
     parser_type = ParserType[parser_type]
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -148,5 +149,13 @@ def parse(
                 all_docs = list(executor.map(parse_chunk_list, *zip(*process_args)))
 
         all_docs = [item for sublist in all_docs for item in sublist]
+
+    if depth > 1:
+        new_docs = []
+        for doc in all_docs:
+            urls = re.findall(r"(https?://[^\s]+)", doc["content"])
+            for url in urls:
+                new_docs.append(recursive_read_html(url, depth - 1, raw))
+        all_docs.extend(new_docs)
 
     return "\n".join(all_docs) if raw else all_docs
