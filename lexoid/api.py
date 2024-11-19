@@ -151,11 +151,9 @@ def parse(
         all_docs = [item for sublist in all_docs for item in sublist]
 
     if depth > 1:
-        new_docs = []
         for doc in all_docs:
             urls = re.findall(r"(https?://[^\s]+)", doc["content"])
             for url in urls:
-                new_docs.append(recursive_read_html(url, depth - 1, raw))
-        all_docs.extend(new_docs)
+                all_docs.extend(recursive_read_html(url, depth - 1, raw))
 
     return "\n".join(all_docs) if raw else all_docs
