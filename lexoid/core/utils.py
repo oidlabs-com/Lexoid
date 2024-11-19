@@ -24,6 +24,7 @@ HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
+    paths = []
     with pikepdf.open(input_path) as pdf:
         total_pages = len(pdf.pages)
         for start in range(0, total_pages, pages_per_split):
@@ -34,6 +35,8 @@ def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
             with pikepdf.new() as new_pdf:
                 new_pdf.pages.extend(pdf.pages[start:end])
                 new_pdf.save(output_path)
+                paths.append(output_path)
+    return paths
 
 
 def convert_image_to_pdf(image_path: str) -> bytes:
@@ -228,3 +231,15 @@ def router(path: str):
     if not has_image_in_pdf(path) and has_hyperlink_in_pdf(path):
         return "STATIC_PARSE"
     return "LLM_PARSE"
+
+
+def get_uri_rect(path):
+    with open(path, "rb") as fp:
+        byte_str = str(fp.read())
+    pattern = r"\((https?://[^\s)]+)\)"
+    uris = re.findall(pattern, byte_str)
+    rect_splits = byte_str.split("/Rect [")[1:]
+    rects = [
+        list(map(float, rect_split.split("]")[0].split())) for rect_split in rect_splits
+    ]
+    return {uri: rect for uri, rect in zip(uris, rects)}
