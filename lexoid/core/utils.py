@@ -237,7 +237,7 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
         Union[str, List[Dict]]: Either raw markdown content or structured data with metadata and content sections.
     """
     response = requests.get(url)
-    soup = BeautifulSoup(response.content, "html.parser")
+    soup = BeautifulSoup(response.content, "html.parser", from_encoding="iso-8859-1")
     markdown_content = md(str(soup))
 
     if raw:
