@@ -127,33 +127,47 @@ def parse(
 
         if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
             kwargs["split"] = False
-            return parse_chunk(path, parser_type, raw, **kwargs)
-
-        kwargs["split"] = True
-
-        split_pdf(path, temp_dir, pages_per_split)
-        split_files = sorted(glob(os.path.join(temp_dir, "*.pdf")))
-
-        chunk_size = max(1, len(split_files) // max_processes)
-        file_chunks = [
-            split_files[i : i + chunk_size]
-            for i in range(0, len(split_files), chunk_size)
-        ]
-
-        process_args = [(chunk, parser_type, raw, kwargs) for chunk in file_chunks]
-
-        if max_processes == 1 or len(file_chunks) == 1:
-            all_docs = [parse_chunk_list(*args) for args in process_args]
+            all_docs = parse_chunk(path, parser_type, raw, **kwargs)
+            if raw:
+                all_docs = [all_docs]
         else:
-            with ProcessPoolExecutor(max_workers=max_processes) as executor:
-                all_docs = list(executor.map(parse_chunk_list, *zip(*process_args)))
+            kwargs["split"] = True
 
-        all_docs = [item for sublist in all_docs for item in sublist]
+            split_pdf(path, temp_dir, pages_per_split)
+            split_files = sorted(glob(os.path.join(temp_dir, "*.pdf")))
+
+            chunk_size = max(1, len(split_files) // max_processes)
+            file_chunks = [
+                split_files[i : i + chunk_size]
+                for i in range(0, len(split_files), chunk_size)
+            ]
+
+            process_args = [(chunk, parser_type, raw, kwargs) for chunk in file_chunks]
+
+            if max_processes == 1 or len(file_chunks) == 1:
+                all_docs = [parse_chunk_list(*args) for args in process_args]
+            else:
+                with ProcessPoolExecutor(max_workers=max_processes) as executor:
+                    all_docs = list(executor.map(parse_chunk_list, *zip(*process_args)))
+
+            all_docs = [item for sublist in all_docs for item in sublist]
 
     if depth > 1:
+        new_docs = all_docs.copy()
         for doc in all_docs:
-            urls = re.findall(r"(https?://[^\s]+)", doc["content"])
+            urls = re.findall(
+                r"""\b((?:https?://)?(?:(?:www\.)?(?:[\da-z\.-]+)\.(?:[a-z]{2,6})|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)|(?:(?:[0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,7}:|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:(?:(?::[0-9a-fA-F]{1,4}){1,6})|:(?:(?::[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(?::[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(?:ffff(?::0{1,4}){0,1}:){0,1}(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])|(?:[0-9a-fA-F]{1,4}:){1,4}:(?:(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(?:25[0-5]|(?:2[0-4]|1{0,1}[0-9]){0,1}[0-9])))(?::[0-9]{1,4}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])?(?:/[\w\.-]*)*/?)\b""",
+                doc if raw else doc["content"],
+            )
             for url in urls:
-                all_docs.extend(recursive_read_html(url, depth - 1, raw))
+                logger.debug(f"Reading content from {url}")
+                if not url.startswith("http"):
+                    url = "https://" + url
+                res = recursive_read_html(url, depth - 1, raw)
+                if raw:
+                    new_docs.append(res)
+                else:
+                    new_docs.extend(res)
+        all_docs = new_docs
 
     return "\n".join(all_docs) if raw else all_docs
