@@ -25,9 +25,22 @@
 ## [0.1.3] - 2024-11-12
 
 ### Added
-* `AUTO` parse mode
+- `AUTO` parse mode
 
 ### Changed
-* Switch from multithreading to multiprocessing
+- Switch from multithreading to multiprocessing
 
 ### Fixed
+
+## [0.1.4] - 2024-11-22
+
+### Added
+- Support for structured parsing of HTML pages
+- Support for recursive URL parsing in websites and PDFs
+
+### Changed
+- URL extraction regex
+
+### Fixed
+- Bug in document appending logic
+- Bug caused by split pdfs being in same dir as source pdf
