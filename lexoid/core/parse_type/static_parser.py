@@ -6,12 +6,15 @@ import pymupdf4llm
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import extract_text, get_bbox_overlap, obj_to_bbox
+from docx import Document
 
 
 def parse_static_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     framework = kwargs.get("framework", "pymupdf")
 
-    if framework == "pymupdf":
+    if path.lower().endswith((".doc", ".docx")):
+        return parse_with_docx(path, raw, **kwargs)
+    elif framework == "pymupdf":
         return parse_with_pymupdf(path, raw, **kwargs)
     elif framework == "pdfminer":
         return parse_with_pdfminer(path, raw, **kwargs)
@@ -93,3 +96,21 @@ def process_pdf_with_pdfplumber(path: str) -> List[str]:
             page_text = extract_text(chars, layout=True)
             all_text.append(page_text)
     return all_text
+
+
+def parse_with_docx(path: str, raw: bool, **kwargs) -> List[Dict] | str:
+    doc = Document(path)
+    full_text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+
+    if raw:
+        return full_text
+
+    return [
+        {
+            "metadata": {
+                "title": kwargs["title"],
+                "page": kwargs["start"] + 1,
+            },
+            "content": full_text,
+        }
+    ]
