@@ -18,6 +18,7 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
+    convert_doc_to_pdf,
 )
 
 
@@ -110,6 +111,12 @@ def parse(
     parser_type = ParserType[parser_type]
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        if (
+            path.lower().endswith((".doc", ".docx"))
+            and kwargs.get("framework") != "docx"
+        ):
+            path = convert_doc_to_pdf(path, temp_dir)
+
         if path.startswith(("http://", "https://")):
             download_dir = os.path.join(temp_dir, "downloads/")
             os.makedirs(download_dir, exist_ok=True)
