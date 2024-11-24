@@ -1,10 +1,12 @@
 import os
+import re
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
 from glob import glob
 from time import time
-from typing import Dict, List
+from typing import Union, Dict, List
+
 from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import parse_llm_doc
@@ -13,7 +15,7 @@ from lexoid.core.utils import (
     convert_to_pdf,
     download_file,
     is_supported_file_type,
-    read_html_content,
+    recursive_read_html,
     router,
     split_pdf,
 )
@@ -86,7 +88,7 @@ def parse(
     pages_per_split: int = 4,
     max_processes: int = 4,
     **kwargs,
-) -> List[Dict] | str:
+) -> Union[List[Dict], str]:
     """
     Parses a document or URL, optionally splitting it into chunks and using multiprocessing.
 
@@ -99,11 +101,12 @@ def parse(
         **kwargs: Additional arguments for the parser.
 
     Returns:
-        List[Dict] | str: Parsed document data as a list of dictionaries or raw text.
+        Union[List[Dict], str]: Parsed document data as a list of dictionaries or raw text.
     """
     kwargs["title"] = os.path.basename(path)
     kwargs["pages_per_split"] = pages_per_split
-    as_pdf = kwargs.pop("as_pdf", False)
+    as_pdf = kwargs.get("as_pdf", False)
+    depth = kwargs.get("depth", 1)
     parser_type = ParserType[parser_type]
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -116,7 +119,7 @@ def parse(
                 pdf_path = os.path.join(download_dir, f"webpage_{int(time())}.pdf")
                 path = convert_to_pdf(path, pdf_path)
             else:
-                return read_html_content(path)
+                return recursive_read_html(path, depth, raw)
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
@@ -124,27 +127,49 @@ def parse(
 
         if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
             kwargs["split"] = False
-            return parse_chunk(path, parser_type, raw, **kwargs)
-
-        kwargs["split"] = True
-
-        split_pdf(path, temp_dir, pages_per_split)
-        split_files = sorted(glob(os.path.join(temp_dir, "*.pdf")))
-
-        chunk_size = max(1, len(split_files) // max_processes)
-        file_chunks = [
-            split_files[i : i + chunk_size]
-            for i in range(0, len(split_files), chunk_size)
-        ]
-
-        process_args = [(chunk, parser_type, raw, kwargs) for chunk in file_chunks]
-
-        if max_processes == 1 or len(file_chunks) == 1:
-            all_docs = [parse_chunk_list(*args) for args in process_args]
+            all_docs = parse_chunk(path, parser_type, raw, **kwargs)
+            if raw:
+                all_docs = [all_docs]
         else:
-            with ProcessPoolExecutor(max_workers=max_processes) as executor:
-                all_docs = list(executor.map(parse_chunk_list, *zip(*process_args)))
+            kwargs["split"] = True
 
-        all_docs = [item for sublist in all_docs for item in sublist]
+            split_pdf(path, temp_dir, pages_per_split)
+            split_files = sorted(glob(os.path.join(temp_dir, "*.pdf")))
+
+            chunk_size = max(1, len(split_files) // max_processes)
+            file_chunks = [
+                split_files[i : i + chunk_size]
+                for i in range(0, len(split_files), chunk_size)
+            ]
+
+            process_args = [(chunk, parser_type, raw, kwargs) for chunk in file_chunks]
+
+            if max_processes == 1 or len(file_chunks) == 1:
+                all_docs = [parse_chunk_list(*args) for args in process_args]
+            else:
+                with ProcessPoolExecutor(max_workers=max_processes) as executor:
+                    all_docs = list(executor.map(parse_chunk_list, *zip(*process_args)))
+
+            all_docs = [item for sublist in all_docs for item in sublist]
+
+    if depth > 1:
+        new_docs = all_docs.copy()
+        for doc in all_docs:
+            urls = re.findall(
+                r'https?://[^\s<>"\']+|www\.[^\s<>"\']+(?:\.[^\s<>"\']+)*',
+                doc if raw else doc["content"],
+            )
+            for url in urls:
+                if "](" in url:
+                    url = url.split("](")[-1]
+                logger.debug(f"Reading content from {url}")
+                if not url.startswith("http"):
+                    url = "https://" + url
+                res = recursive_read_html(url, depth - 1, raw)
+                if raw:
+                    new_docs.append(res)
+                else:
+                    new_docs.extend(res)
+        all_docs = new_docs
 
     return "\n".join(all_docs) if raw else all_docs
