@@ -10,7 +10,7 @@ from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
 
 
 def parse_static_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
-    framework = kwargs.get("framework", "pymupdf")
+    framework = kwargs.get("framework", "pdfplumber")
 
     if framework == "pymupdf":
         return parse_with_pymupdf(path, raw, **kwargs)
