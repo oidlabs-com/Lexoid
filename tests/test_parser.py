@@ -74,6 +74,25 @@ async def test_url_detection_auto_routing(sample):
     assert any(found)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sample",
+    [
+        "examples/inputs/test_explicit_hyperlink_n_img.pdf",
+        "examples/inputs/test_hidden_link_with_image.pdf",
+        "examples/inputs/test_with_hidden_links_no_img.pdf",
+    ],
+)
+async def test_url_detection_pdfplumber(sample):
+    patterns = ["http", "https", "www"]
+    framework = "pdfplumber"
+    config = {"parser_type": "STATIC_PARSE", "framework": framework}
+    result = parse(sample, raw=True, **config)
+    assert isinstance(result, str)
+    found = [True if p in result else False for p in patterns]
+    assert any(found)
+
+
 @pytest.mark.parametrize(
     "model_type", ["gpt-4o", "gemini-1.5-pro", "gpt-4o-mini", "gemini-1.5-flash"]
 )
