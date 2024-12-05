@@ -8,7 +8,6 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10"
 google-generativeai = "^0.8.1"
-pymupdf4llm = "^0.0.17"
 openai = "^1.47.0"
 pikepdf = "^9.3.0"
 pdfplumber = "^0.11.4"
