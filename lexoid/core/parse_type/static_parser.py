@@ -1,7 +1,6 @@
 import tempfile
 import pandas as pd
 import pdfplumber
-import pymupdf4llm
 from typing import List, Dict
 from lexoid.core.utils import get_uri_rect, split_pdf
 from pdfminer.high_level import extract_pages
@@ -12,30 +11,12 @@ from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
 def parse_static_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     framework = kwargs.get("framework", "pdfplumber")
 
-    if framework == "pymupdf":
-        return parse_with_pymupdf(path, raw, **kwargs)
+    if framework == "pdfplumber":
+        return parse_with_pdfplumber(path, raw, **kwargs)
     elif framework == "pdfminer":
         return parse_with_pdfminer(path, raw, **kwargs)
-    elif framework == "pdfplumber":
-        return parse_with_pdfplumber(path, raw, **kwargs)
     else:
         raise ValueError(f"Unsupported framework: {framework}")
-
-
-def parse_with_pymupdf(path: str, raw: bool, **kwargs) -> List[Dict] | str:
-    if raw:
-        return pymupdf4llm.to_markdown(path)
-    chunks = pymupdf4llm.to_markdown(path, page_chunks=True)
-    return [
-        {
-            "metadata": {
-                "title": kwargs["title"],
-                "page": kwargs["start"] + chunk["metadata"]["page"],
-            },
-            "content": chunk["text"],
-        }
-        for chunk in chunks
-    ]
 
 
 def parse_with_pdfminer(path: str, raw: bool, **kwargs) -> List[Dict] | str:

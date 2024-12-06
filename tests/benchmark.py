@@ -114,7 +114,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     config_options = {
         "parser_type": ["LLM_PARSE", "STATIC_PARSE"],
         "model": ["gemini-1.5-flash", "gemini-1.5-pro", "gpt-4o", "gpt-4o-mini"],
-        "framework": ["pymupdf", "pdfminer", "pdfplumber"],
+        "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
         "max_threads": [1, 2, 4, 8],
         "as_pdf": [True, False],
