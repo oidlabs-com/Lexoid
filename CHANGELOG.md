@@ -44,3 +44,12 @@
 ### Fixed
 - Bug in document appending logic
 - Bug caused by split pdfs being in same dir as source pdf
+
+## [0.1.5] - 2024-12-06
+
+### Added
+
+### Changed
+- Improved pdfplumber parsing to format markdown and detect hyperlinks
+
+### Fixed
