@@ -14,6 +14,7 @@ from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
     convert_to_pdf,
     download_file,
+    is_supported_url_file_type,
     is_supported_file_type,
     recursive_read_html,
     router,
@@ -44,6 +45,7 @@ def parse_chunk(
     """
     if parser_type == ParserType.AUTO:
         parser_type = ParserType[router(path)]
+        logger.debug(f"Auto-detected parser type: {parser_type}")
 
     kwargs["start"] = (
         int(os.path.basename(path).split("_")[1]) - 1 if kwargs.get("split") else 0
@@ -110,16 +112,26 @@ def parse(
     parser_type = ParserType[parser_type]
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        if (
+            path.lower().endswith((".doc", ".docx"))
+            and parser_type != ParserType.STATIC_PARSE
+        ):
+            as_pdf = True
+
         if path.startswith(("http://", "https://")):
             download_dir = os.path.join(temp_dir, "downloads/")
             os.makedirs(download_dir, exist_ok=True)
-            if is_supported_file_type(path):
+            if is_supported_url_file_type(path):
                 path = download_file(path, download_dir)
             elif as_pdf:
                 pdf_path = os.path.join(download_dir, f"webpage_{int(time())}.pdf")
                 path = convert_to_pdf(path, pdf_path)
             else:
                 return recursive_read_html(path, depth, raw)
+
+        assert is_supported_file_type(
+            path
+        ), f"Unsupported file type {os.path.splitext(path)[1]}"
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
@@ -132,9 +144,10 @@ def parse(
                 all_docs = [all_docs]
         else:
             kwargs["split"] = True
-
-            split_pdf(path, temp_dir, pages_per_split)
-            split_files = sorted(glob(os.path.join(temp_dir, "*.pdf")))
+            split_dir = os.path.join(temp_dir, "splits/")
+            os.makedirs(split_dir, exist_ok=True)
+            split_pdf(path, split_dir, pages_per_split)
+            split_files = sorted(glob(os.path.join(split_dir, "*.pdf")))
 
             chunk_size = max(1, len(split_files) // max_processes)
             file_chunks = [

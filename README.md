@@ -2,6 +2,11 @@
 
 Lexoid is an efficient document parsing library that supports both LLM-based and non-LLM-based (static) PDF document parsing.
 
+## Motivation:
+- Use the multi-modal advancement of LLMs
+- Enable convenience for users while driving innovation
+- Collaborate with a permissive license
+
 ## Dev
 ```
 1. make setup

@@ -2,21 +2,56 @@ import tempfile
 import pandas as pd
 import pdfplumber
 from typing import List, Dict
-from lexoid.core.utils import get_uri_rect, split_pdf
+from lexoid.core.utils import get_file_type, get_uri_rect, html_to_markdown, split_pdf
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
-from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
+from pdfplumber.utils import extract_text, get_bbox_overlap, obj_to_bbox
+from docx import Document
 
 
 def parse_static_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     framework = kwargs.get("framework", "pdfplumber")
 
-    if framework == "pdfplumber":
-        return parse_with_pdfplumber(path, raw, **kwargs)
-    elif framework == "pdfminer":
-        return parse_with_pdfminer(path, raw, **kwargs)
+    file_type = get_file_type(path)
+    if file_type == "application/pdf":
+        if framework == "pdfplumber":
+            return parse_with_pdfplumber(path, raw, **kwargs)
+        elif framework == "pdfminer":
+            return parse_with_pdfminer(path, raw, **kwargs)
+        else:
+            raise ValueError(f"Unsupported framework: {framework}")
+    elif "wordprocessing" in file_type:
+        return parse_with_docx(path, raw, **kwargs)
+    elif file_type == "text/html":
+        with open(path, "r") as f:
+            html_content = f.read()
+            return html_to_markdown(html_content, raw, kwargs["title"])
+    elif file_type == "text/plain":
+        with open(path, "r") as f:
+            content = f.read()
+            if raw:
+                return content
+            else:
+                return [
+                    {
+                        "metadata": {"title": kwargs["title"], "page": 1},
+                        "content": content,
+                    }
+                ]
+    elif file_type == "text/csv":
+        df = pd.read_csv(path)
+        content = df.to_markdown(index=False)
+        if raw:
+            return content
+        else:
+            return [
+                {
+                    "metadata": {"title": kwargs["title"], "page": 1},
+                    "content": content,
+                }
+            ]
     else:
-        raise ValueError(f"Unsupported framework: {framework}")
+        raise ValueError(f"Unsupported file type: {file_type}")
 
 
 def parse_with_pdfminer(path: str, raw: bool, **kwargs) -> List[Dict] | str:
@@ -285,7 +320,7 @@ def parse_with_pdfplumber(path: str, raw: bool, **kwargs) -> List[Dict] | str:
         Union[List[Dict], str]: Either a list of dictionaries containing page metadata and content,
                                or a string of raw text with page breaks
     """
-    page_texts = process_pdf_with_pdfplumber(path, **kwargs)
+    page_texts = process_pdf_with_pdfplumber(path)
     if raw:
         return "<page-break>".join(page_texts)
     return [
@@ -294,4 +329,22 @@ def parse_with_pdfplumber(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             "content": page_text,
         }
         for page_num, page_text in enumerate(page_texts, start=1)
+    ]
+
+
+def parse_with_docx(path: str, raw: bool, **kwargs) -> List[Dict] | str:
+    doc = Document(path)
+    full_text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+
+    if raw:
+        return full_text
+
+    return [
+        {
+            "metadata": {
+                "title": kwargs["title"],
+                "page": kwargs["start"] + 1,
+            },
+            "content": full_text,
+        }
     ]

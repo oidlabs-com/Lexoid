@@ -145,3 +145,26 @@ async def test_url_parsing_in_pdf():
     parser_type = "AUTO"
     results = parse(sample, parser_type, pages_per_split=1, depth=2)
     assert len(results) > 10, results
+
+
+@pytest.mark.asyncio
+async def test_parsing_txt_type():
+    sample = "examples/inputs/sample_test.txt"
+    parser_type = "AUTO"
+    results = parse(sample, parser_type)
+    assert len(results) == 1
+    assert results[0]["content"] is not None
+
+
+@pytest.mark.asyncio
+async def test_parsing_docx_type():
+    sample = "examples/inputs/sample.docx"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type)
+    assert len(results) == 1
+    assert results[0]["content"] is not None
+
+    parser_type = "LLM_PARSE"
+    results = parse(sample, parser_type)
+    assert len(results) > 1
+    assert results[0]["content"] is not None
