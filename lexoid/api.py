@@ -165,7 +165,18 @@ def parse(
                 logger.debug(f"Reading content from {url}")
                 if not url.startswith("http"):
                     url = "https://" + url
-                res = recursive_read_html(url, depth - 1, raw)
+
+                kwargs_cp = kwargs.copy()
+                kwargs_cp["depth"] = depth - 1
+                res = parse(
+                    url,
+                    parser_type=parser_type,
+                    raw=raw,
+                    pages_per_split=pages_per_split,
+                    max_processes=max_processes,
+                    **kwargs_cp,
+                )
+
                 if raw:
                     new_docs.append(res)
                 else:
