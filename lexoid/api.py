@@ -14,6 +14,7 @@ from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
     convert_to_pdf,
     download_file,
+    is_supported_url_file_type,
     is_supported_file_type,
     recursive_read_html,
     router,
@@ -120,13 +121,17 @@ def parse(
         if path.startswith(("http://", "https://")):
             download_dir = os.path.join(temp_dir, "downloads/")
             os.makedirs(download_dir, exist_ok=True)
-            if is_supported_file_type(path):
+            if is_supported_url_file_type(path):
                 path = download_file(path, download_dir)
             elif as_pdf:
                 pdf_path = os.path.join(download_dir, f"webpage_{int(time())}.pdf")
                 path = convert_to_pdf(path, pdf_path)
             else:
                 return recursive_read_html(path, depth, raw)
+
+        assert is_supported_file_type(
+            path
+        ), f"Unsupported file type {os.path.splitext(path)[1]}"
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
