@@ -8,6 +8,7 @@ from docx2pdf import convert
 from typing import Union, List, Dict
 from urllib.parse import urlparse
 
+from loguru import logger
 import pikepdf
 import pypdfium2
 import requests
@@ -465,7 +466,7 @@ def router(path: str):
     # 2. Other scenarios: LLM_PARSE
     # If you have other needs, do reach out or create an issue.
     if (
-        file_type == "applications/pdf"
+        file_type == "application/pdf"
         and not has_image_in_pdf(path)
         and has_hyperlink_in_pdf(path)
     ):

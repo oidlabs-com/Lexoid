@@ -320,7 +320,7 @@ def parse_with_pdfplumber(path: str, raw: bool, **kwargs) -> List[Dict] | str:
         Union[List[Dict], str]: Either a list of dictionaries containing page metadata and content,
                                or a string of raw text with page breaks
     """
-    page_texts = process_pdf_with_pdfplumber(path, **kwargs)
+    page_texts = process_pdf_with_pdfplumber(path)
     if raw:
         return "<page-break>".join(page_texts)
     return [
@@ -330,27 +330,6 @@ def parse_with_pdfplumber(path: str, raw: bool, **kwargs) -> List[Dict] | str:
         }
         for page_num, page_text in enumerate(page_texts, start=1)
     ]
-
-
-def process_pdf_with_pdfplumber(path: str) -> List[str]:
-    with pdfplumber.open(path) as pdf:
-        all_text = []
-        for page in pdf.pages:
-            filtered_page = page
-            chars = filtered_page.chars
-            for table in page.find_tables():
-                first_table_char = page.crop(table.bbox).chars[0]
-                filtered_page = filtered_page.filter(
-                    lambda obj: get_bbox_overlap(obj_to_bbox(obj), table.bbox) is None
-                )
-                chars = filtered_page.chars
-                df = pd.DataFrame(table.extract())
-                df.columns = df.iloc[0]
-                markdown = df.drop(0).to_markdown(index=False)
-                chars.append(first_table_char | {"text": markdown})
-            page_text = extract_text(chars, layout=True)
-            all_text.append(page_text)
-    return all_text
 
 
 def parse_with_docx(path: str, raw: bool, **kwargs) -> List[Dict] | str:

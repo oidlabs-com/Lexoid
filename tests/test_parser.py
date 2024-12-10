@@ -152,9 +152,6 @@ async def test_parsing_txt_type():
     sample = "examples/inputs/sample_test.txt"
     parser_type = "AUTO"
     results = parse(sample, parser_type)
-    import pdb
-
-    pdb.set_trace()
     assert len(results) == 1
     assert results[0]["content"] is not None
 

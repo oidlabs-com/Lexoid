@@ -19,7 +19,6 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
-    convert_doc_to_pdf,
 )
 
 
@@ -46,6 +45,7 @@ def parse_chunk(
     """
     if parser_type == ParserType.AUTO:
         parser_type = ParserType[router(path)]
+        logger.debug(f"Auto-detected parser type: {parser_type}")
 
     kwargs["start"] = (
         int(os.path.basename(path).split("_")[1]) - 1 if kwargs.get("split") else 0
