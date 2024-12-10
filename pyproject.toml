@@ -21,6 +21,7 @@ markdown = "^3.7"
 python-dotenv = "^1.0.0"
 loguru = "^0.7.2"
 docx2pdf = "^0.1.8"
+python-docx = "^1.1.2"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
