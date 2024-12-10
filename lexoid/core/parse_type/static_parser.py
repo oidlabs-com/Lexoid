@@ -5,7 +5,8 @@ from typing import List, Dict
 from lexoid.core.utils import get_file_type, get_uri_rect, html_to_markdown, split_pdf
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
-from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
+from pdfplumber.utils import extract_text, get_bbox_overlap, obj_to_bbox
+from docx import Document
 
 
 def parse_static_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
@@ -19,6 +20,8 @@ def parse_static_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             return parse_with_pdfminer(path, raw, **kwargs)
         else:
             raise ValueError(f"Unsupported framework: {framework}")
+    elif "wordprocessing" in file_type:
+        return parse_with_docx(path, raw, **kwargs)
     elif file_type == "text/html":
         with open(path, "r") as f:
             html_content = f.read()
@@ -326,4 +329,43 @@ def parse_with_pdfplumber(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             "content": page_text,
         }
         for page_num, page_text in enumerate(page_texts, start=1)
+    ]
+
+
+def process_pdf_with_pdfplumber(path: str) -> List[str]:
+    with pdfplumber.open(path) as pdf:
+        all_text = []
+        for page in pdf.pages:
+            filtered_page = page
+            chars = filtered_page.chars
+            for table in page.find_tables():
+                first_table_char = page.crop(table.bbox).chars[0]
+                filtered_page = filtered_page.filter(
+                    lambda obj: get_bbox_overlap(obj_to_bbox(obj), table.bbox) is None
+                )
+                chars = filtered_page.chars
+                df = pd.DataFrame(table.extract())
+                df.columns = df.iloc[0]
+                markdown = df.drop(0).to_markdown(index=False)
+                chars.append(first_table_char | {"text": markdown})
+            page_text = extract_text(chars, layout=True)
+            all_text.append(page_text)
+    return all_text
+
+
+def parse_with_docx(path: str, raw: bool, **kwargs) -> List[Dict] | str:
+    doc = Document(path)
+    full_text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+
+    if raw:
+        return full_text
+
+    return [
+        {
+            "metadata": {
+                "title": kwargs["title"],
+                "page": kwargs["start"] + 1,
+            },
+            "content": full_text,
+        }
     ]

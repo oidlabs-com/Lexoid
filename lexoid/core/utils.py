@@ -4,6 +4,7 @@ import os
 import re
 import sys
 from difflib import SequenceMatcher
+from docx2pdf import convert
 from typing import Union, List, Dict
 from urllib.parse import urlparse
 
@@ -86,6 +87,7 @@ def is_supported_file_type(path: str) -> bool:
     file_type = get_file_type(path)
     if (
         file_type == "application/pdf"
+        or "wordprocessing" in file_type
         or file_type.startswith("image/")
         or file_type.startswith("text")
     ):
@@ -421,12 +423,13 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
     """
     if input_path.startswith(("http://", "https://")):
         return save_webpage_as_pdf(input_path, output_path)
-    elif input_path.lower().endswith(
-        (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".gif")
-    ):
+    file_type = get_file_type(input_path)
+    if file_type.startswith("image/"):
         img_data = convert_image_to_pdf(input_path)
         with open(output_path, "wb") as f:
             f.write(img_data)
+    elif "word" in file_type:
+        return convert_doc_to_pdf(input_path, os.path.dirname(output_path))
     else:
         # Assume it's already a PDF, just copy it
         with open(input_path, "rb") as src, open(output_path, "wb") as dst:
@@ -461,9 +464,32 @@ def router(path: str):
     # 1. If the PDF has hidden hyperlinks (as alias) and no images: STATIC_PARSE
     # 2. Other scenarios: LLM_PARSE
     # If you have other needs, do reach out or create an issue.
-    if not has_image_in_pdf(path) and has_hyperlink_in_pdf(path):
+    if (
+        file_type == "applications/pdf"
+        and not has_image_in_pdf(path)
+        and has_hyperlink_in_pdf(path)
+    ):
         return "STATIC_PARSE"
     return "LLM_PARSE"
+
+
+def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
+    temp_path = os.path.join(
+        temp_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
+    )
+
+    # Convert the document to PDF
+    # docx2pdf is not supported in linux. Use LibreOffice in linux instead.
+    # May need to install LibreOffice if not already installed.
+    if "linux" in sys.platform.lower():
+        os.system(
+            f'lowriter --headless --convert-to pdf --outdir {temp_dir} "{input_path}"'
+        )
+    else:
+        convert(input_path, temp_path)
+
+    # Return the path of the converted PDF
+    return temp_path
 
 
 def get_uri_rect(path):

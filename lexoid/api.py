@@ -19,6 +19,7 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
+    convert_doc_to_pdf,
 )
 
 
@@ -111,6 +112,12 @@ def parse(
     parser_type = ParserType[parser_type]
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        if (
+            path.lower().endswith((".doc", ".docx"))
+            and parser_type != ParserType.STATIC_PARSE
+        ):
+            as_pdf = True
+
         if path.startswith(("http://", "https://")):
             download_dir = os.path.join(temp_dir, "downloads/")
             os.makedirs(download_dir, exist_ok=True)
@@ -137,9 +144,10 @@ def parse(
                 all_docs = [all_docs]
         else:
             kwargs["split"] = True
-
-            split_pdf(path, temp_dir, pages_per_split)
-            split_files = sorted(glob(os.path.join(temp_dir, "*.pdf")))
+            split_dir = os.path.join(temp_dir, "splits/")
+            os.makedirs(split_dir, exist_ok=True)
+            split_pdf(path, split_dir, pages_per_split)
+            split_files = sorted(glob(os.path.join(split_dir, "*.pdf")))
 
             chunk_size = max(1, len(split_files) // max_processes)
             file_chunks = [
