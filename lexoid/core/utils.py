@@ -76,7 +76,24 @@ def convert_pdf_page_to_image(
     return img_byte_arr.getvalue()
 
 
-def is_supported_file_type(url: str) -> bool:
+def get_file_type(path: str) -> str:
+    """Get the file type of a file based on its extension."""
+    return mimetypes.guess_type(path)[0]
+
+
+def is_supported_file_type(path: str) -> bool:
+    """Check if the file type is supported for parsing."""
+    file_type = get_file_type(path)
+    if (
+        file_type == "application/pdf"
+        or file_type.startswith("image/")
+        or file_type.startswith("text")
+    ):
+        return True
+    return False
+
+
+def is_supported_url_file_type(url: str) -> bool:
     """
     Check if the file type from the URL is supported.
 
@@ -159,8 +176,8 @@ def find_dominant_heading_level(markdown_content: str) -> str:
     return min(heading_counts.keys(), key=len)
 
 
-def split_by_headings(
-    url: str, markdown_content: str, heading_pattern: str
+def split_md_by_headings(
+    markdown_content: str, heading_pattern: str, title: str
 ) -> List[Dict]:
     """
     Splits markdown content by the specified heading pattern and structures it.
@@ -186,7 +203,7 @@ def split_by_headings(
         if sections and not re.match(r"^[^\n]+\n-+$", sections[0], re.MULTILINE):
             structured_content.append(
                 {
-                    "metadata": {"title": url, "page": "Introduction"},
+                    "metadata": {"title": title, "page": "Introduction"},
                     "content": sections.pop(0),
                 }
             )
@@ -196,7 +213,7 @@ def split_by_headings(
             if i + 1 < len(sections):
                 structured_content.append(
                     {
-                        "metadata": {"title": url, "page": sections[i]},
+                        "metadata": {"title": title, "page": sections[i]},
                         "content": sections[i + 1],
                     }
                 )
@@ -213,7 +230,7 @@ def split_by_headings(
         if len(sections) > len(headings):
             structured_content.append(
                 {
-                    "metadata": {"title": url, "page": "Introduction"},
+                    "metadata": {"title": title, "page": "Introduction"},
                     "content": sections.pop(0),
                 }
             )
@@ -222,10 +239,36 @@ def split_by_headings(
         for heading, content in zip(headings, sections):
             clean_heading = heading.replace(heading_pattern, "").strip()
             structured_content.append(
-                {"metadata": {"title": url, "page": clean_heading}, "content": content}
+                {
+                    "metadata": {"title": title, "page": clean_heading},
+                    "content": content,
+                }
             )
 
     return structured_content
+
+
+def html_to_markdown(html: str, raw: bool, title: str) -> str:
+    """
+    Converts HTML content to markdown.
+
+    Args:
+        html (str): The HTML content to convert.
+        raw (bool): Whether to return raw markdown text or structured data.
+
+    Returns:
+        Union[str, List[Dict]]: Either raw markdown content or structured data with metadata and content sections.
+    """
+    markdown_content = md(html)
+
+    if raw:
+        return markdown_content
+
+    # Find the dominant heading level
+    heading_pattern = find_dominant_heading_level(markdown_content)
+
+    # Split content by headings and structure it
+    return split_md_by_headings(markdown_content, heading_pattern, title)
 
 
 def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
@@ -241,16 +284,7 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
     """
     response = requests.get(url)
     soup = BeautifulSoup(response.content, "html.parser", from_encoding="iso-8859-1")
-    markdown_content = md(str(soup))
-
-    if raw:
-        return markdown_content
-
-    # Find the dominant heading level
-    heading_pattern = find_dominant_heading_level(markdown_content)
-
-    # Split content by headings and structure it
-    return split_by_headings(url, markdown_content, heading_pattern)
+    return html_to_markdown(str(soup), raw, title=url)
 
 
 def extract_urls_from_markdown(content: str) -> List[str]:
@@ -419,6 +453,9 @@ def has_hyperlink_in_pdf(path: str):
 
 
 def router(path: str):
+    file_type = get_file_type(path)
+    if file_type.startswith("text/"):
+        return "STATIC_PARSE"
     # Naive routing strategy for now.
     # Current routing strategy,
     # 1. If the PDF has hidden hyperlinks (as alias) and no images: STATIC_PARSE
