@@ -79,14 +79,7 @@ def convert_pdf_page_to_image(
 
 def get_file_type(path: str) -> str:
     """Get the file type of a file based on its extension."""
-    file_type = mimetypes.guess_type(path)[0]
-    if (
-        file_type
-        == "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        or file_type == "application/msword"
-    ):
-        file_type = "application/word"
-    return file_type
+    return mimetypes.guess_type(path)[0]
 
 
 def is_supported_file_type(path: str) -> bool:
@@ -94,6 +87,7 @@ def is_supported_file_type(path: str) -> bool:
     file_type = get_file_type(path)
     if (
         file_type == "application/pdf"
+        or "wordprocessing" in file_type
         or file_type.startswith("image/")
         or file_type.startswith("text")
     ):
@@ -429,12 +423,13 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
     """
     if input_path.startswith(("http://", "https://")):
         return save_webpage_as_pdf(input_path, output_path)
-    elif input_path.lower().endswith(
-        (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".gif")
-    ):
+    file_type = get_file_type(input_path)
+    if file_type.startswith("image/"):
         img_data = convert_image_to_pdf(input_path)
         with open(output_path, "wb") as f:
             f.write(img_data)
+    elif "word" in file_type:
+        return convert_doc_to_pdf(input_path, os.path.dirname(output_path))
     else:
         # Assume it's already a PDF, just copy it
         with open(input_path, "rb") as src, open(output_path, "wb") as dst:
@@ -469,7 +464,11 @@ def router(path: str):
     # 1. If the PDF has hidden hyperlinks (as alias) and no images: STATIC_PARSE
     # 2. Other scenarios: LLM_PARSE
     # If you have other needs, do reach out or create an issue.
-    if not has_image_in_pdf(path) and has_hyperlink_in_pdf(path):
+    if (
+        file_type == "applications/pdf"
+        and not has_image_in_pdf(path)
+        and has_hyperlink_in_pdf(path)
+    ):
         return "STATIC_PARSE"
     return "LLM_PARSE"
 

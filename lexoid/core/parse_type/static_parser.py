@@ -20,7 +20,7 @@ def parse_static_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             return parse_with_pdfminer(path, raw, **kwargs)
         else:
             raise ValueError(f"Unsupported framework: {framework}")
-    elif file_type == "application/word":
+    elif "wordprocessing" in file_type:
         return parse_with_docx(path, raw, **kwargs)
     elif file_type == "text/html":
         with open(path, "r") as f:
