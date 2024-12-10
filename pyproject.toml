@@ -21,6 +21,7 @@ markdown = "^3.7"
 python-dotenv = "^1.0.0"
 loguru = "^0.7.2"
 selenium = "^4.27.1"
+playwright = "^1.49.0"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"

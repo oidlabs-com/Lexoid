@@ -12,6 +12,7 @@ setup:
 
 dev: setup
 	.venv/bin/poetry install --with dev
+	.venv/bin/playwright install --with-deps --only-shell firefox
 
 clean:
 	rm -rf .venv

@@ -3,6 +3,8 @@ import mimetypes
 import os
 import re
 import sys
+import asyncio
+import nest_asyncio
 from difflib import SequenceMatcher
 from typing import Union, List, Dict
 from urllib.parse import urlparse
@@ -19,12 +21,9 @@ from PyQt5.QtGui import QPageLayout, QPageSize
 from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QApplication
-from selenium import webdriver
-from selenium.webdriver.firefox.options import Options
+from playwright.async_api import async_playwright
 
-options = Options()
-options.add_argument("--headless")
-driver = webdriver.Firefox(options=options)
+nest_asyncio.apply()
 
 # Source: https://stackoverflow.com/a/12982689
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
@@ -245,8 +244,18 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
     Returns:
         Union[str, List[Dict]]: Either raw markdown content or structured data with metadata and content sections.
     """
-    driver.get(url)
-    html = driver.page_source
+
+    async def fetch_page():
+        async with async_playwright() as p:
+            browser = await p.firefox.launch(headless=True)
+            page = await browser.new_page()
+            await page.goto(url)
+            html = await page.content()
+            await browser.close()
+            return html
+
+    loop = asyncio.get_event_loop()
+    html = loop.run_until_complete(fetch_page())
     soup = BeautifulSoup(html, "html.parser")
     markdown_content = md(str(soup))
 
