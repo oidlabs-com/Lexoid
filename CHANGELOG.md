@@ -53,3 +53,13 @@
 - Improved pdfplumber parsing to format markdown and detect hyperlinks
 
 ### Fixed
+
+## [0.1.6] - 2024-12-10
+
+### Added
+* Support for parsing .csv, .txt, and .html, and .docx files
+* Support for parsing links to documents when recursive HTML parsing
+
+### Changed
+
+### Fixed
