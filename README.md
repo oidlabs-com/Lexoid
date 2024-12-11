@@ -7,11 +7,35 @@ Lexoid is an efficient document parsing library that supports both LLM-based and
 - Enable convenience for users while driving innovation
 - Collaborate with a permissive license
 
-## Dev
+## Installation
+To install dependencies:
 ```
-1. make setup
-2. source .venv/bin/activate
-3. To build .whl for testing: poetry build
+make install
+```
+or, to install with dev-dependencies:
+```
+make dev
+```
+
+To activate virtual environment:
+```
+source .venv/bin/activate
+```
+
+To use LLM-based parsing, define the following environment variables or create a `.env` file with the following definitions
+```
+OPENAI_API_KEY=""
+GOOGLE_API_KEY=""
+```
+
+To build a `.whl` file for testing:
+```
+poetry build
+```
+
+Optionally, to use `Playwright` for retrieving web content with the `.whl` package (else regular requests will be used by default):
+```
+playwright install --with-deps --only-shell chromium
 ```
 
 ## Usage

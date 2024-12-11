@@ -23,7 +23,6 @@ from PyQt5.QtGui import QPageLayout, QPageSize
 from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QApplication
-from playwright.async_api import async_playwright
 
 nest_asyncio.apply()
 
@@ -291,18 +290,27 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
         Union[str, List[Dict]]: Either raw markdown content or structured data with metadata and content sections.
     """
 
-    async def fetch_page():
-        async with async_playwright() as p:
-            browser = await p.firefox.launch(headless=True)
-            page = await browser.new_page()
-            await page.goto(url)
-            html = await page.content()
-            await browser.close()
-            return html
+    try:
+        from playwright.async_api import async_playwright
 
-    loop = asyncio.get_event_loop()
-    html = loop.run_until_complete(fetch_page())
-    soup = BeautifulSoup(html, "html.parser")
+        async def fetch_page():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page()
+                await page.goto(url)
+                html = await page.content()
+                await browser.close()
+                return html
+
+        loop = asyncio.get_event_loop()
+        html = loop.run_until_complete(fetch_page())
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception as e:
+        logger.debug(f"Error reading HTML content from URL: {str(e)}")
+        response = requests.get(url)
+        soup = BeautifulSoup(
+            response.content, "html.parser", from_encoding="iso-8859-1"
+        )
     return html_to_markdown(str(soup), raw, title=url)
 
 
