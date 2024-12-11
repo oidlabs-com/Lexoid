@@ -5,7 +5,7 @@ from typing import List, Dict
 from lexoid.core.utils import get_file_type, get_uri_rect, html_to_markdown, split_pdf
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
-from pdfplumber.utils import extract_text, get_bbox_overlap, obj_to_bbox
+from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
 from docx import Document
 
 
