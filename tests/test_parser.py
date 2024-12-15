@@ -168,3 +168,12 @@ async def test_parsing_docx_type():
     results = parse(sample, parser_type)
     assert len(results) > 1
     assert results[0]["content"] is not None
+
+
+@pytest.mark.asyncio
+async def test_dynamic_js_parsing():
+    test_url = "https://go.contentsquare.com/ab-testing-playbook"
+    results = parse(test_url, parser_type="AUTO", raw=True)
+    # Check if the content contains the expected information
+    should_contain_info = "6 Types of experimentation"
+    assert should_contain_info.lower() in results.strip().lower()

@@ -1,20 +1,20 @@
+import asyncio
 import io
 import mimetypes
 import os
 import re
 import sys
-import asyncio
-import nest_asyncio
 from difflib import SequenceMatcher
-from docx2pdf import convert
-from typing import Union, List, Dict
+from typing import Dict, List, Union
 from urllib.parse import urlparse
 
-from loguru import logger
+import nest_asyncio
 import pikepdf
 import pypdfium2
 import requests
 from bs4 import BeautifulSoup
+from docx2pdf import convert
+from loguru import logger
 from markdown import markdown
 from markdownify import markdownify as md
 from PIL import Image
@@ -23,8 +23,6 @@ from PyQt5.QtGui import QPageLayout, QPageSize
 from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QApplication
-
-nest_asyncio.apply()
 
 # Source: https://stackoverflow.com/a/12982689
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
@@ -293,6 +291,8 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
     try:
         from playwright.async_api import async_playwright
 
+        nest_asyncio.apply()
+
         async def fetch_page():
             async with async_playwright() as p:
                 browser = await p.chromium.launch(headless=True)
@@ -306,7 +306,9 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
         html = loop.run_until_complete(fetch_page())
         soup = BeautifulSoup(html, "html.parser")
     except Exception as e:
-        logger.debug(f"Error reading HTML content from URL: {str(e)}")
+        logger.debug(
+            f"Error reading HTML content from URL, attempting with default https request: {str(e)}"
+        )
         response = requests.get(url)
         soup = BeautifulSoup(
             response.content, "html.parser", from_encoding="iso-8859-1"

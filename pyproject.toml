@@ -20,10 +20,10 @@ pypdfium2 = "^4.30.0"
 markdown = "^3.7"
 python-dotenv = "^1.0.0"
 loguru = "^0.7.2"
-selenium = "^4.27.1"
 playwright = "^1.49.0"
 docx2pdf = "^0.1.8"
 python-docx = "^1.1.2"
+nest-asyncio ="^1.6.0"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
