@@ -25,6 +25,3 @@ clean:
 
 build:
 	.venv/bin/poetry update && .venv/bin/poetry build
-
-build-debian:
-	.venv/bin/poetry update --without qt5 && .venv/bin/poetry build
