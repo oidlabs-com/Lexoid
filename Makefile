@@ -20,6 +20,8 @@ dev: setup
 
 clean:
 	rm -rf .venv
+	rm -rf lexoid.egg-info
+	rm -rf dist
 
 build:
 	.venv/bin/poetry update && .venv/bin/poetry build
