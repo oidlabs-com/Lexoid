@@ -85,7 +85,7 @@ def parse_chunk_list(
 
 def parse(
     path: str,
-    parser_type: str = "LLM_PARSE",
+    parser_type: Union[str, ParserType] = "LLM_PARSE",
     raw: bool = False,
     pages_per_split: int = 4,
     max_processes: int = 4,
@@ -96,7 +96,7 @@ def parse(
 
     Args:
         path (str): The file path or URL.
-        parser_type (str, optional): The type of parser to use ("LLM_PARSE", "STATIC_PARSE", or "AUTO"). Defaults to "LLM_PARSE".
+        parser_type (Union[str, ParserType], optional): The type of parser to use ("LLM_PARSE", "STATIC_PARSE", or "AUTO"). Defaults to "LLM_PARSE".
         raw (bool, optional): Whether to return raw text or structured data. Defaults to False.
         pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
         max_processes (int, optional): Maximum number of processes for parallel processing. Defaults to 4.
@@ -106,10 +106,11 @@ def parse(
         Union[List[Dict], str]: Parsed document data as a list of dictionaries or raw text.
     """
     kwargs["title"] = os.path.basename(path)
-    kwargs["pages_per_split"] = pages_per_split
+    kwargs["pages_per_split_"] = pages_per_split
     as_pdf = kwargs.get("as_pdf", False)
     depth = kwargs.get("depth", 1)
-    parser_type = ParserType[parser_type]
+    if type(parser_type) == str:
+        parser_type = ParserType[parser_type]
 
     with tempfile.TemporaryDirectory() as temp_dir:
         if (

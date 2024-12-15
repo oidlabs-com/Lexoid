@@ -47,8 +47,8 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
         base64_file = base64.b64encode(file_content).decode("utf-8")
 
     # Ideally, we do this ourselves. But, for now this might be a good enough.
-    custom_instruction = f"""- Total number of pages: {kwargs["pages_per_split"]}. {INSTRUCTIONS_ADD_PG_BREAK}"""
-    if kwargs["pages_per_split"] == 1:
+    custom_instruction = f"""- Total number of pages: {kwargs["pages_per_split_"]}. {INSTRUCTIONS_ADD_PG_BREAK}"""
+    if kwargs["pages_per_split_"] == 1:
         custom_instruction = ""
 
     payload = {

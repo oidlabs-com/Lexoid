@@ -116,7 +116,10 @@ def is_supported_url_file_type(url: str) -> bool:
         return True
 
     # If no extension in URL, try to get content type from headers
-    response = requests.head(url)
+    try:
+        response = requests.head(url)
+    except requests.exceptions.ConnectionError:
+        return False
     content_type = response.headers.get("Content-Type", "")
     ext = mimetypes.guess_extension(content_type)
 
