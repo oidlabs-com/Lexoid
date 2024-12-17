@@ -8,6 +8,12 @@ Lexoid is an efficient document parsing library that supports both LLM-based and
 - Collaborate with a permissive license
 
 ## Installation
+### Installing with pip
+```
+pip install lexoid
+```
+
+### Building from source
 To install dependencies:
 ```
 make install
