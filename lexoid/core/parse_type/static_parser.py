@@ -89,15 +89,19 @@ def process_table(table) -> str:
 
     # Convert to DataFrame and handle empty cells
     df = pd.DataFrame(table_data)
+    df.replace("", pd.NA, inplace=True)
+    df = df.dropna(how="all", axis=0)
+    df = df.dropna(how="all", axis=1)
     df = df.fillna("")
 
     # Use first row as header and clean it up
     df.columns = df.iloc[0]
-    df = df.drop(0)
+    df = df.drop(df.index[0])
+    df.replace(r"\n", "<br>", regex=True, inplace=True)
 
     # Convert to markdown with some formatting options
     markdown_table = df.to_markdown(index=False, tablefmt="pipe")
-    return f"\n{markdown_table}\n\n"  # Add newlines for proper markdown rendering
+    return f"\n{markdown_table}\n\n"
 
 
 def embed_links_in_text(page, text, links):
@@ -157,8 +161,20 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     x_tolerance = kwargs.get("x_tolerance", 1)
     y_tolerance = kwargs.get("y_tolerance", 5)
 
-    # First, identify tables and their positions
-    tables = page.find_tables()
+    # Table settings
+    vertical_strategy = kwargs.get("vertical_strategy", "lines")
+    horizontal_strategy = kwargs.get("horizontal_strategy", "lines")
+    snap_x_tolerance = kwargs.get("snap_x_tolerance", 10)
+    snap_y_tolerance = kwargs.get("snap_y_tolerance", 0)
+
+    tables = page.find_tables(
+        table_settings={
+            "vertical_strategy": vertical_strategy,
+            "horizontal_strategy": horizontal_strategy,
+            "snap_x_tolerance": snap_x_tolerance,
+            "snap_y_tolerance": snap_y_tolerance,
+        }
+    )
     table_zones = [(table.bbox, process_table(table)) for table in tables]
 
     # Create a filtered page excluding table areas
@@ -205,6 +221,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         while tables and word["bottom"] > tables[0][1]["bottom"]:
             content_elements.append(tables.pop(0))
         content_elements.append(("word", word))
+    content_elements.extend(tables)
 
     for element_type, element in content_elements:
         if element_type == "table":

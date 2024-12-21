@@ -177,3 +177,11 @@ async def test_dynamic_js_parsing():
     # Check if the content contains the expected information
     should_contain_info = "6 Types of experimentation"
     assert should_contain_info.lower() in results.strip().lower()
+
+
+@pytest.mark.asyncio
+async def test_table_parsing():
+    sample = "examples/inputs/test_1.pdf"
+    parser_type = "AUTO"
+    results = parse(sample, parser_type, raw=True)
+    assert [token in results for token in ["|", "Results", "Accuracy"]]
