@@ -58,7 +58,12 @@ def run_benchmark_config(
         if output_save_dir:
             filename = (
                 f"{Path(input_path).stem}_"
-                + ", ".join([f"{key}={value}" for key, value in config.items()])
+                + ", ".join(
+                    [
+                        f"{key}={value.replace("/", "_")}"
+                        for key, value in config.items()
+                    ]
+                )
                 + ".md"
             )
             with open(os.path.join(output_save_dir, filename), "w") as fp:
@@ -70,6 +75,7 @@ def run_benchmark_config(
             config=config, similarity=similarity, execution_time=execution_time
         )
     except Exception as e:
+        print(f"Error running benchmark for config: {config}\n{e}")
         return BenchmarkResult(
             config=config, similarity=0.0, execution_time=0.0, error=str(e)
         )
@@ -113,7 +119,13 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     """
     config_options = {
         "parser_type": ["LLM_PARSE", "STATIC_PARSE"],
-        "model": ["gemini-1.5-flash", "gemini-1.5-pro", "gpt-4o", "gpt-4o-mini"],
+        "model": [
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "meta-llama/Llama-3.2-11B-Vision-Instruct",
+        ],
         "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
         "max_threads": [1, 2, 4, 8],
