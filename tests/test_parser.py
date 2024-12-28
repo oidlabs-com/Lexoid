@@ -180,8 +180,8 @@ async def test_dynamic_js_parsing():
 
 
 @pytest.mark.asyncio
-async def test_table_parsing():
+async def test_pdfplumber_table_parsing():
     sample = "examples/inputs/test_1.pdf"
-    parser_type = "AUTO"
-    results = parse(sample, parser_type, raw=True)
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, raw=True, framework="pdfplumber")
     assert [token in results for token in ["|", "Results", "Accuracy"]]
