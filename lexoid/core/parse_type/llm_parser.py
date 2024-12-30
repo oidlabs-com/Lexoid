@@ -205,7 +205,7 @@ def parse_with_gpt(path: str, raw: bool, **kwargs) -> List[Dict] | str:
 
 def parse_with_hf(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     """
-    Parse documents (PDFs or images) using Groq's vision model.
+    Parse documents (PDFs or images) using HF's vision model.
 
     Args:
         path (str): Path to the document to parse

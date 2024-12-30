@@ -60,7 +60,7 @@ def run_benchmark_config(
                 f"{Path(input_path).stem}_"
                 + ", ".join(
                     [
-                        f"{key}={value.replace("/", "_")}"
+                        f"{key}={str(value).replace("/", "_")}"
                         for key, value in config.items()
                     ]
                 )
