@@ -89,15 +89,21 @@ def process_table(table) -> str:
 
     # Convert to DataFrame and handle empty cells
     df = pd.DataFrame(table_data)
+    df.replace("", pd.NA, inplace=True)
+    df = df.dropna(how="all", axis=0)
+    df = df.dropna(how="all", axis=1)
     df = df.fillna("")
+    if len(df) == 0:
+        return ""
 
     # Use first row as header and clean it up
     df.columns = df.iloc[0]
-    df = df.drop(0)
+    df = df.drop(df.index[0])
+    df.replace(r"\n", "<br>", regex=True, inplace=True)
 
     # Convert to markdown with some formatting options
     markdown_table = df.to_markdown(index=False, tablefmt="pipe")
-    return f"\n{markdown_table}\n\n"  # Add newlines for proper markdown rendering
+    return f"\n{markdown_table}\n\n"
 
 
 def embed_links_in_text(page, text, links):
@@ -157,8 +163,20 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     x_tolerance = kwargs.get("x_tolerance", 1)
     y_tolerance = kwargs.get("y_tolerance", 5)
 
-    # First, identify tables and their positions
-    tables = page.find_tables()
+    # Table settings
+    vertical_strategy = kwargs.get("vertical_strategy", "lines")
+    horizontal_strategy = kwargs.get("horizontal_strategy", "lines")
+    snap_x_tolerance = kwargs.get("snap_x_tolerance", 10)
+    snap_y_tolerance = kwargs.get("snap_y_tolerance", 0)
+
+    tables = page.find_tables(
+        table_settings={
+            "vertical_strategy": vertical_strategy,
+            "horizontal_strategy": horizontal_strategy,
+            "snap_x_tolerance": snap_x_tolerance,
+            "snap_y_tolerance": snap_y_tolerance,
+        }
+    )
     table_zones = [(table.bbox, process_table(table)) for table in tables]
 
     # Create a filtered page excluding table areas
@@ -171,12 +189,46 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     words = filtered_page.extract_words(
         x_tolerance=x_tolerance,
         y_tolerance=y_tolerance,
-        extra_attrs=["size", "top", "bottom"],
+        extra_attrs=["size", "top", "bottom", "fontname"],
     )
 
-    def format_paragraph(text):
-        text = " ".join(text.split())
-        return f"{text}\n\n"
+    def format_paragraph(text_elements):
+        """Format a paragraph with styling applied to individual words"""
+        formatted_words = []
+        for element in text_elements:
+            text = element["text"]
+            formatting = get_text_formatting(element)
+            formatted_words.append(apply_markdown_formatting(text, formatting))
+        return f"{' '.join(formatted_words)}\n\n"
+
+    def get_text_formatting(word):
+        """
+        Detect text formatting based on font properties
+        Returns a dict of formatting attributes
+        """
+        formatting = {
+            "bold": False,
+            "italic": False,
+        }
+
+        # Check font name for common bold/italic indicators
+        font_name = word.get("fontname", "").lower()
+        if any(style in font_name for style in ["bold", "heavy", "black"]):
+            formatting["bold"] = True
+        if any(style in font_name for style in ["italic", "oblique"]):
+            formatting["italic"] = True
+
+        return formatting
+
+    def apply_markdown_formatting(text, formatting):
+        """Apply markdown formatting to text based on detected styles"""
+        if formatting["bold"] and formatting["italic"]:
+            text = f"***{text}***"
+        elif formatting["bold"]:
+            text = f"**{text}**"
+        elif formatting["italic"]:
+            text = f"*{text}*"
+        return text
 
     def detect_heading_level(font_size):
         if font_size >= 24:
@@ -205,17 +257,18 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         while tables and word["bottom"] > tables[0][1]["bottom"]:
             content_elements.append(tables.pop(0))
         content_elements.append(("word", word))
+    content_elements.extend(tables)
 
     for element_type, element in content_elements:
         if element_type == "table":
             # If there are any pending paragraphs or headings, add them first
             if current_heading:
                 level = detect_heading_level(current_heading[0]["size"])
-                heading_text = " ".join(word["text"] for word in current_heading)
-                markdown_content.append(f"{'#' * level} {heading_text}\n\n")
+                heading_text = format_paragraph(current_heading)
+                markdown_content.append(f"{'#' * level} {heading_text}")
                 current_heading = []
             if current_paragraph:
-                markdown_content.append(format_paragraph(" ".join(current_paragraph)))
+                markdown_content.append(format_paragraph(current_paragraph))
                 current_paragraph = []
             # Add the table
             markdown_content.append(element["content"])
@@ -233,46 +286,42 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                 # If we were collecting a heading
                 if current_heading:
                     level = detect_heading_level(current_heading[0]["size"])
-                    heading_text = " ".join(word["text"] for word in current_heading)
-                    markdown_content.append(f"{'#' * level} {heading_text}\n\n")
+                    heading_text = format_paragraph(current_heading)
+                    markdown_content.append(f"{'#' * level} {heading_text}")
                     current_heading = []
 
                 # If we were collecting a paragraph
                 if current_paragraph:
-                    markdown_content.append(
-                        format_paragraph(" ".join(current_paragraph))
-                    )
+                    markdown_content.append(format_paragraph(current_paragraph))
                     current_paragraph = []
 
             # Add word to appropriate collection
             if heading_level:
                 if current_paragraph:  # Flush any pending paragraph
-                    markdown_content.append(
-                        format_paragraph(" ".join(current_paragraph))
-                    )
+                    markdown_content.append(format_paragraph(current_paragraph))
                     current_paragraph = []
-                current_heading.append({"text": word["text"], "size": word["size"]})
+                current_heading.append(word)
             else:
                 if current_heading:  # Flush any pending heading
                     level = detect_heading_level(current_heading[0]["size"])
-                    heading_text = " ".join(word["text"] for word in current_heading)
-                    markdown_content.append(f"{'#' * level} {heading_text}\n\n")
+                    heading_text = format_paragraph(current_heading)
+                    markdown_content.append(f"{'#' * level} {heading_text}")
                     current_heading = []
-                current_paragraph.append(word["text"])
+                current_paragraph.append(word)
 
             last_y = word["top"]
 
     # Handle remaining content
     if current_heading:
         level = detect_heading_level(current_heading[0]["size"])
-        heading_text = " ".join(word["text"] for word in current_heading)
-        markdown_content.append(f"{'#' * level} {heading_text}\n\n")
+        heading_text = format_paragraph(current_heading)
+        markdown_content.append(f"{'#' * level} {heading_text}")
 
     if current_paragraph:
-        markdown_content.append(format_paragraph(" ".join(current_paragraph)))
+        markdown_content.append(format_paragraph(current_paragraph))
 
     # Process links for the page
-    content = "".join(markdown_content)  # Process links using the new function
+    content = "".join(markdown_content)
     if page.annots:
         links = []
         for annot in page.annots:
@@ -282,6 +331,9 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
 
         if links:
             content = embed_links_in_text(page, content, links)
+
+    # Remove redundant formatting
+    content = content.replace("** **", " ").replace("* *", " ")
 
     return content
 
