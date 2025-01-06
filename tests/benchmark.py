@@ -125,6 +125,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
             "gpt-4o",
             "gpt-4o-mini",
             "meta-llama/Llama-3.2-11B-Vision-Instruct",
+            "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
         ],
         "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
