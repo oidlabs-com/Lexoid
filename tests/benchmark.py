@@ -60,7 +60,7 @@ def run_benchmark_config(
                 f"{Path(input_path).stem}_"
                 + ", ".join(
                     [
-                        f"{key}={str(value).replace("/", "_")}"
+                        f"{key}={str(value).replace('/', '_')}"
                         for key, value in config.items()
                     ]
                 )
@@ -120,11 +120,14 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     config_options = {
         "parser_type": ["LLM_PARSE", "STATIC_PARSE"],
         "model": [
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            "gpt-4o",
-            "gpt-4o-mini",
-            "meta-llama/Llama-3.2-11B-Vision-Instruct",
+            # "gemini-1.5-flash",
+            # "gemini-1.5-pro",
+            # "gpt-4o",
+            # "gpt-4o-mini",
+            # "meta-llama/Llama-3.2-11B-Vision-Instruct",
+            # "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+            # "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
+            "meta-llama/Llama-Vision-Free",
         ],
         "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
