@@ -47,6 +47,7 @@ source .venv/bin/activate
 
 ## Usage
 [Example Notebook](https://github.com/oidlabs-com/Lexoid/blob/main/examples/example_notebook.ipynb)
+[Example Colab Notebook](https://drive.google.com/file/d/1v9R6VOUp9CEGalgZGeg5G57XzHqh_tB6/view?usp=sharing)
 
 Here's a quick example to parse documents using Lexoid:
 ``` python
