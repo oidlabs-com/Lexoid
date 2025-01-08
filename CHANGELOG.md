@@ -63,3 +63,16 @@
 ### Changed
 
 ### Fixed
+
+## [0.1.7] - 2025-01-08
+
+### Added
+* Colab example notebook
+* Support for bold and italic formatting in PDFPlumber
+* Support for Llama 3.2 models through HuggingFace and Together AI
+
+### Changed
+* Improved PDFPlumber table parsing
+
+### Fixed
+* PDFPlumber text detection bug
