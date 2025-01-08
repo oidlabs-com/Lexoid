@@ -120,6 +120,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     config_options = {
         "parser_type": ["LLM_PARSE", "STATIC_PARSE"],
         "model": [
+            "gemini-exp-1121",
             "gemini-2.0-flash-exp",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
