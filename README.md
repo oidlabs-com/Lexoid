@@ -65,13 +65,14 @@ print(parsed_md)
 ### Parameters
 - path (str): The file path or URL.
 - parser_type (str, optional): The type of parser to use ("LLM_PARSE" or "STATIC_PARSE"). Defaults to "AUTO".
-- raw (bool, optional): Whether to return raw text or structured data. Defaults to False.
+- raw (bool, optional): Return raw text or structured data. Defaults to False.
 - pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
 - max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
 - **kwargs: Additional arguments for the parser.
 
 ## Benchmark
 Initial results (_more updates soon_)
+_Note:_ Benchmarks done in zero-shot scenario currently
 | Rank | Model/Framework | Similarity | Time (s) |
 |------|-----------|------------|----------|
 | 1 | gpt-4o | 0.799 | 21.77|
