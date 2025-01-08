@@ -75,10 +75,11 @@ Initial results (_more updates soon_)
 | Rank | Model/Framework | Similarity | Time (s) |
 |------|-----------|------------|----------|
 | 1 | gpt-4o | 0.799 | 21.77|
-| 2 | gemini-1.5-pro | 0.742 | 15.77 |
-| 3 | gpt-4o-mini | 0.721 | 14.86 |
-| 4 | gemini-1.5-flash | 0.702 | 4.56 |
-| 5 | Llama-3.2-11B-Vision-Instruct (via HF) | 0.582 | 21.74 |
-| 6 | Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI) | 0.556 | 4.58 |
-| 7 | Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI) | 0.527 | 10.57 |
-| 7 | Llama-Vision-Free (via Together AI) | 0.435 | 8.42 |
+| 2 | gemini-2.0-flash-exp | 0.797 | 13.47 |
+| 3 | gemini-1.5-pro | 0.742 | 15.77 |
+| 4 | gpt-4o-mini | 0.721 | 14.86 |
+| 5 | gemini-1.5-flash | 0.702 | 4.56 |
+| 6 | Llama-3.2-11B-Vision-Instruct (via HF) | 0.582 | 21.74 |
+| 7 | Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI) | 0.556 | 4.58 |
+| 8 | Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI) | 0.527 | 10.57 |
+| 9 | Llama-Vision-Free (via Together AI) | 0.435 | 8.42 |
