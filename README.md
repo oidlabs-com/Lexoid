@@ -4,7 +4,7 @@ Lexoid is an efficient document parsing library that supports both LLM-based and
 
 ## Motivation:
 - Use the multi-modal advancement of LLMs
-- Enable convenience for users while driving innovation
+- Enable convenience for users
 - Collaborate with a permissive license
 
 ## Installation
@@ -19,13 +19,12 @@ OPENAI_API_KEY=""
 GOOGLE_API_KEY=""
 ```
 
-Optionally, to use `Playwright` for retrieving web content with the `.whl` package (else regular requests will be used by default):
+Optionally, to use `Playwright` for retrieving web content (instead of the `requests` library):
 ```
 playwright install --with-deps --only-shell chromium
 ```
 
 ### Building `.whl` from source
-To create `.whl`:
 ```
 make build
 ```
@@ -47,6 +46,7 @@ source .venv/bin/activate
 
 ## Usage
 [Example Notebook](https://github.com/oidlabs-com/Lexoid/blob/main/examples/example_notebook.ipynb)
+
 [Example Colab Notebook](https://drive.google.com/file/d/1v9R6VOUp9CEGalgZGeg5G57XzHqh_tB6/view?usp=sharing)
 
 Here's a quick example to parse documents using Lexoid:
