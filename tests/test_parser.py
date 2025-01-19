@@ -185,3 +185,12 @@ async def test_pdfplumber_table_parsing():
     parser_type = "STATIC_PARSE"
     results = parse(sample, parser_type, raw=True, framework="pdfplumber")
     assert [token in results for token in ["|", "Results", "Accuracy"]]
+
+
+@pytest.mark.asyncio
+async def test_large_pdf_parsing():
+    sample = "examples/inputs/test_large_doc.pdf"
+    parser_type = "AUTO"
+    results = parse(sample, parser_type, raw=False)
+    assert len(results) > 1
+    assert results[0]["content"] is not None
