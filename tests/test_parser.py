@@ -200,6 +200,6 @@ async def test_large_pdf_parsing(sample):
     parser_type = "AUTO"
     file_name = sample[0]
     n_pages = sample[1]
-    results = parse(file_name, parser_type, raw=False)
-    assert len(results) >= n_pages
+    results = parse(file_name, parser_type, raw=False, pages_per_split=1)
+    assert len(results) == n_pages
     assert results[0]["content"] is not None

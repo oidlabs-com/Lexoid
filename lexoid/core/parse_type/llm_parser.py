@@ -138,7 +138,6 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             "content": page,
         }
         for page_no, page in enumerate(result.split("<page-break>"), start=1)
-        if page.strip()
     ]
 
 
@@ -284,5 +283,4 @@ def parse_with_api(path: str, raw: bool, api: str, **kwargs) -> List[Dict] | str
             "content": page,
         }
         for page_no, page in enumerate(all_texts, start=1)
-        if page.strip()
     ]
