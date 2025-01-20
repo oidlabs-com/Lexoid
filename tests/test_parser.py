@@ -5,6 +5,7 @@ import os
 
 import pytest
 from dotenv import load_dotenv
+
 from lexoid.api import parse
 from lexoid.core.utils import calculate_similarity
 
@@ -188,9 +189,17 @@ async def test_pdfplumber_table_parsing():
 
 
 @pytest.mark.asyncio
-async def test_large_pdf_parsing():
-    sample = "examples/inputs/test_large_doc.pdf"
+@pytest.mark.parametrize(
+    "sample",
+    [
+        ("examples/inputs/stress_test/large_doc_1.pdf", 527),
+        ("examples/inputs/stress_test/large_doc_2.pdf", 117),
+    ],
+)
+async def test_large_pdf_parsing(sample):
     parser_type = "AUTO"
-    results = parse(sample, parser_type, raw=False)
-    assert len(results) > 1
+    file_name = sample[0]
+    n_pages = sample[1]
+    results = parse(file_name, parser_type, raw=False)
+    assert len(results) >= n_pages
     assert results[0]["content"] is not None
