@@ -2,10 +2,13 @@ import base64
 import io
 import mimetypes
 import os
-from typing import Dict, List
-
+import time
 import pypdfium2 as pdfium
 import requests
+from functools import wraps
+from requests.exceptions import HTTPError
+from typing import Dict, List
+
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
     OPENAI_USER_PROMPT,
@@ -19,6 +22,34 @@ from huggingface_hub import InferenceClient
 from together import Together
 
 
+def retry_on_http_error(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except HTTPError as e:
+            logger.error(f"HTTPError encountered: {e}. Retrying in 10 seconds...")
+            time.sleep(10)
+            try:
+                return func(*args, **kwargs)
+            except HTTPError as e:
+                logger.error(f"Retry failed: {e}")
+                if kwargs.get("raw", False):
+                    return ""
+                return [
+                    {
+                        "metadata": {
+                            "title": kwargs["title"],
+                            "page": kwargs.get("start", 0),
+                        },
+                        "content": "",
+                    }
+                ]
+
+    return wrapper
+
+
+@retry_on_http_error
 def parse_llm_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     if "model" not in kwargs:
         kwargs["model"] = "gemini-1.5-flash"
@@ -107,7 +138,6 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
             "content": page,
         }
         for page_no, page in enumerate(result.split("<page-break>"), start=1)
-        if page.strip()
     ]
 
 
@@ -253,5 +283,4 @@ def parse_with_api(path: str, raw: bool, api: str, **kwargs) -> List[Dict] | str
             "content": page,
         }
         for page_no, page in enumerate(all_texts, start=1)
-        if page.strip()
     ]
