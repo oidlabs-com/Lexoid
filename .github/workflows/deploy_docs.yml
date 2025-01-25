@@ -1,0 +1,23 @@
+name: Docs
+
+on:
+  push:
+    branches:
+      - main
+      - dj/docs
+    paths:
+      - 'docs/**'
+      - '.github/workflows/deploy_docs.yml'
+
+jobs:
+  pages:
+    runs-on: ubuntu-20.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+    - id: deployment
+      uses: sphinx-notes/pages@v3
