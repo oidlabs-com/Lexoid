@@ -1,2 +1,2 @@
-sphinx = "^8.1.3"
-pydata-sphinx-theme = "^0.16.1"
+sphinx
+pydata-sphinx-theme
