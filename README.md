@@ -79,7 +79,9 @@ print(parsed_md)
 
 ## Benchmark
 Initial results (_more updates soon_)
-_Note:_ Benchmarks done in zero-shot scenario currently
+
+_Note:_ Benchmarks are currently done in the zero-shot setting.
+
 | Rank | Model/Framework | Similarity | Time (s) |
 |------|-----------|------------|----------|
 | 1 | gpt-4o | 0.799 | 21.77|

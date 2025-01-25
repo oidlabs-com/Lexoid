@@ -10,6 +10,7 @@ Lexoid is an efficient document parsing library that supports both LLM-based and
    installation
    api
    contributing
+   benchmark
 
 Key Features
 ------------
