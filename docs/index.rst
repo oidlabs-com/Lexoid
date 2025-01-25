@@ -1,8 +1,7 @@
 Welcome to Lexoid's Documentation
 =================================
 
-Lexoid is a powerful document parsing library that supports multiple file formats and parsing strategies. 
-It can handle PDFs, images, Word documents, HTML pages, and more using both static parsing and LLM-based parsing approaches.
+Lexoid is an efficient document parsing library that supports both LLM-based and non-LLM-based (static) PDF document parsing.
 
 .. toctree::
    :maxdepth: 2
@@ -15,14 +14,13 @@ It can handle PDFs, images, Word documents, HTML pages, and more using both stat
 Key Features
 ------------
 
-* Multi-format support
 * Multiple parsing strategies (LLM-based and static parsing)
-* Support for multiple LLM providers (OpenAI, Google, Meta/Llama, Together AI)
 * Automatic parsing strategy selection
+* Support for multiple LLM providers (OpenAI, Google, Meta/Llama, Together AI)
 * Table detection and markdown conversion
 * Hyperlink detection and preservation
-* Multi-page document handling
 * Recursive URL parsing
+* Multi-format support
 * Parallel processing support
 * Permissive license
 

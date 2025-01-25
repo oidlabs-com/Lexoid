@@ -1,8 +1,8 @@
 API Reference
 =============
 
-Core Functions
---------------
+Core Function
+-------------
 
 parse
 ^^^^^
@@ -44,7 +44,7 @@ Basic Usage
     result = parse("document.pdf")
 
     # Raw text output
-    text = parse("document.pdf", raw=True)
+    parsed_md = parse("document.pdf", raw=True)
 
     # Automatic parser selection
     result = parse("document.pdf", parser_type="AUTO")
@@ -54,11 +54,23 @@ LLM-Based Parsing
 
 .. code-block:: python
 
-    # Parse using GPT-4
+    # Parse using GPT-4o
     result = parse("document.pdf", parser_type="LLM_PARSE", model="gpt-4o")
 
-    # Parse using Gemini
-    result = parse("document.pdf", model="gemini-1.5-pro")
+    # Parse using Gemini 1.5 Pro
+    result = parse("document.pdf", parser_type="LLM_PARSE", model="gemini-1.5-pro")
+
+
+Static Parsing
+^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+    # Parse using PDFPlumber
+    result = parse("document.pdf", parser_type="STATIC_PARSE", model="pdfplumber")
+
+    # Parse using PDFMiner
+    result = parse("document.pdf", parser_type="STATIC_PARSE", model="pdfminer")
 
 Web Content
 ^^^^^^^^^^^
@@ -68,7 +80,7 @@ Web Content
     # Parse webpage
     result = parse("https://example.com")
 
-    # Parse webpage recursively
+    # Parse webpage and the pages linked within the page
     result = parse("https://example.com", depth=2)
 
 Return Value Format

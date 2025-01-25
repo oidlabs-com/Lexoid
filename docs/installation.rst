@@ -15,8 +15,10 @@ To use LLM-based parsing, define the following environment variables or create a
 
 .. code-block:: bash
 
-    OPENAI_API_KEY=""
-    GOOGLE_API_KEY=""
+    GOOGLE_API_KEY=your_google_api_key
+    OPENAI_API_KEY=your_openai_api_key
+    HUGGINGFACEHUB_API_TOKEN=your_huggingface_token
+    TOGETHER_API_KEY=your_together_api_key
 
 Optional Dependencies
 ---------------------
