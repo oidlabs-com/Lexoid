@@ -3,8 +3,11 @@
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/oidlabs-com/Lexoid/blob/main/examples/example_notebook_colab.ipynb)
 [![GitHub license](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/oidlabs-com/Lexoid/blob/main/LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/lexoid)](https://pypi.org/project/lexoid/)
+[![Docs](https://github.com/oidlabs-com/Lexoid/actions/workflows/deploy_docs.yml/badge.svg)](https://oidlabs-com.github.io/Lexoid/)
 
 Lexoid is an efficient document parsing library that supports both LLM-based and non-LLM-based (static) PDF document parsing.
+
+[Documentation](https://oidlabs-com.github.io/Lexoid/)
 
 ## Motivation:
 - Use the multi-modal advancement of LLMs
