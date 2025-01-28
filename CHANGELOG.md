@@ -80,7 +80,15 @@
 ## [0.1.8] - 2025-01-23
 
 ### Added
-* Rretry and error handling for LLM_PARSE
+* Retry and error handling for LLM_PARSE
 
 ### Changed
 * Remove together Python client dependency and use REST API calls instead
+
+## [0.1.8.post1] - 2025-01-28
+
+### Added
+* Documentation
+
+### Changed
+* Specify headers for Playwright web page retrieval
