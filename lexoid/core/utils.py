@@ -298,9 +298,44 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
 
         async def fetch_page():
             async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                page = await browser.new_page()
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                        "--window-size=1920,1080",
+                    ],
+                )
+                context = await browser.new_context(
+                    viewport={"width": 1920, "height": 1080},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    bypass_csp=True,
+                )
+                page = await context.new_page()
+
+                # Add headers to appear more like a real browser
+                await page.set_extra_http_headers(
+                    {
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.5",
+                        "Sec-Fetch-Dest": "document",
+                        "Sec-Fetch-Mode": "navigate",
+                        "Sec-Fetch-Site": "none",
+                        "Sec-Fetch-User": "?1",
+                    }
+                )
+
                 await page.goto(url)
+
+                # Wait for Cloudflare check to complete
+                await page.wait_for_load_state("networkidle")
+
+                # Additional wait for any dynamic content
+                try:
+                    await page.wait_for_selector("body", timeout=30000)
+                except:
+                    pass
+
                 html = await page.content()
                 await browser.close()
                 return html
