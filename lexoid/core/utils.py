@@ -5,6 +5,7 @@ import os
 import re
 import sys
 from difflib import SequenceMatcher
+from hashlib import md5
 from typing import Dict, List, Union
 from urllib.parse import urlparse
 
@@ -185,15 +186,16 @@ def find_dominant_heading_level(markdown_content: str) -> str:
 
 
 def split_md_by_headings(
-    markdown_content: str, heading_pattern: str, title: str
+    markdown_content: str, heading_pattern: str, title: str, url: str
 ) -> List[Dict]:
     """
     Splits markdown content by the specified heading pattern and structures it.
 
     Args:
-        url (str): The URL of the HTML page
         markdown_content (str): The markdown content to split
         heading_pattern (str): The heading pattern to split on (e.g., '##' or 'underline')
+        title (str): The title of the HTML page
+        url (str): The URL of the HTML page
 
     Returns:
         List[Dict]: List of dictionaries containing metadata and content
@@ -211,7 +213,7 @@ def split_md_by_headings(
         if sections and not re.match(r"^[^\n]+\n-+$", sections[0], re.MULTILINE):
             structured_content.append(
                 {
-                    "metadata": {"title": title, "page": "Introduction"},
+                    "metadata": {"title": title, "url": url, "page": "Introduction"},
                     "content": sections.pop(0),
                 }
             )
@@ -221,7 +223,7 @@ def split_md_by_headings(
             if i + 1 < len(sections):
                 structured_content.append(
                     {
-                        "metadata": {"title": title, "page": sections[i]},
+                        "metadata": {"title": title, "url": url, "page": sections[i]},
                         "content": sections[i + 1],
                     }
                 )
@@ -238,7 +240,7 @@ def split_md_by_headings(
         if len(sections) > len(headings):
             structured_content.append(
                 {
-                    "metadata": {"title": title, "page": "Introduction"},
+                    "metadata": {"title": title, "url": url, "page": "Introduction"},
                     "content": sections.pop(0),
                 }
             )
@@ -248,7 +250,7 @@ def split_md_by_headings(
             clean_heading = heading.replace(heading_pattern, "").strip()
             structured_content.append(
                 {
-                    "metadata": {"title": title, "page": clean_heading},
+                    "metadata": {"title": title, "url": url, "page": clean_heading},
                     "content": content,
                 }
             )
@@ -256,13 +258,15 @@ def split_md_by_headings(
     return structured_content
 
 
-def html_to_markdown(html: str, raw: bool, title: str) -> str:
+def html_to_markdown(html: str, raw: bool, title: str, url: str) -> str:
     """
     Converts HTML content to markdown.
 
     Args:
         html (str): The HTML content to convert.
         raw (bool): Whether to return raw markdown text or structured data.
+        title (str): The title of the HTML page
+        url (str): The URL of the HTML page
 
     Returns:
         Union[str, List[Dict]]: Either raw markdown content or structured data with metadata and content sections.
@@ -276,7 +280,7 @@ def html_to_markdown(html: str, raw: bool, title: str) -> str:
     heading_pattern = find_dominant_heading_level(markdown_content)
 
     # Split content by headings and structure it
-    return split_md_by_headings(markdown_content, heading_pattern, title)
+    return split_md_by_headings(markdown_content, heading_pattern, title, url)
 
 
 def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
@@ -351,7 +355,10 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
         soup = BeautifulSoup(
             response.content, "html.parser", from_encoding="iso-8859-1"
         )
-    return html_to_markdown(str(soup), raw, title=url)
+    title = soup.title.string.strip() if soup.title else "No title"
+    url_hash = md5(url.encode('utf-8')).hexdigest()[:8]
+    full_title = f"{title} - {url_hash}"
+    return html_to_markdown(str(soup), raw, title=full_title, url=url)
 
 
 def extract_urls_from_markdown(content: str) -> List[str]:
