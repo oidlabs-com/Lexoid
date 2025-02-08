@@ -27,6 +27,7 @@ nest-asyncio ="^1.6.0"
 pyqt5 = {version = "^5.15.11", markers = "platform_system != 'debian'"}
 pyqtwebengine = {version = "^5.15.7", markers = "platform_system != 'debian'"}
 huggingface-hub = "^0.27.0"
+together = "^1.4.0"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
