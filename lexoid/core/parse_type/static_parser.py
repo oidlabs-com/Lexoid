@@ -9,73 +9,89 @@ from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
 from docx import Document
 
 
-def parse_static_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
+def parse_static_doc(path: str, **kwargs) -> Dict:
+    """
+    Parses a document using static parsing methods.
+
+    Args:
+        path (str): The file path.
+        **kwargs: Additional arguments for parsing.
+
+    Returns:
+        Dict: Dictionary containing parsed document data
+    """
     framework = kwargs.get("framework", "pdfplumber")
 
     file_type = get_file_type(path)
     if file_type == "application/pdf":
         if framework == "pdfplumber":
-            return parse_with_pdfplumber(path, raw, **kwargs)
+            return parse_with_pdfplumber(path, **kwargs)
         elif framework == "pdfminer":
-            return parse_with_pdfminer(path, raw, **kwargs)
+            return parse_with_pdfminer(path, **kwargs)
         else:
             raise ValueError(f"Unsupported framework: {framework}")
     elif "wordprocessing" in file_type:
-        return parse_with_docx(path, raw, **kwargs)
+        return parse_with_docx(path, **kwargs)
     elif file_type == "text/html":
         with open(path, "r") as f:
             html_content = f.read()
-            return html_to_markdown(html_content, raw, kwargs["title"])
+            return html_to_markdown(html_content, kwargs["title"])
     elif file_type == "text/plain":
         with open(path, "r") as f:
             content = f.read()
-            if raw:
-                return content
-            else:
-                return [
-                    {
-                        "metadata": {"title": kwargs["title"], "page": 1},
-                        "content": content,
-                    }
-                ]
+            return {
+                "raw": content,
+                "segments": [{"metadata": {"page": 1}, "content": content}],
+                "document_title": kwargs["title"],
+                "url": kwargs.get("url", ""),
+                "parent_title": kwargs.get("parent_title", ""),
+                "recursive_docs": [],
+            }
     elif file_type == "text/csv":
         df = pd.read_csv(path)
         content = df.to_markdown(index=False)
-        if raw:
-            return content
-        else:
-            return [
-                {
-                    "metadata": {"title": kwargs["title"], "page": 1},
-                    "content": content,
-                }
-            ]
+        return {
+            "raw": content,
+            "segments": [{"metadata": {"page": 1}, "content": content}],
+            "document_title": kwargs["title"],
+            "url": kwargs.get("url", ""),
+            "parent_title": kwargs.get("parent_title", ""),
+            "recursive_docs": [],
+        }
     else:
         raise ValueError(f"Unsupported file type: {file_type}")
 
 
-def parse_with_pdfminer(path: str, raw: bool, **kwargs) -> List[Dict] | str:
+def parse_with_pdfminer(path: str, **kwargs) -> Dict:
+    """
+    Parse PDF using pdfminer.
+
+    Returns:
+        Dict: Dictionary containing parsed document data
+    """
     pages = list(extract_pages(path))
-    docs = []
+    segments = []
+    raw_texts = []
+
     for page_num, page_layout in enumerate(pages, start=1):
         page_text = "".join(
             element.get_text()
             for element in page_layout
             if isinstance(element, LTTextContainer)
         )
-        if raw:
-            docs.append(page_text)
-        else:
-            docs.append(
-                {
-                    "metadata": {
-                        "title": kwargs["title"],
-                        "page": kwargs["start"] + page_num,
-                    },
-                    "content": page_text,
-                }
-            )
-    return "\n".join(docs) if raw else docs
+        raw_texts.append(page_text)
+        segments.append(
+            {"metadata": {"page": kwargs["start"] + page_num}, "content": page_text}
+        )
+
+    return {
+        "raw": "\n".join(raw_texts),
+        "segments": segments,
+        "document_title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+    }
 
 
 def process_table(table) -> str:
@@ -359,44 +375,44 @@ def process_pdf_with_pdfplumber(path: str, **kwargs) -> List[str]:
     return page_texts
 
 
-def parse_with_pdfplumber(path: str, raw: bool, **kwargs) -> List[Dict] | str:
+def parse_with_pdfplumber(path: str, **kwargs) -> Dict:
     """
-    Parse PDF and return either raw text or structured data.
-
-    Args:
-        path (str): Path to the PDF file
-        raw (bool): If True, return raw text with page breaks; if False, return structured data
-        **kwargs: Additional arguments including 'title' and 'start' page number
+    Parse PDF using pdfplumber.
 
     Returns:
-        Union[List[Dict], str]: Either a list of dictionaries containing page metadata and content,
-                               or a string of raw text with page breaks
+        Dict: Dictionary containing parsed document data
     """
     page_texts = process_pdf_with_pdfplumber(path)
-    if raw:
-        return "<page-break>".join(page_texts)
-    return [
-        {
-            "metadata": {"title": kwargs["title"], "page": kwargs["start"] + page_num},
-            "content": page_text,
-        }
+    segments = [
+        {"metadata": {"page": kwargs["start"] + page_num}, "content": page_text}
         for page_num, page_text in enumerate(page_texts, start=1)
     ]
 
+    return {
+        "raw": "<page-break>".join(page_texts),
+        "segments": segments,
+        "document_title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+    }
 
-def parse_with_docx(path: str, raw: bool, **kwargs) -> List[Dict] | str:
+
+def parse_with_docx(path: str, **kwargs) -> Dict:
+    """
+    Parse DOCX document.
+
+    Returns:
+        Dict: Dictionary containing parsed document data
+    """
     doc = Document(path)
     full_text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
 
-    if raw:
-        return full_text
-
-    return [
-        {
-            "metadata": {
-                "title": kwargs["title"],
-                "page": kwargs["start"] + 1,
-            },
-            "content": full_text,
-        }
-    ]
+    return {
+        "raw": full_text,
+        "segments": [{"metadata": {"page": kwargs["start"] + 1}, "content": full_text}],
+        "document_title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+    }

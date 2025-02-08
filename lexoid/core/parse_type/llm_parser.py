@@ -34,38 +34,36 @@ def retry_on_http_error(func):
                 return func(*args, **kwargs)
             except HTTPError as e:
                 logger.error(f"Retry failed: {e}")
-                if kwargs.get("raw", False):
-                    return ""
-                return [
-                    {
-                        "metadata": {
-                            "title": kwargs["title"],
-                            "page": kwargs.get("start", 0),
-                        },
-                        "content": "",
-                    }
-                ]
+                return {
+                    "raw": "",
+                    "segments": [],
+                    "document_title": kwargs["title"],
+                    "url": kwargs.get("url", ""),
+                    "parent_title": kwargs.get("parent_title", ""),
+                    "recursive_docs": [],
+                    "error": f"HTTPError encountered on page {kwargs.get("start", 0)}: {e}",
+                }
 
     return wrapper
 
 
 @retry_on_http_error
-def parse_llm_doc(path: str, raw: bool, **kwargs) -> List[Dict] | str:
+def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     if "model" not in kwargs:
         kwargs["model"] = "gemini-1.5-flash"
     model = kwargs.get("model")
     if model.startswith("gemini"):
-        return parse_with_gemini(path, raw, **kwargs)
+        return parse_with_gemini(path, **kwargs)
     if model.startswith("gpt"):
-        return parse_with_api(path, raw, api="openai", **kwargs)
+        return parse_with_api(path, api="openai", **kwargs)
     if model.startswith("meta-llama"):
         if model.endswith("Turbo") or model == "meta-llama/Llama-Vision-Free":
-            return parse_with_api(path, raw, api="together", **kwargs)
-        return parse_with_api(path, raw, api="huggingface", **kwargs)
+            return parse_with_api(path, api="together", **kwargs)
+        return parse_with_api(path, api="huggingface", **kwargs)
     raise ValueError(f"Unsupported model: {model}")
 
 
-def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
+def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("GOOGLE_API_KEY environment variable is not set")
@@ -126,19 +124,17 @@ def parse_with_gemini(path: str, raw: bool, **kwargs) -> List[Dict] | str:
     if "</output>" in result:
         result = result.split("</output>")[0].strip()
 
-    if raw:
-        return result
-
-    return [
-        {
-            "metadata": {
-                "title": kwargs["title"],
-                "page": kwargs.get("start", 0) + page_no,
-            },
-            "content": page,
-        }
-        for page_no, page in enumerate(result.split("<page-break>"), start=1)
-    ]
+    return {
+        "raw": result,
+        "segments": [
+            {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
+            for page_no, page in enumerate(result.split("<page-break>"), start=1)
+        ],
+        "document_title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+    }
 
 
 def convert_pdf_page_to_base64(
@@ -156,18 +152,17 @@ def convert_pdf_page_to_base64(
     return base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
 
-def parse_with_api(path: str, raw: bool, api: str, **kwargs) -> List[Dict] | str:
+def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
     """
     Parse documents (PDFs or images) using various vision model APIs.
 
     Args:
         path (str): Path to the document to parse
-        raw (bool): If True, return raw text; if False, return structured data
         api (str): Which API to use ("openai", "huggingface", or "together")
         **kwargs: Additional arguments including model, temperature, title, etc.
 
     Returns:
-        List[Dict] | str: Parsed content either as raw text or structured data
+        Dict: Dictionary containing parsed document data
     """
     # Initialize appropriate client
     clients = {
@@ -271,16 +266,14 @@ def parse_with_api(path: str, raw: bool, api: str, **kwargs) -> List[Dict] | str
     all_texts = [text for _, text in all_results]
     combined_text = "<page-break>".join(all_texts)
 
-    if raw:
-        return combined_text
-
-    return [
-        {
-            "metadata": {
-                "title": kwargs["title"],
-                "page": kwargs.get("start", 0) + page_no,
-            },
-            "content": page,
-        }
-        for page_no, page in enumerate(all_texts, start=1)
-    ]
+    return {
+        "raw": combined_text,
+        "segments": [
+            {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
+            for page_no, page in enumerate(all_texts, start=1)
+        ],
+        "document_title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+    }

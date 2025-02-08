@@ -52,7 +52,7 @@ def run_benchmark_config(
     """Run a single benchmark configuration."""
     try:
         start_time = time.time()
-        result = parse(input_path, raw=True, **config)
+        result = parse(input_path, **config)["raw"]
         execution_time = time.time() - start_time
 
         if output_save_dir:
@@ -120,13 +120,17 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     config_options = {
         "parser_type": ["LLM_PARSE", "STATIC_PARSE"],
         "model": [
+            # Google models
             "gemini-exp-1121",
             "gemini-2.0-flash-exp",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
+            # OpenAI models
             "gpt-4o",
             "gpt-4o-mini",
+            # Meta-LLAMA models through HF Hub
             "meta-llama/Llama-3.2-11B-Vision-Instruct",
+            # Meta-LLAMA models through Together AI
             "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
             "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
             "meta-llama/Llama-Vision-Free",

@@ -28,20 +28,23 @@ class ParserType(Enum):
     AUTO = "AUTO"
 
 
-def parse_chunk(
-    path: str, parser_type: ParserType, raw: bool, **kwargs
-) -> List[Dict] | str:
+def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
     """
     Parses a file using the specified parser type.
 
     Args:
         path (str): The file path or URL.
         parser_type (ParserType): The type of parser to use (LLM_PARSE, STATIC_PARSE, or AUTO).
-        raw (bool): Whether to return raw text or structured data.
         **kwargs: Additional arguments for the parser.
 
     Returns:
-        List[Dict] | str: Parsed document data as a list of dictionaries or raw text.
+        Dict: Dictionary containing:
+            - raw: Full markdown content as string
+            - segments: List of dictionaries with metadata and content
+            - document_title: Title of the document
+            - url: URL if applicable
+            - parent_title: Title of parent doc if recursively parsed
+            - recursive_docs: List of dictionaries for recursively parsed documents
     """
     if parser_type == ParserType.AUTO:
         parser_type = ParserType[router(path)]
@@ -52,63 +55,75 @@ def parse_chunk(
     )
     if parser_type == ParserType.STATIC_PARSE:
         logger.debug("Using static parser")
-        return parse_static_doc(path, raw, **kwargs)
+        return parse_static_doc(path, **kwargs)
     else:
         logger.debug("Using LLM parser")
-        return parse_llm_doc(path, raw, **kwargs)
+        return parse_llm_doc(path, **kwargs)
 
 
 def parse_chunk_list(
-    file_paths: List[str], parser_type: ParserType, raw: bool, kwargs: Dict
-) -> List[Dict | str]:
+    file_paths: List[str], parser_type: ParserType, kwargs: Dict
+) -> Dict:
     """
     Parses a list of files using the specified parser type.
 
     Args:
         file_paths (list): List of file paths.
         parser_type (ParserType): The type of parser to use.
-        raw (bool): Whether to return raw text or structured data.
         kwargs (dict): Additional arguments for the parser.
 
     Returns:
-        List[Dict | str]: List of parsed documents with raw text and/or metadata.
+        Dict: Dictionary containing parsed document data
     """
-    local_docs = []
+    combined_segments = []
+    raw_texts = []
+
     for file_path in file_paths:
-        result = parse_chunk(file_path, parser_type, raw, **kwargs)
-        if isinstance(result, list):
-            local_docs.extend(result)
-        else:
-            local_docs.append(result.replace("<page break>", "\n\n"))
-    return local_docs
+        result = parse_chunk(file_path, parser_type, **kwargs)
+        combined_segments.extend(result["segments"])
+        raw_texts.append(result["raw"])
+
+    return {
+        "raw": "\n\n".join(raw_texts),
+        "segments": combined_segments,
+        "document_title": kwargs.get("title", ""),
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+    }
 
 
 def parse(
     path: str,
     parser_type: Union[str, ParserType] = "LLM_PARSE",
-    raw: bool = False,
     pages_per_split: int = 4,
     max_processes: int = 4,
     **kwargs,
-) -> Union[List[Dict], str]:
+) -> Dict:
     """
     Parses a document or URL, optionally splitting it into chunks and using multiprocessing.
 
     Args:
         path (str): The file path or URL.
-        parser_type (Union[str, ParserType], optional): The type of parser to use ("LLM_PARSE", "STATIC_PARSE", or "AUTO"). Defaults to "LLM_PARSE".
-        raw (bool, optional): Whether to return raw text or structured data. Defaults to False.
-        pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
-        max_processes (int, optional): Maximum number of processes for parallel processing. Defaults to 4.
+        parser_type (Union[str, ParserType], optional): Parser type ("LLM_PARSE", "STATIC_PARSE", or "AUTO").
+        pages_per_split (int, optional): Number of pages per split for chunking.
+        max_processes (int, optional): Maximum number of processes for parallel processing.
         **kwargs: Additional arguments for the parser.
 
     Returns:
-        Union[List[Dict], str]: Parsed document data as a list of dictionaries or raw text.
+        Dict: Dictionary containing:
+            - raw: Full markdown content as string
+            - segments: List of dictionaries with metadata and content
+            - document_title: Title of the document
+            - url: URL if applicable
+            - parent_title: Title of parent doc if recursively parsed
+            - recursive_docs: List of dictionaries for recursively parsed documents
     """
     kwargs["title"] = os.path.basename(path)
     kwargs["pages_per_split_"] = pages_per_split
     as_pdf = kwargs.get("as_pdf", False)
     depth = kwargs.get("depth", 1)
+
     if type(parser_type) == str:
         parser_type = ParserType[parser_type]
 
@@ -120,6 +135,7 @@ def parse(
             as_pdf = True
 
         if path.startswith(("http://", "https://")):
+            kwargs["url"] = path
             download_dir = os.path.join(temp_dir, "downloads/")
             os.makedirs(download_dir, exist_ok=True)
             if is_supported_url_file_type(path):
@@ -128,7 +144,7 @@ def parse(
                 pdf_path = os.path.join(download_dir, f"webpage_{int(time())}.pdf")
                 path = convert_to_pdf(path, pdf_path)
             else:
-                return recursive_read_html(path, depth, raw)
+                return recursive_read_html(path, depth)
 
         assert is_supported_file_type(
             path
@@ -140,9 +156,7 @@ def parse(
 
         if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
             kwargs["split"] = False
-            all_docs = parse_chunk(path, parser_type, raw, **kwargs)
-            if raw:
-                all_docs = [all_docs]
+            result = parse_chunk(path, parser_type, **kwargs)
         else:
             kwargs["split"] = True
             split_dir = os.path.join(temp_dir, "splits/")
@@ -156,22 +170,32 @@ def parse(
                 for i in range(0, len(split_files), chunk_size)
             ]
 
-            process_args = [(chunk, parser_type, raw, kwargs) for chunk in file_chunks]
+            process_args = [(chunk, parser_type, kwargs) for chunk in file_chunks]
 
             if max_processes == 1 or len(file_chunks) == 1:
-                all_docs = [parse_chunk_list(*args) for args in process_args]
+                chunk_results = [parse_chunk_list(*args) for args in process_args]
             else:
                 with ProcessPoolExecutor(max_workers=max_processes) as executor:
-                    all_docs = list(executor.map(parse_chunk_list, *zip(*process_args)))
+                    chunk_results = list(
+                        executor.map(parse_chunk_list, *zip(*process_args))
+                    )
 
-            all_docs = [item for sublist in all_docs for item in sublist]
+            # Combine results from all chunks
+            result = {
+                "raw": "\n\n".join(r["raw"] for r in chunk_results),
+                "segments": [seg for r in chunk_results for seg in r["segments"]],
+                "document_title": kwargs["title"],
+                "url": kwargs.get("url", ""),
+                "parent_title": kwargs.get("parent_title", ""),
+                "recursive_docs": [],
+            }
 
     if depth > 1:
-        new_docs = all_docs.copy()
-        for doc in all_docs:
+        recursive_docs = []
+        for segment in result["segments"]:
             urls = re.findall(
                 r'https?://[^\s<>"\']+|www\.[^\s<>"\']+(?:\.[^\s<>"\']+)*',
-                doc if raw else doc["content"],
+                segment["content"],
             )
             for url in urls:
                 if "](" in url:
@@ -182,19 +206,16 @@ def parse(
 
                 kwargs_cp = kwargs.copy()
                 kwargs_cp["depth"] = depth - 1
-                res = parse(
+                kwargs_cp["parent_title"] = result["document_title"]
+                sub_doc = parse(
                     url,
                     parser_type=parser_type,
-                    raw=raw,
                     pages_per_split=pages_per_split,
                     max_processes=max_processes,
                     **kwargs_cp,
                 )
+                recursive_docs.append(sub_doc)
 
-                if raw:
-                    new_docs.append(res)
-                else:
-                    new_docs.extend(res)
-        all_docs = new_docs
+        result["recursive_docs"] = recursive_docs
 
-    return "\n".join(all_docs) if raw else all_docs
+    return result
