@@ -37,7 +37,7 @@ def retry_on_http_error(func):
                 return {
                     "raw": "",
                     "segments": [],
-                    "document_title": kwargs["title"],
+                    "title": kwargs["title"],
                     "url": kwargs.get("url", ""),
                     "parent_title": kwargs.get("parent_title", ""),
                     "recursive_docs": [],
@@ -130,7 +130,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
             {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
             for page_no, page in enumerate(result.split("<page-break>"), start=1)
         ],
-        "document_title": kwargs["title"],
+        "title": kwargs["title"],
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
@@ -272,7 +272,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
             for page_no, page in enumerate(all_texts, start=1)
         ],
-        "document_title": kwargs["title"],
+        "title": kwargs["title"],
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],

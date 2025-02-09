@@ -41,7 +41,7 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
         Dict: Dictionary containing:
             - raw: Full markdown content as string
             - segments: List of dictionaries with metadata and content
-            - document_title: Title of the document
+            - title: Title of the document
             - url: URL if applicable
             - parent_title: Title of parent doc if recursively parsed
             - recursive_docs: List of dictionaries for recursively parsed documents
@@ -86,7 +86,7 @@ def parse_chunk_list(
     return {
         "raw": "\n\n".join(raw_texts),
         "segments": combined_segments,
-        "document_title": kwargs.get("title", ""),
+        "title": kwargs.get("title", ""),
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
@@ -114,7 +114,7 @@ def parse(
         Dict: Dictionary containing:
             - raw: Full markdown content as string
             - segments: List of dictionaries with metadata and content
-            - document_title: Title of the document
+            - title: Title of the document
             - url: URL if applicable
             - parent_title: Title of parent doc if recursively parsed
             - recursive_docs: List of dictionaries for recursively parsed documents
@@ -184,7 +184,7 @@ def parse(
             result = {
                 "raw": "\n\n".join(r["raw"] for r in chunk_results),
                 "segments": [seg for r in chunk_results for seg in r["segments"]],
-                "document_title": kwargs["title"],
+                "title": kwargs["title"],
                 "url": kwargs.get("url", ""),
                 "parent_title": kwargs.get("parent_title", ""),
                 "recursive_docs": [],
@@ -206,7 +206,7 @@ def parse(
 
                 kwargs_cp = kwargs.copy()
                 kwargs_cp["depth"] = depth - 1
-                kwargs_cp["parent_title"] = result["document_title"]
+                kwargs_cp["parent_title"] = result["title"]
                 sub_doc = parse(
                     url,
                     parser_type=parser_type,

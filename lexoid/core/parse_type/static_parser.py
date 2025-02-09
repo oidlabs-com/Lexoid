@@ -42,7 +42,7 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
             return {
                 "raw": content,
                 "segments": [{"metadata": {"page": 1}, "content": content}],
-                "document_title": kwargs["title"],
+                "title": kwargs["title"],
                 "url": kwargs.get("url", ""),
                 "parent_title": kwargs.get("parent_title", ""),
                 "recursive_docs": [],
@@ -53,7 +53,7 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
         return {
             "raw": content,
             "segments": [{"metadata": {"page": 1}, "content": content}],
-            "document_title": kwargs["title"],
+            "title": kwargs["title"],
             "url": kwargs.get("url", ""),
             "parent_title": kwargs.get("parent_title", ""),
             "recursive_docs": [],
@@ -87,7 +87,7 @@ def parse_with_pdfminer(path: str, **kwargs) -> Dict:
     return {
         "raw": "\n".join(raw_texts),
         "segments": segments,
-        "document_title": kwargs["title"],
+        "title": kwargs["title"],
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
@@ -391,7 +391,7 @@ def parse_with_pdfplumber(path: str, **kwargs) -> Dict:
     return {
         "raw": "<page-break>".join(page_texts),
         "segments": segments,
-        "document_title": kwargs["title"],
+        "title": kwargs["title"],
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
@@ -411,7 +411,7 @@ def parse_with_docx(path: str, **kwargs) -> Dict:
     return {
         "raw": full_text,
         "segments": [{"metadata": {"page": kwargs["start"] + 1}, "content": full_text}],
-        "document_title": kwargs["title"],
+        "title": kwargs["title"],
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],

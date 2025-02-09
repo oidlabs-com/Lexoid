@@ -272,12 +272,12 @@ def html_to_markdown(html: str, title: str, url: str) -> str:
     heading_pattern = find_dominant_heading_level(markdown_content)
 
     # Split content by headings and structure it
-    split_md = split_md_by_headings(markdown_content, heading_pattern, title, url)
+    split_md = split_md_by_headings(markdown_content, heading_pattern)
 
     content = {
         "raw": markdown_content,
         "segments": split_md,
-        "document_title": title,
+        "title": title,
         "url": url,
         "parent_title": "",
         "recursive_docs": [],
@@ -406,7 +406,7 @@ def recursive_read_html(url: str, depth: int, visited_urls: set = None) -> Dict:
         return {
             "raw": "",
             "segments": [],
-            "document_title": "",
+            "title": "",
             "url": url,
             "parent_title": "",
             "recursive_docs": [],
@@ -421,7 +421,7 @@ def recursive_read_html(url: str, depth: int, visited_urls: set = None) -> Dict:
         return {
             "raw": "",
             "segments": [],
-            "document_title": "",
+            "title": "",
             "url": url,
             "parent_title": "",
             "recursive_docs": [],
