@@ -42,7 +42,7 @@ async def test_llm_parse(model):
     # Compare the result with the expected output
     expected_ouput = open(expected_ouput_path, "r").read()
     # save the result to a file
-    with open(f"{output_dir}/input_table_{model}.md", "w") as f:
+    with open(f"{output_dir}/input_table_{model.replace("/", "_")}.md", "w") as f:
         f.write(result)
     score = calculate_similarity(result, expected_ouput)
     assert round(score, 3) > 0.75
@@ -60,7 +60,7 @@ async def test_jpg_parse(model):
     # Compare the result with the expected output
     expected_ouput = open(expected_ouput_path, "r").read()
     # save the result to a file
-    with open(f"{output_dir}/input_image_{model}.md", "w") as f:
+    with open(f"{output_dir}/input_image_{model.replace("/", "_")}.md", "w") as f:
         f.write(result)
     score = calculate_similarity(result, expected_ouput)
     assert round(score, 3) > 0.8
@@ -104,14 +104,12 @@ async def test_url_detection_pdfplumber(sample):
     assert any(found)
 
 
-@pytest.mark.parametrize(
-    "model_type", ["gpt-4o", "gemini-1.5-pro", "gpt-4o-mini", "gemini-1.5-flash"]
-)
+@pytest.mark.parametrize("model", models)
 @pytest.mark.asyncio
-async def test_url_detection_multi_page_auto_routing(model_type):
+async def test_url_detection_multi_page_auto_routing(model):
     sample = "examples/inputs/sample_test_doc.pdf"
     patterns = ["http", "https", "www"]
-    config = {"parser_type": "AUTO", "model": model_type, "verbose": True}
+    config = {"parser_type": "AUTO", "model": model, "verbose": True}
     results = parse(sample, pages_per_split=1, **config)["segments"]
 
     assert len(results) == 6
@@ -153,11 +151,11 @@ async def test_recursive_url_parsing(depth):
 
 
 @pytest.mark.asyncio
-async def test_url_parsing_in_pdf():
+async def test_recursive_url_parsing_in_pdf():
     sample = "examples/inputs/sample_test_doc.pdf"
     parser_type = "AUTO"
-    results = parse(sample, parser_type, pages_per_split=1, depth=2)["segments"]
-    assert len(results) > 10, results
+    results = parse(sample, parser_type, pages_per_split=1, depth=2)
+    assert len(results["recursive_docs"]) >= 7, results
 
 
 @pytest.mark.asyncio
