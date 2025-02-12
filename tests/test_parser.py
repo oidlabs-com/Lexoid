@@ -19,14 +19,14 @@ models = [
     "gemini-1.5-flash",
     "gemini-1.5-pro",
     # OpenAI models
-    # "gpt-4o",
-    # "gpt-4o-mini",
-    # # Meta-LLAMA models through HF Hub
-    # "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    # # Meta-LLAMA models through Together AI
-    # "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
-    # "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
-    # "meta-llama/Llama-Vision-Free",
+    "gpt-4o",
+    "gpt-4o-mini",
+    # Meta-LLAMA models through HF Hub
+    "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    # Meta-LLAMA models through Together AI
+    "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+    "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
+    "meta-llama/Llama-Vision-Free",
 ]
 
 

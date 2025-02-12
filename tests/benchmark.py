@@ -58,12 +58,10 @@ def run_benchmark_config(
         if output_save_dir:
             filename = (
                 f"{Path(input_path).stem}_"
-                + ", ".join(
-                    [
-                        f"{key}={str(value).replace('/', '_')}"
-                        for key, value in config.items()
-                    ]
-                )
+                + ", ".join([
+                    f"{key}={str(value).replace('/', '_')}"
+                    for key, value in config.items()
+                ])
                 + ".md"
             )
             with open(os.path.join(output_save_dir, filename), "w") as fp:
@@ -121,8 +119,8 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
         "parser_type": ["LLM_PARSE", "STATIC_PARSE"],
         "model": [
             # Google models
-            "gemini-exp-1121",
-            "gemini-2.0-flash-exp",
+            "gemini-exp-1206",
+            "gemini-2.0-flash-001",
             "gemini-1.5-flash",
             "gemini-1.5-pro",
             # OpenAI models
