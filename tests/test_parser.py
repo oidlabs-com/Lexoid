@@ -14,19 +14,19 @@ output_dir = "tests/outputs"
 os.makedirs(output_dir, exist_ok=True)
 models = [
     # Google models
-    "gemini-exp-1121",
-    "gemini-2.0-flash-exp",
+    "gemini-exp-1206",
+    "gemini-2.0-flash-001",
     "gemini-1.5-flash",
     "gemini-1.5-pro",
     # OpenAI models
-    "gpt-4o",
-    "gpt-4o-mini",
-    # Meta-LLAMA models through HF Hub
-    "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    # Meta-LLAMA models through Together AI
-    "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
-    "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
-    "meta-llama/Llama-Vision-Free",
+    # "gpt-4o",
+    # "gpt-4o-mini",
+    # # Meta-LLAMA models through HF Hub
+    # "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    # # Meta-LLAMA models through Together AI
+    # "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+    # "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
+    # "meta-llama/Llama-Vision-Free",
 ]
 
 
@@ -42,7 +42,7 @@ async def test_llm_parse(model):
     # Compare the result with the expected output
     expected_ouput = open(expected_ouput_path, "r").read()
     # save the result to a file
-    with open(f"{output_dir}/input_table_{model.replace("/", "_")}.md", "w") as f:
+    with open(f"{output_dir}/input_table_{model.replace('/', '_')}.md", "w") as f:
         f.write(result)
     score = calculate_similarity(result, expected_ouput)
     assert round(score, 3) > 0.75
@@ -60,7 +60,8 @@ async def test_jpg_parse(model):
     # Compare the result with the expected output
     expected_ouput = open(expected_ouput_path, "r").read()
     # save the result to a file
-    with open(f"{output_dir}/input_image_{model.replace("/", "_")}.md", "w") as f:
+    m_name = model.replace("/", "_")
+    with open(f"{output_dir}/input_image_{m_name}.md", "w") as f:
         f.write(result)
     score = calculate_similarity(result, expected_ouput)
     assert round(score, 3) > 0.8

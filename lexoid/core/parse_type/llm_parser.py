@@ -41,7 +41,7 @@ def retry_on_http_error(func):
                     "url": kwargs.get("url", ""),
                     "parent_title": kwargs.get("parent_title", ""),
                     "recursive_docs": [],
-                    "error": f"HTTPError encountered on page {kwargs.get("start", 0)}: {e}",
+                    "error": f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}",
                 }
 
     return wrapper
