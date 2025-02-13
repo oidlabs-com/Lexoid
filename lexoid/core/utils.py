@@ -5,7 +5,8 @@ import os
 import re
 import sys
 from difflib import SequenceMatcher
-from typing import Dict, List, Union
+from hashlib import md5
+from typing import Dict, List
 from urllib.parse import urlparse
 
 import nest_asyncio
@@ -184,14 +185,11 @@ def find_dominant_heading_level(markdown_content: str) -> str:
     return min(heading_counts.keys(), key=len)
 
 
-def split_md_by_headings(
-    markdown_content: str, heading_pattern: str, title: str
-) -> List[Dict]:
+def split_md_by_headings(markdown_content: str, heading_pattern: str) -> List[Dict]:
     """
     Splits markdown content by the specified heading pattern and structures it.
 
     Args:
-        url (str): The URL of the HTML page
         markdown_content (str): The markdown content to split
         heading_pattern (str): The heading pattern to split on (e.g., '##' or 'underline')
 
@@ -211,7 +209,7 @@ def split_md_by_headings(
         if sections and not re.match(r"^[^\n]+\n-+$", sections[0], re.MULTILINE):
             structured_content.append(
                 {
-                    "metadata": {"title": title, "page": "Introduction"},
+                    "metadata": {"page": "Introduction"},
                     "content": sections.pop(0),
                 }
             )
@@ -221,7 +219,7 @@ def split_md_by_headings(
             if i + 1 < len(sections):
                 structured_content.append(
                     {
-                        "metadata": {"title": title, "page": sections[i]},
+                        "metadata": {"page": sections[i]},
                         "content": sections[i + 1],
                     }
                 )
@@ -238,7 +236,7 @@ def split_md_by_headings(
         if len(sections) > len(headings):
             structured_content.append(
                 {
-                    "metadata": {"title": title, "page": "Introduction"},
+                    "metadata": {"page": "Introduction"},
                     "content": sections.pop(0),
                 }
             )
@@ -248,7 +246,7 @@ def split_md_by_headings(
             clean_heading = heading.replace(heading_pattern, "").strip()
             structured_content.append(
                 {
-                    "metadata": {"title": title, "page": clean_heading},
+                    "metadata": {"page": clean_heading},
                     "content": content,
                 }
             )
@@ -256,39 +254,47 @@ def split_md_by_headings(
     return structured_content
 
 
-def html_to_markdown(html: str, raw: bool, title: str) -> str:
+def html_to_markdown(html: str, title: str, url: str) -> str:
     """
     Converts HTML content to markdown.
 
     Args:
         html (str): The HTML content to convert.
-        raw (bool): Whether to return raw markdown text or structured data.
+        title (str): The title of the HTML page
+        url (str): The URL of the HTML page
 
     Returns:
-        Union[str, List[Dict]]: Either raw markdown content or structured data with metadata and content sections.
+        Dict: Dictionary containing parsed document data
     """
     markdown_content = md(html)
-
-    if raw:
-        return markdown_content
 
     # Find the dominant heading level
     heading_pattern = find_dominant_heading_level(markdown_content)
 
     # Split content by headings and structure it
-    return split_md_by_headings(markdown_content, heading_pattern, title)
+    split_md = split_md_by_headings(markdown_content, heading_pattern)
+
+    content = {
+        "raw": markdown_content,
+        "segments": split_md,
+        "title": title,
+        "url": url,
+        "parent_title": "",
+        "recursive_docs": [],
+    }
+
+    return content
 
 
-def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
+def read_html_content(url: str) -> Dict:
     """
     Reads the content of an HTML page from the given URL and converts it to markdown or structured content.
 
     Args:
         url (str): The URL of the HTML page.
-        raw (bool): Whether to return raw markdown text or structured data.
 
     Returns:
-        Union[str, List[Dict]]: Either raw markdown content or structured data with metadata and content sections.
+        Dict: Dictionary containing parsed document data
     """
 
     try:
@@ -351,7 +357,10 @@ def read_html_content(url: str, raw: bool = False) -> Union[str, List[Dict]]:
         soup = BeautifulSoup(
             response.content, "html.parser", from_encoding="iso-8859-1"
         )
-    return html_to_markdown(str(soup), raw, title=url)
+    title = soup.title.string.strip() if soup.title else "No title"
+    url_hash = md5(url.encode("utf-8")).hexdigest()[:8]
+    full_title = f"{title} - {url_hash}"
+    return html_to_markdown(str(soup), title=full_title, url=url)
 
 
 def extract_urls_from_markdown(content: str) -> List[str]:
@@ -378,61 +387,60 @@ def extract_urls_from_markdown(content: str) -> List[str]:
     return list(set(urls))  # Remove duplicates
 
 
-def recursive_read_html(
-    url: str, depth: int, raw: bool, visited_urls: set = None
-) -> Union[str, List[Dict]]:
+def recursive_read_html(url: str, depth: int, visited_urls: set = None) -> Dict:
     """
     Recursively reads HTML content from URLs up to specified depth.
 
     Args:
         url (str): The URL to parse
         depth (int): How many levels deep to recursively parse
-        raw (bool): Whether to return raw text or structured data
         visited_urls (set): Set of already visited URLs to prevent cycles
 
     Returns:
-        Union[str, List[Dict]]: Combined content from all parsed URLs
+        Dict: Dictionary containing parsed document data
     """
     if visited_urls is None:
         visited_urls = set()
 
     if url in visited_urls:
-        return "" if raw else []
+        return {
+            "raw": "",
+            "segments": [],
+            "title": "",
+            "url": url,
+            "parent_title": "",
+            "recursive_docs": [],
+        }
 
     visited_urls.add(url)
 
     try:
-        content = read_html_content(url, raw)
+        content = read_html_content(url)
     except Exception as e:
         print(f"Error processing URL {url}: {str(e)}")
-        return "" if raw else []
+        return {
+            "raw": "",
+            "segments": [],
+            "title": "",
+            "url": url,
+            "parent_title": "",
+            "recursive_docs": [],
+        }
 
     if depth <= 1:
         return content
 
-    # Extract URLs from the content
-    if raw:
-        urls = extract_urls_from_markdown(content)
-    else:
-        # Extract URLs from all content sections
-        urls = []
-        for doc in content:
-            urls.extend(extract_urls_from_markdown(doc["content"]))
+    # Extract URLs from all content sections
+    urls = extract_urls_from_markdown(content["raw"])
 
     # Recursively process each URL
+    recursive_docs = []
     for sub_url in urls:
         if sub_url not in visited_urls:
-            sub_content = recursive_read_html(sub_url, depth - 1, raw, visited_urls)
+            sub_content = recursive_read_html(sub_url, depth - 1, visited_urls)
+            recursive_docs.append(sub_content)
 
-            if raw:
-                if sub_content:
-                    content += f"\n\n--- Begin content from {sub_url} ---\n\n"
-                    content += sub_content
-                    content += f"\n\n--- End content from {sub_url} ---\n\n"
-            else:
-                if isinstance(sub_content, list):
-                    content.extend(sub_content)
-
+    content["recursive_docs"] = recursive_docs
     return content
 
 

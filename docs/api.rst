@@ -7,13 +7,12 @@ Core Function
 parse
 ^^^^^
 
-.. py:function:: lexoid.api.parse(path: str, parser_type: Union[str, ParserType] = "LLM_PARSE", raw: bool = False, pages_per_split: int = 4, max_processes: int = 4, **kwargs) -> Union[List[Dict], str]
+.. py:function:: lexoid.api.parse(path: str, parser_type: Union[str, ParserType] = "LLM_PARSE", pages_per_split: int = 4, max_processes: int = 4, **kwargs) -> Dict
 
    Parse a document using specified strategy.
 
    :param path: File path or URL to parse
    :param parser_type: Parser type to use ("LLM_PARSE", "STATIC_PARSE", or "AUTO")
-   :param raw: If True, returns raw text; if False, returns structured data
    :param pages_per_split: Number of pages per chunk for processing
    :param max_processes: Maximum number of parallel processes
    :param kwargs: Additional keyword arguments
@@ -30,6 +29,15 @@ parse
    * ``x_tolerance`` (int): X-axis tolerance for text extraction
    * ``y_tolerance`` (int): Y-axis tolerance for text extraction
 
+   Return value format:
+   A dictionary containing the following keys:
+   *  ``raw``: Full markdown content as string
+   * ``segments``: List of dictionaries with metadata and content
+   * ``title``: Title of the document
+   * ``url``: URL if applicable
+   * ``parent_title``: Title of parent doc if recursively parsed
+   * ``recursive_docs``: List of dictionaries for recursively parsed documents
+
 Examples
 --------
 
@@ -44,7 +52,10 @@ Basic Usage
     result = parse("document.pdf")
 
     # Raw text output
-    parsed_md = parse("document.pdf", raw=True)
+    parsed_md = result["raw"]
+
+    # Segmented output with metadata
+    parsed_segments = result["segments"]
 
     # Automatic parser selection
     result = parse("document.pdf", parser_type="AUTO")
@@ -82,23 +93,3 @@ Web Content
 
     # Parse webpage and the pages linked within the page
     result = parse("https://example.com", depth=2)
-
-Return Value Format
--------------------
-
-When ``raw=True``, the function returns a raw text string.
-
-When ``raw=False``, the function returns a list of dictionaries:
-
-.. code-block:: python
-
-    [
-        {
-            "metadata": {
-                "title": "filename",
-                "page": page_number
-            },
-            "content": "parsed_content"
-        },
-        # ... one dict per page
-    ]

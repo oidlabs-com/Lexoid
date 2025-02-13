@@ -61,10 +61,10 @@ Here's a quick example to parse documents using Lexoid:
 from lexoid.api import parse
 from lexoid.api import ParserType
 
-parsed_md = parse("https://www.justice.gov/eoir/immigration-law-advisor", parser_type="LLM_PARSE", raw=True)
+parsed_md = parse("https://www.justice.gov/eoir/immigration-law-advisor", parser_type="LLM_PARSE")["raw"]
 # or
 pdf_path = "path/to/immigration-law-advisor.pdf"
-parsed_md = parse(pdf_path, parser_type="LLM_PARSE", raw=True)
+parsed_md = parse(pdf_path, parser_type="LLM_PARSE")["raw"]
 
 print(parsed_md)
 ```
@@ -72,7 +72,6 @@ print(parsed_md)
 ### Parameters
 - path (str): The file path or URL.
 - parser_type (str, optional): The type of parser to use ("LLM_PARSE" or "STATIC_PARSE"). Defaults to "AUTO".
-- raw (bool, optional): Return raw text or structured data. Defaults to False.
 - pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
 - max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
 - **kwargs: Additional arguments for the parser.
