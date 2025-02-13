@@ -142,12 +142,15 @@ def parse(
 
         if path.startswith(("http://", "https://")):
             kwargs["url"] = path
-            download_dir = os.path.join(temp_dir, "downloads/")
+            download_dir = kwargs.get("save_dir", os.path.join(temp_dir, "downloads/"))
             os.makedirs(download_dir, exist_ok=True)
             if is_supported_url_file_type(path):
                 path = download_file(path, download_dir)
             elif as_pdf:
-                pdf_path = os.path.join(download_dir, f"webpage_{int(time())}.pdf")
+                pdf_filename = kwargs.get("save_filename", f"webpage_{int(time())}.pdf")
+                if not pdf_filename.endswith(".pdf"):
+                    pdf_filename += ".pdf"
+                pdf_path = os.path.join(download_dir, pdf_filename)
                 path = convert_to_pdf(path, pdf_path)
             else:
                 return recursive_read_html(path, depth)
@@ -200,6 +203,8 @@ def parse(
                     "total": sum(r["token_usage"]["total"] for r in chunk_results),
                 },
             }
+            if as_pdf:
+                result["pdf_path"] = path
 
     if depth > 1:
         recursive_docs = []
