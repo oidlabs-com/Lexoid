@@ -30,13 +30,14 @@ parse
    * ``y_tolerance`` (int): Y-axis tolerance for text extraction
 
    Return value format:
-   A dictionary containing the following keys:
+   A dictionary containing a subset or all of the following keys:
    *  ``raw``: Full markdown content as string
    * ``segments``: List of dictionaries with metadata and content
    * ``title``: Title of the document
    * ``url``: URL if applicable
    * ``parent_title``: Title of parent doc if recursively parsed
    * ``recursive_docs``: List of dictionaries for recursively parsed documents
+   * ``token_usage``: Token usage statistics
 
 Examples
 --------

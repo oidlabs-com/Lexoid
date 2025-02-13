@@ -118,22 +118,29 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
         if "text" in part
     )
 
-    result = ""
+    combined_text = ""
     if "<output>" in raw_text:
-        result = raw_text.split("<output>")[1].strip()
+        combined_text = raw_text.split("<output>")[1].strip()
     if "</output>" in result:
-        result = result.split("</output>")[0].strip()
+        combined_text = result.split("</output>")[0].strip()
+
+    token_usage = result["usageMetadata"]
 
     return {
-        "raw": result,
+        "raw": combined_text,
         "segments": [
             {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
-            for page_no, page in enumerate(result.split("<page-break>"), start=1)
+            for page_no, page in enumerate(combined_text.split("<page-break>"), start=1)
         ],
         "title": kwargs["title"],
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
+        "token_usage": {
+            "input": token_usage["promptTokenCount"],
+            "output": token_usage["candidatesTokenCount"],
+            "total": token_usage["totalTokenCount"],
+        },
     }
 
 
@@ -247,6 +254,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
 
         # Get completion from selected API
         response = client.chat.completions.create(**completion_params)
+        token_usage = response.usage
 
         # Extract the response text
         page_text = response.choices[0].message.content
@@ -259,21 +267,44 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             result = page_text.split("<output>")[1].strip()
         if "</output>" in result:
             result = result.split("</output>")[0].strip()
-        all_results.append((page_num, result))
+        all_results.append(
+            (
+                page_num,
+                result,
+                token_usage.prompt_tokens,
+                token_usage.completion_tokens,
+                token_usage.total_tokens,
+            )
+        )
 
     # Sort results by page number and combine
     all_results.sort(key=lambda x: x[0])
-    all_texts = [text for _, text in all_results]
+    all_texts = [text for _, text, _, _, _ in all_results]
     combined_text = "<page-break>".join(all_texts)
 
     return {
         "raw": combined_text,
         "segments": [
-            {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
-            for page_no, page in enumerate(all_texts, start=1)
+            {
+                "metadata": {
+                    "page": kwargs.get("start", 0) + page_no + 1,
+                    "token_usage": {
+                        "input": input_tokens,
+                        "output": output_tokens,
+                        "total": total_tokens,
+                    },
+                },
+                "content": page,
+            }
+            for page_no, page, input_tokens, output_tokens, total_tokens in all_results
         ],
         "title": kwargs["title"],
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
+        "token_usage": {
+            "input": sum(input_tokens for _, _, input_tokens, _, _ in all_results),
+            "output": sum(output_tokens for _, _, _, output_tokens, _ in all_results),
+            "total": sum(total_tokens for _, _, _, _, total_tokens in all_results),
+        },
     }

@@ -45,6 +45,7 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
             - url: URL if applicable
             - parent_title: Title of parent doc if recursively parsed
             - recursive_docs: List of dictionaries for recursively parsed documents
+            - token_usage: Dictionary containing token usage statistics
     """
     if parser_type == ParserType.AUTO:
         parser_type = ParserType[router(path)]
@@ -77,11 +78,14 @@ def parse_chunk_list(
     """
     combined_segments = []
     raw_texts = []
-
+    token_usage = {"input": 0, "output": 0}
     for file_path in file_paths:
         result = parse_chunk(file_path, parser_type, **kwargs)
         combined_segments.extend(result["segments"])
         raw_texts.append(result["raw"])
+        token_usage["input"] += result["token_usage"]["input"]
+        token_usage["output"] += result["token_usage"]["output"]
+    token_usage["total"] = token_usage["input"] + token_usage["output"]
 
     return {
         "raw": "\n\n".join(raw_texts),
@@ -90,6 +94,7 @@ def parse_chunk_list(
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
+        "token_usage": token_usage,
     }
 
 
@@ -118,6 +123,7 @@ def parse(
             - url: URL if applicable
             - parent_title: Title of parent doc if recursively parsed
             - recursive_docs: List of dictionaries for recursively parsed documents
+            - token_usage: Dictionary containing token usage statistics
     """
     kwargs["title"] = os.path.basename(path)
     kwargs["pages_per_split_"] = pages_per_split
@@ -188,6 +194,11 @@ def parse(
                 "url": kwargs.get("url", ""),
                 "parent_title": kwargs.get("parent_title", ""),
                 "recursive_docs": [],
+                "token_usage": {
+                    "input": sum(r["token_usage"]["input"] for r in chunk_results),
+                    "output": sum(r["token_usage"]["output"] for r in chunk_results),
+                    "total": sum(r["token_usage"]["total"] for r in chunk_results),
+                },
             }
 
     if depth > 1:
