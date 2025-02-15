@@ -214,3 +214,33 @@ async def test_large_pdf_parsing(sample):
     results = parse(file_name, parser_type, pages_per_split=1)["segments"]
     assert len(results) == n_pages
     assert results[0]["content"] is not None
+
+
+@pytest.mark.asyncio
+async def test_token_usage():
+    sample = "examples/inputs/test_1.pdf"
+    parser_type = "LLM_PARSE"
+    token_usage = parse(sample, parser_type)["token_usage"]
+    assert token_usage["input"] > 0
+    assert token_usage["output"] > 0
+    assert token_usage["total"] > 0
+
+
+@pytest.mark.asyncio
+def test_pdf_save_path():
+    sample = "https://example.com/"
+    parser_type = "LLM_PARSE"
+    result = parse(
+        sample,
+        parser_type,
+        as_pdf=True,
+        save_dir="tests/outputs/temp",
+        save_filename="test_output.pdf",
+    )
+    assert "pdf_path" in result
+    assert result["pdf_path"].endswith(".pdf")
+    assert os.path.exists(result["pdf_path"])
+
+    # Clean up
+    os.remove(result["pdf_path"])
+    os.rmdir("tests/outputs/temp")
