@@ -38,6 +38,7 @@ parse
    * ``parent_title``: Title of parent doc if recursively parsed
    * ``recursive_docs``: List of dictionaries for recursively parsed documents
    * ``token_usage``: Token usage statistics
+   * ``pdf_path``: Path to the intermediate PDF generated when ``as_pdf`` is enabled and the kwarg ``save_dir`` is specified.
 
 Examples
 --------
