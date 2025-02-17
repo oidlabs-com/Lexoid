@@ -92,3 +92,13 @@
 
 ### Changed
 * Specify headers for Playwright web page retrieval
+
+## [0.1.9] - 2025-02-17
+
+### Added
+- Parameters to specify intermediate PDF save path when `as_pdf=True`.
+- Return `token_uage` and `pdf_path` with `parse()` output where applicable
+
+### Changed
+- Switched back to together Python client
+- Improved `parse()` function return format to be a dictionary.
