@@ -5,6 +5,7 @@ import os
 
 import pytest
 from dotenv import load_dotenv
+from loguru import logger
 
 from lexoid.api import parse
 from lexoid.core.utils import calculate_similarity
@@ -216,11 +217,26 @@ async def test_large_pdf_parsing(sample):
     assert results[0]["content"] is not None
 
 
+token_usage_models = [
+    # Google models
+    "gemini-2.0-flash-001",
+    # OpenAI models
+    "gpt-4o",
+    # Meta-LLAMA models through HF Hub
+    "meta-llama/Llama-3.2-11B-Vision-Instruct",
+    # Meta-LLAMA models through Together AI
+    "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+]
+
+
+@pytest.mark.parametrize("model", token_usage_models)
 @pytest.mark.asyncio
-async def test_token_usage():
+async def test_token_usage_api(model):
     sample = "examples/inputs/test_1.pdf"
     parser_type = "LLM_PARSE"
-    token_usage = parse(sample, parser_type)["token_usage"]
+    config = {"parser_type": parser_type, "model": model}
+    token_usage = parse(sample, **config)["token_usage"]
+    logger.info(f"Token usage: {token_usage}")
     assert token_usage["input"] > 0
     assert token_usage["output"] > 0
     assert token_usage["total"] > 0
