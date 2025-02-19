@@ -260,3 +260,13 @@ def test_pdf_save_path():
     # Clean up
     os.remove(result["pdf_path"])
     os.rmdir("tests/outputs/temp")
+
+
+@pytest.mark.asyncio
+def test_page_nums():
+    sample = "examples/inputs/sample_test_doc.pdf"
+    parser_type = "LLM_PARSE"
+    result = parse(sample, parser_type, page_nums=(3, 4), pages_per_split=1)
+    assert len(result["segments"]) == 2
+    assert all(keyword in result["raw"] for keyword in ["Table 24", "apple"])
+    assert all(keyword not in result["raw"] for keyword in ["Aenean", "Lexoid"])
