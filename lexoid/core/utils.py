@@ -6,7 +6,7 @@ import re
 import sys
 from difflib import SequenceMatcher
 from hashlib import md5
-from typing import Dict, List
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import nest_asyncio
@@ -43,6 +43,17 @@ def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
                 new_pdf.save(output_path)
                 paths.append(output_path)
     return paths
+
+
+def create_sub_pdf(
+    input_path: str, output_path: str, page_nums: Optional[tuple] = None
+) -> str:
+    with pikepdf.open(input_path) as pdf:
+        indices = page_nums if page_nums else range(len(pdf.pages))
+        with pikepdf.new() as new_pdf:
+            new_pdf.pages.extend([pdf.pages[i - 1] for i in indices])
+            new_pdf.save(output_path)
+    return output_path
 
 
 def convert_image_to_pdf(image_path: str) -> bytes:

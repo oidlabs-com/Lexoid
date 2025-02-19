@@ -28,6 +28,8 @@ parse
    * ``verbose`` (bool): Enable verbose logging
    * ``x_tolerance`` (int): X-axis tolerance for text extraction
    * ``y_tolerance`` (int): Y-axis tolerance for text extraction
+   * ``save_dir`` (str): Directory to save intermediate PDFs
+   * ``page_nums`` (List[int]): List of page numbers to parse
 
    Return value format:
    A dictionary containing a subset or all of the following keys:
