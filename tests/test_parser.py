@@ -243,7 +243,7 @@ async def test_token_usage_api(model):
 
 
 @pytest.mark.asyncio
-def test_pdf_save_path():
+async def test_pdf_save_path():
     sample = "https://example.com/"
     parser_type = "LLM_PARSE"
     result = parse(
@@ -263,7 +263,7 @@ def test_pdf_save_path():
 
 
 @pytest.mark.asyncio
-def test_page_nums():
+async def test_page_nums():
     sample = "examples/inputs/sample_test_doc.pdf"
     result = parse(sample, "LLM_PARSE", page_nums=(3, 4), pages_per_split=1)
     assert len(result["segments"]) == 2
