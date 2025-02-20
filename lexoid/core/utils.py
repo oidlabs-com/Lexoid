@@ -6,7 +6,7 @@ import re
 import sys
 from difflib import SequenceMatcher
 from hashlib import md5
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import nest_asyncio
@@ -46,7 +46,7 @@ def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
 
 
 def create_sub_pdf(
-    input_path: str, output_path: str, page_nums: Optional[Union[tuple|int]] = None
+    input_path: str, output_path: str, page_nums: Optional[tuple[int, ...]|int] = None
 ) -> str:
     if isinstance(page_nums, int):
         page_nums = (page_nums,)
