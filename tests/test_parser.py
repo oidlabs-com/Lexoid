@@ -270,6 +270,10 @@ async def test_page_nums():
     assert all(keyword in result["raw"] for keyword in ["Table 24", "apple"])
     assert all(keyword not in result["raw"] for keyword in ["Aenean", "Lexoid"])
 
+    result = parse(sample, "LLM_PARSE", page_nums=(3, 3), pages_per_split=1)
+    assert len(result["segments"]) == 1
+    assert "Table 24" in result["raw"]
+
     sample = "https://www.dca.ca.gov/acp/pdf_files/lemonlaw_qa.pdf"
     result = parse(sample, "STATIC_PARSE", page_nums=2, pages_per_split=1)
     assert len(result["segments"]) == 1

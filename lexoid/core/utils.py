@@ -50,6 +50,7 @@ def create_sub_pdf(
 ) -> str:
     if isinstance(page_nums, int):
         page_nums = (page_nums,)
+    page_nums = tuple(sorted(set(page_nums)))
     with pikepdf.open(input_path) as pdf:
         indices = page_nums if page_nums else range(len(pdf.pages))
         with pikepdf.new() as new_pdf:
