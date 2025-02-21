@@ -83,8 +83,9 @@ def parse_chunk_list(
         result = parse_chunk(file_path, parser_type, **kwargs)
         combined_segments.extend(result["segments"])
         raw_texts.append(result["raw"])
-        token_usage["input"] += result["token_usage"]["input"]
-        token_usage["output"] += result["token_usage"]["output"]
+        if "token_usage" in result:
+            token_usage["input"] += result["token_usage"]["input"]
+            token_usage["output"] += result["token_usage"]["output"]
     token_usage["total"] = token_usage["input"] + token_usage["output"]
 
     return {
