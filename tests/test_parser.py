@@ -243,7 +243,7 @@ async def test_token_usage_api(model):
 
 
 @pytest.mark.asyncio
-def test_pdf_save_path():
+async def test_pdf_save_path():
     sample = "https://example.com/"
     parser_type = "LLM_PARSE"
     result = parse(
@@ -260,3 +260,22 @@ def test_pdf_save_path():
     # Clean up
     os.remove(result["pdf_path"])
     os.rmdir("tests/outputs/temp")
+
+
+@pytest.mark.asyncio
+async def test_page_nums():
+    sample = "examples/inputs/sample_test_doc.pdf"
+    result = parse(sample, "LLM_PARSE", page_nums=(3, 4), pages_per_split=1)
+    assert len(result["segments"]) == 2
+    assert all(keyword in result["raw"] for keyword in ["Table 24", "apple"])
+    assert all(keyword not in result["raw"] for keyword in ["Aenean", "Lexoid"])
+
+    result = parse(sample, "LLM_PARSE", page_nums=(3, 3), pages_per_split=1)
+    assert len(result["segments"]) == 1
+    assert "Table 24" in result["raw"]
+
+    sample = "https://www.dca.ca.gov/acp/pdf_files/lemonlaw_qa.pdf"
+    result = parse(sample, "STATIC_PARSE", page_nums=2, pages_per_split=1)
+    assert len(result["segments"]) == 1
+    assert "ATTEMPTS" in result["raw"]
+    assert "acp@dca.ca.gov" not in result["raw"]

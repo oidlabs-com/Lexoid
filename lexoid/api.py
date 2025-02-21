@@ -19,6 +19,7 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
+    create_sub_pdf,
 )
 
 
@@ -163,6 +164,12 @@ def parse(
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
             path = convert_to_pdf(path, pdf_path)
+
+        if "page_nums" in kwargs and path.lower().endswith(".pdf"):
+            sub_pdf_dir = os.path.join(temp_dir, "sub_pdfs")
+            os.makedirs(sub_pdf_dir, exist_ok=True)
+            sub_pdf_path = os.path.join(sub_pdf_dir, f"{os.path.basename(path)}")
+            path = create_sub_pdf(path, sub_pdf_path, kwargs["page_nums"])
 
         if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
             kwargs["split"] = False
