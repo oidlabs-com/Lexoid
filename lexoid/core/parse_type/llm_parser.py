@@ -125,6 +125,9 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
         combined_text = result.split("</output>")[0].strip()
 
     token_usage = result["usageMetadata"]
+    input_tokens = token_usage.get("promptTokenCount", 0)
+    output_tokens = token_usage.get("candidatesTokenCount", 0)
+    total_tokens = input_tokens + output_tokens
 
     return {
         "raw": combined_text,
@@ -137,9 +140,9 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
         "token_usage": {
-            "input": token_usage["promptTokenCount"],
-            "output": token_usage["candidatesTokenCount"],
-            "total": token_usage["totalTokenCount"],
+            "input": input_tokens,
+            "output": output_tokens,
+            "total": total_tokens,
         },
     }
 
