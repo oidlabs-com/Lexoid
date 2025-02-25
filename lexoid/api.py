@@ -20,6 +20,7 @@ from lexoid.core.utils import (
     router,
     split_pdf,
     create_sub_pdf,
+    get_webpage_soup,
 )
 
 
@@ -149,6 +150,7 @@ def parse(
             if is_supported_url_file_type(path):
                 path = download_file(path, download_dir)
             elif as_pdf:
+                kwargs["title"] = get_webpage_soup(path).title.string.strip()
                 pdf_filename = kwargs.get("save_filename", f"webpage_{int(time())}.pdf")
                 if not pdf_filename.endswith(".pdf"):
                     pdf_filename += ".pdf"
