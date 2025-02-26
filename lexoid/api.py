@@ -103,7 +103,7 @@ def parse_chunk_list(
 
 def parse(
     path: str,
-    parser_type: Union[str, ParserType] = "LLM_PARSE",
+    parser_type: Union[str, ParserType] = "AUTO",
     pages_per_split: int = 4,
     max_processes: int = 4,
     **kwargs,

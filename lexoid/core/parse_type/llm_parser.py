@@ -50,7 +50,7 @@ def retry_on_http_error(func):
 @retry_on_http_error
 def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     if "model" not in kwargs:
-        kwargs["model"] = "gemini-1.5-flash"
+        kwargs["model"] = "gemini-2.0-flash"
     model = kwargs.get("model")
     if model.startswith("gemini"):
         return parse_with_gemini(path, **kwargs)
