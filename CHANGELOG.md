@@ -102,3 +102,12 @@
 ### Changed
 - Switched back to together Python client
 - Improved `parse()` function return format to be a dictionary.
+
+
+## [0.1.10] - 2025-02-23
+
+### Added
+- Parameter to specify page numbers for parsing
+
+### Fixed
+- Errors caused by empty token_usage

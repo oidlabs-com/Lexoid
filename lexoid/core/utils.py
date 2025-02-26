@@ -299,18 +299,7 @@ def html_to_markdown(html: str, title: str, url: str) -> str:
 
     return content
 
-
-def read_html_content(url: str) -> Dict:
-    """
-    Reads the content of an HTML page from the given URL and converts it to markdown or structured content.
-
-    Args:
-        url (str): The URL of the HTML page.
-
-    Returns:
-        Dict: Dictionary containing parsed document data
-    """
-
+def get_webpage_soup(url: str) -> BeautifulSoup:
     try:
         from playwright.async_api import async_playwright
 
@@ -371,6 +360,21 @@ def read_html_content(url: str) -> Dict:
         soup = BeautifulSoup(
             response.content, "html.parser", from_encoding="iso-8859-1"
         )
+    return soup
+
+
+def read_html_content(url: str) -> Dict:
+    """
+    Reads the content of an HTML page from the given URL and converts it to markdown or structured content.
+
+    Args:
+        url (str): The URL of the HTML page.
+
+    Returns:
+        Dict: Dictionary containing parsed document data
+    """
+
+    soup = get_webpage_soup(url)
     title = soup.title.string.strip() if soup.title else "No title"
     url_hash = md5(url.encode("utf-8")).hexdigest()[:8]
     full_title = f"{title} - {url_hash}"
