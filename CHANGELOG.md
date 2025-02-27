@@ -111,3 +111,17 @@
 
 ### Fixed
 - Errors caused by empty token_usage
+
+## [0.1.11] - 2025-02-27
+
+### Added
+- Priority setting to AUTO routing
+- More models to benchmark
+
+### Changed
+- Set default parse_type to AUTO
+- Set default LLM to Gemini 2.0 Flash
+- Updated benchmark script to aggregate over multiple runs
+
+### Fixed
+- Incorrect title when `as_pdf=True`
