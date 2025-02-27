@@ -559,6 +559,8 @@ def router(path: str, priority: str = "accuracy") -> str:
         return "STATIC_PARSE"
     
     if priority == "accuracy":
+        # If the file is a PDF without images but has hyperlinks, use STATIC_PARSE
+        # Otherwise, use LLM_PARSE
         if (
             file_type == "application/pdf"
             and not has_image_in_pdf(path)
@@ -567,6 +569,8 @@ def router(path: str, priority: str = "accuracy") -> str:
             return "STATIC_PARSE"
         return "LLM_PARSE"
     else:
+        # If the file is a PDF without images, use STATIC_PARSE
+        # Otherwise, use LLM_PARSE
         if (
             file_type == "application/pdf"
             and not has_image_in_pdf(path)
