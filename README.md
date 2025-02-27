@@ -77,19 +77,22 @@ print(parsed_md)
 - **kwargs: Additional arguments for the parser.
 
 ## Benchmark
-Initial results (_more updates soon_)
+Results aggregated across 5 iterations each for 5 documents.
 
 _Note:_ Benchmarks are currently done in the zero-shot setting.
 
-| Rank | Model/Framework | Similarity | Time (s) |
-|------|-----------|------------|----------|
-| 1 | gpt-4o | 0.799 | 21.77|
-| 2 | gemini-2.0-flash-exp | 0.797 | 13.47 |
-| 3 | gemini-exp-1121 | 0.779 | 30.88 |
-| 4 | gemini-1.5-pro | 0.742 | 15.77 |
-| 5 | gpt-4o-mini | 0.721 | 14.86 |
-| 6 | gemini-1.5-flash | 0.702 | 4.56 |
-| 7 | Llama-3.2-11B-Vision-Instruct (via HF) | 0.582 | 21.74 |
-| 8 | Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI) | 0.556 | 4.58 |
-| 9 | Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI) | 0.527 | 10.57 |
-| 10 | Llama-Vision-Free (via Together AI) | 0.435 | 8.42 |
+| Rank | Model | Mean Similarity | Std. Dev. | Time (s) |
+|---|---|---|---|---|
+| 1 | gemini-2.0-flash | 0.829 | 0.102 | 7.41 |
+| 2 | gemini-2.0-flash-001 | 0.814 | 0.176 | 6.85 |
+| 3 | gemini-1.5-flash | 0.797 | 0.143 | 9.54 |
+| 4 | gemini-2.0-pro-exp | 0.764 | 0.227 | 11.95 |
+| 5 | gemini-2.0-flash-thinking-exp | 0.746 | 0.266 | 10.46 |
+| 6 | gemini-1.5-pro | 0.732 | 0.265 | 11.44 |
+| 7 | gpt-4o | 0.687 | 0.247 | 10.16 |
+| 8 | gpt-4o-mini | 0.642 | 0.213 | 9.71 |
+| 9 | gemini-1.5-flash-8b | 0.551 | 0.223 | 3.91 |
+| 10 | Llama-Vision-Free (via Together AI) | 0.531 | 0.198 | 6.93 |
+| 11 | Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI) | 0.524 | 0.192 | 3.68 |
+| 12 | Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI) | 0.461 | 0.306 | 19.26 |
+| 13 | Llama-3.2-11B-Vision-Instruct (via Hugging Face) | 0.451 | 0.257 | 4.54 |

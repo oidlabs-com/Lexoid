@@ -546,23 +546,37 @@ def has_hyperlink_in_pdf(path: str):
     )
 
 
-def router(path: str):
+def router(path: str, priority: str = "accuracy") -> str:
+    """
+    Routes the file path to the appropriate parser based on the file type.
+
+    Args:
+        path (str): The file path to route.
+        priority (str): The priority for routing: "accuracy" (preference to LLM_PARSE) or "speed" (preference to STATIC_PARSE).
+    """
     file_type = get_file_type(path)
     if file_type.startswith("text/"):
         return "STATIC_PARSE"
-    # Naive routing strategy for now.
-    # Current routing strategy,
-    # 1. If the PDF has hidden hyperlinks (as alias) and no images: STATIC_PARSE
-    # 2. Other scenarios: LLM_PARSE
-    # If you have other needs, do reach out or create an issue.
-    if (
-        file_type == "application/pdf"
-        and not has_image_in_pdf(path)
-        and has_hyperlink_in_pdf(path)
-    ):
-        return "STATIC_PARSE"
-    return "LLM_PARSE"
-
+    
+    if priority == "accuracy":
+        # If the file is a PDF without images but has hyperlinks, use STATIC_PARSE
+        # Otherwise, use LLM_PARSE
+        if (
+            file_type == "application/pdf"
+            and not has_image_in_pdf(path)
+            and has_hyperlink_in_pdf(path)
+        ):
+            return "STATIC_PARSE"
+        return "LLM_PARSE"
+    else:
+        # If the file is a PDF without images, use STATIC_PARSE
+        # Otherwise, use LLM_PARSE
+        if (
+            file_type == "application/pdf"
+            and not has_image_in_pdf(path)
+        ):
+            return "STATIC_PARSE"
+        return "LLM_PARSE"
 
 def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     temp_path = os.path.join(
