@@ -1,4 +1,18 @@
-# Lexoid
+<div align="center">
+  
+```
+ ___      _______  __   __  _______  ___   ______  
+|   |    |       ||  |_|  ||       ||   | |      | 
+|   |    |    ___||       ||   _   ||   | |  _    |
+|   |    |   |___ |       ||  | |  ||   | | | |   |
+|   |___ |    ___| |     | |  |_|  ||   | | |_|   |
+|       ||   |___ |   _   ||       ||   | |       |
+|_______||_______||__| |__||_______||___| |______| 
+                                                                                                    
+```
+  
+</div>
+
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/oidlabs-com/Lexoid/blob/main/examples/example_notebook_colab.ipynb)
 [![GitHub license](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/oidlabs-com/Lexoid/blob/main/LICENSE)
