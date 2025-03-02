@@ -473,7 +473,10 @@ def save_webpage_as_pdf(url: str, output_path: str) -> str:
     Returns:
         str: The path to the saved PDF file.
     """
-    app = QApplication(sys.argv)
+    if not QApplication.instance():
+        app = QApplication(sys.argv)
+    else:
+        app = QApplication.instance()
     web = QWebEngineView()
     web.load(QUrl(url))
 
