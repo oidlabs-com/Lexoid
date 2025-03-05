@@ -125,3 +125,12 @@
 
 ### Fixed
 - Incorrect title when `as_pdf=True`
+
+
+## [0.1.11.post1] - 2025-03-05
+
+### Added
+- Code of Conduct
+
+### Fixed
+- Segmentation fault when PyQT app is reinitialized
