@@ -33,6 +33,7 @@ parse
 
    Return value format:
    A dictionary containing a subset or all of the following keys:
+   
    *  ``raw``: Full markdown content as string
    * ``segments``: List of dictionaries with metadata and content
    * ``title``: Title of the document
