@@ -31,6 +31,7 @@ def retry_on_http_error(func):
             logger.error(f"HTTPError encountered: {e}. Retrying in 10 seconds...")
             time.sleep(10)
             try:
+                logger.debug(f"Retry {func.__name__}")
                 return func(*args, **kwargs)
             except HTTPError as e:
                 logger.error(f"Retry failed: {e}")
@@ -105,9 +106,11 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
     }
 
     headers = {"Content-Type": "application/json"}
-
-    response = requests.post(url, json=payload, headers=headers)
-    response.raise_for_status()
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=120)
+        response.raise_for_status()
+    except requests.Timeout as e:
+        raise HTTPError(f"Timeout error occurred: {e}")
 
     result = response.json()
 
