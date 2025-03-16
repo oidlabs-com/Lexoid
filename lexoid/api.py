@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import tempfile
@@ -213,6 +214,30 @@ def parse(
                     "total": sum(r["token_usage"]["total"] for r in chunk_results),
                 },
             }
+
+            if "api_cost_mapping" in kwargs:
+                api_cost_mapping = kwargs["api_cost_mapping"]
+                if isinstance(api_cost_mapping, dict):
+                    api_cost_mapping = api_cost_mapping
+                elif isinstance(api_cost_mapping, str) and os.path.exists(
+                    api_cost_mapping
+                ):
+                    with open(api_cost_mapping, "r") as f:
+                        api_cost_mapping = json.load(f)
+                else:
+                    raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
+
+            price_per_m = api_cost_mapping.get(
+                kwargs.get("model", "gemini-2.0-flash"), None
+            )
+            if price_per_m:
+                token_cost = {
+                    "input": result["token_usage"]["input"] * price_per_m["input"],
+                    "output": result["token_usage"]["output"] * price_per_m["output"],
+                }
+                token_cost["total"] = token_cost["input"] + token_cost["output"]
+                result["token_cost"] = token_cost
+
             if as_pdf:
                 result["pdf_path"] = path
 

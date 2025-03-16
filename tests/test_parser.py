@@ -15,9 +15,10 @@ output_dir = "tests/outputs"
 os.makedirs(output_dir, exist_ok=True)
 models = [
     # Google models
-    "gemini-exp-1206",
-    "gemini-2.0-flash-001",
+    "gemini-2.0-pro-exp",
+    "gemini-2.0-flash",
     "gemini-1.5-flash",
+    "gemini-1.5-flash-8b",
     "gemini-1.5-pro",
     # OpenAI models
     "gpt-4o",
@@ -279,3 +280,28 @@ async def test_page_nums():
     assert len(result["segments"]) == 1
     assert "ATTEMPTS" in result["raw"]
     assert "acp@dca.ca.gov" not in result["raw"]
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "gemini-2.0-flash",
+        "gpt-4o",
+        "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+    ],
+)
+@pytest.mark.asyncio
+async def test_token_cost(model):
+    sample = "examples/inputs/test_1.pdf"
+    parser_type = "LLM_PARSE"
+    api_cost_path = os.path.join(os.path.dirname(__file__), "api_cost_mapping.json")
+    config = {
+        "parser_type": parser_type,
+        "model": model,
+        "api_cost_mapping": api_cost_path,
+    }
+    result = parse(sample, **config)
+    assert "token_cost" in result
+    assert result["token_cost"]["input"] > 0
+    assert result["token_cost"]["output"] > 0
+    assert result["token_cost"]["total"] > 0
