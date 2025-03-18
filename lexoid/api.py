@@ -227,13 +227,17 @@ def parse(
                 else:
                     raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
 
-            price_per_m = api_cost_mapping.get(
+            price_per_mil = api_cost_mapping.get(
                 kwargs.get("model", "gemini-2.0-flash"), None
             )
-            if price_per_m:
+            if price_per_mil:
                 token_cost = {
-                    "input": result["token_usage"]["input"] * price_per_m["input"],
-                    "output": result["token_usage"]["output"] * price_per_m["output"],
+                    "input": result["token_usage"]["input"]
+                    * price_per_mil["input"]
+                    / 1_000_000,
+                    "output": result["token_usage"]["output"]
+                    * price_per_mil["output"]
+                    / 1_000_000,
                 }
                 token_cost["total"] = token_cost["input"] + token_cost["output"]
                 result["token_cost"] = token_cost
