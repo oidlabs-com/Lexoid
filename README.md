@@ -119,8 +119,10 @@ _Note:_ Benchmarks are currently done in the zero-shot setting.
 | 6    | gemini-1.5-pro                                        | 0.732           | 0.265     | 11.44    |
 | 7    | gpt-4o                                                | 0.687           | 0.247     | 10.16    |
 | 8    | gpt-4o-mini                                           | 0.642           | 0.213     | 9.71     |
-| 9    | gemini-1.5-flash-8b                                   | 0.551           | 0.223     | 3.91     |
-| 10   | Llama-Vision-Free (via Together AI)                   | 0.531           | 0.198     | 6.93     |
-| 11   | Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI) | 0.524           | 0.192     | 3.68     |
-| 12   | Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI) | 0.461           | 0.306     | 19.26    |
-| 13   | Llama-3.2-11B-Vision-Instruct (via Hugging Face)      | 0.451           | 0.257     | 4.54     |
+| 9    | gemma-3-27b-it                                        | 0.628           | 0.299     | 18.79    |
+| 10   | gemini-1.5-flash-8b                                   | 0.551           | 0.223     | 3.91     |
+| 11   | Llama-Vision-Free (via Together AI)                   | 0.531           | 0.198     | 6.93     |
+| 12   | Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI) | 0.524           | 0.192     | 3.68     |
+| 13   | qwen/qwen-2.5-vl-7b-instruct                          | 0.482           | 0.209     | 11.53    |
+| 14   | Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI) | 0.461           | 0.306     | 19.26    |
+| 15   | Llama-3.2-11B-Vision-Instruct (via Hugging Face)      | 0.451           | 0.257     | 4.54     |

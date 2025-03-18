@@ -47,7 +47,11 @@ def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, 
 
 
 def run_benchmark_config(
-    input_path: str, ground_truth: str, config: Dict, output_save_dir: str = None, iterations: int = 1
+    input_path: str,
+    ground_truth: str,
+    config: Dict,
+    output_save_dir: str = None,
+    iterations: int = 1,
 ) -> BenchmarkResult:
     """Run a single benchmark configuration for a specified number of iterations."""
     similarities = []
@@ -63,10 +67,12 @@ def run_benchmark_config(
             if output_save_dir:
                 filename = (
                     f"{Path(input_path).stem}_"
-                    + ", ".join([
-                        f"{key}={str(value).replace('/', '_')}"
-                        for key, value in config.items()
-                    ])
+                    + ", ".join(
+                        [
+                            f"{key}={str(value).replace('/', '_')}"
+                            for key, value in config.items()
+                        ]
+                    )
                     + ".md"
                 )
                 with open(os.path.join(output_save_dir, filename), "w") as fp:
@@ -143,6 +149,9 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
             "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
             "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
             "meta-llama/Llama-Vision-Free",
+            # Model through OpenRouter
+            "google/gemma-3-27b-it",
+            "qwen/qwen-2.5-vl-7b-instruct",
         ],
         "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
@@ -232,12 +241,14 @@ def format_results(results: List[BenchmarkResult], test_attributes: List[str]) -
         row = [str(i)]
         for attr in test_attributes:
             row.append(str(config.get(attr, "-")))
-        row.extend([
-            f"{result.similarity[0]:.3f}",
-            f"{result.similarity[1]:.3f}",
-            f"{result.execution_time[0]:.2f}",
-            error_msg,
-        ])
+        row.extend(
+            [
+                f"{result.similarity[0]:.3f}",
+                f"{result.similarity[1]:.3f}",
+                f"{result.execution_time[0]:.2f}",
+                error_msg,
+            ]
+        )
         md_lines.append("| " + " | ".join(row) + " |")
 
     return "\n".join(md_lines)
