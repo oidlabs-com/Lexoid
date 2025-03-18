@@ -50,6 +50,8 @@ def retry_on_http_error(func):
 
 @retry_on_http_error
 def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
+    if "api_provider" in kwargs and kwargs["api_provider"]:
+        return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
     if "model" not in kwargs:
         kwargs["model"] = "gemini-2.0-flash"
     model = kwargs.get("model")
@@ -61,6 +63,8 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
         if model.endswith("Turbo") or model == "meta-llama/Llama-Vision-Free":
             return parse_with_api(path, api="together", **kwargs)
         return parse_with_api(path, api="huggingface", **kwargs)
+    if model.startswith("google") or model.startswith("qwen"):
+        return parse_with_api(path, api="openrouter", **kwargs)
     raise ValueError(f"Unsupported model: {model}")
 
 
@@ -184,6 +188,10 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             token=os.environ["HUGGINGFACEHUB_API_TOKEN"]
         ),
         "together": lambda: Together(),
+        "openrouter": lambda: OpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.environ["OPENROUTER_API_KEY"],
+        ),
     }
     assert api in clients, f"Unsupported API: {api}"
     logger.debug(f"Parsing with {api} API and model {kwargs['model']}")
