@@ -81,7 +81,7 @@ def parse_chunk_list(
     """
     combined_segments = []
     raw_texts = []
-    token_usage = {"input": 0, "output": 0}
+    token_usage = {"input": 0, "output": 0, "image_count": 0}
     for file_path in file_paths:
         result = parse_chunk(file_path, parser_type, **kwargs)
         combined_segments.extend(result["segments"])
@@ -89,6 +89,7 @@ def parse_chunk_list(
         if "token_usage" in result:
             token_usage["input"] += result["token_usage"]["input"]
             token_usage["output"] += result["token_usage"]["output"]
+            token_usage["image_count"] += len(result["segments"])
     token_usage["total"] = token_usage["input"] + token_usage["output"]
 
     return {
@@ -211,6 +212,9 @@ def parse(
                 "token_usage": {
                     "input": sum(r["token_usage"]["input"] for r in chunk_results),
                     "output": sum(r["token_usage"]["output"] for r in chunk_results),
+                    "image_count": sum(
+                        r["token_usage"]["image_count"] for r in chunk_results
+                    ),
                     "total": sum(r["token_usage"]["total"] for r in chunk_results),
                 },
             }
@@ -227,20 +231,20 @@ def parse(
                 else:
                     raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
 
-            price_per_mil = api_cost_mapping.get(
-                kwargs.get("model", "gemini-2.0-flash"), None
-            )
-            if price_per_mil:
-                token_cost = {
-                    "input": result["token_usage"]["input"]
-                    * price_per_mil["input"]
-                    / 1_000_000,
-                    "output": result["token_usage"]["output"]
-                    * price_per_mil["output"]
-                    / 1_000_000,
-                }
-                token_cost["total"] = token_cost["input"] + token_cost["output"]
-                result["token_cost"] = token_cost
+                api_cost = api_cost_mapping.get(
+                    kwargs.get("model", "gemini-2.0-flash"), None
+                )
+                if api_cost:
+                    token_usage = result["token_usage"]
+                    token_cost = {
+                        "input": token_usage["input"] * api_cost["input"] / 1_000_000
+                        + api_cost.get("input-image", 0) * token_usage["image_count"],
+                        "output": token_usage["output"]
+                        * api_cost["output"]
+                        / 1_000_000,
+                    }
+                    token_cost["total"] = token_cost["input"] + token_cost["output"]
+                    result["token_cost"] = token_cost
 
             if as_pdf:
                 result["pdf_path"] = path

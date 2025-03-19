@@ -44,5 +44,15 @@
     "meta-llama/Llama-Vision-Free": {
         "input": 0,
         "output": 0
+    },
+    "google/gemma-3-27b-it": {
+        "input": 0.1,
+        "input-image": 0.0000256,
+        "output": 0.2
+    },
+    "qwen/qwen-2.5-vl-7b-instruct": {
+        "input": 0.2,
+        "input-image": 0.0001445,
+        "output": 0.2
     }
 }
