@@ -30,6 +30,8 @@ parse
    * ``y_tolerance`` (int): Y-axis tolerance for text extraction
    * ``save_dir`` (str): Directory to save intermediate PDFs
    * ``page_nums`` (List[int]): List of page numbers to parse
+   * ``api_cost_mapping`` (Union[dict, str]): Dictionary containing API cost details or the string path to a JSON file containing
+     the cost details. Sample file available at ``tests/api_cost_mapping.json``.
 
    Return value format:
    A dictionary containing a subset or all of the following keys:

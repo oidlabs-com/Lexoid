@@ -2,7 +2,7 @@ from glob import glob
 import os
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 from statistics import mean, stdev
 from pathlib import Path
 
@@ -19,7 +19,8 @@ class BenchmarkResult:
     config: Dict
     similarity: List[float]  # Store all similarity scores for iterations
     execution_time: List[float]  # Store all execution times for iterations
-    error: str = None
+    cost: Optional[List[float]] = None
+    error: Optional[str] = None
 
 
 def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, str]]:
@@ -56,12 +57,14 @@ def run_benchmark_config(
     """Run a single benchmark configuration for a specified number of iterations."""
     similarities = []
     execution_times = []
+    costs = []
     error = None
 
     for _ in range(iterations):
         try:
             start_time = time.time()
-            result = parse(input_path, "LLM_PARSE", **config)["raw"]
+            config["api_cost_mapping"] = "tests/api_cost_mapping.json"
+            result = parse(input_path, "LLM_PARSE", **config)
             execution_time = time.time() - start_time
 
             if output_save_dir:
@@ -76,11 +79,14 @@ def run_benchmark_config(
                     + ".md"
                 )
                 with open(os.path.join(output_save_dir, filename), "w") as fp:
-                    fp.write(result)
+                    fp.write(result["raw"])
 
-            similarity = calculate_similarity(result, ground_truth)
+            similarity = calculate_similarity(result["raw"], ground_truth)
             similarities.append(similarity)
             execution_times.append(execution_time)
+            costs.append(
+                result["token_cost"]["output"] if "token_cost" in result else 0.0
+            )
         except Exception as e:
             print(f"Error running benchmark for config: {config}\n{e}")
             error = str(e)
@@ -90,6 +96,7 @@ def run_benchmark_config(
         config=config,
         similarity=similarities,
         execution_time=execution_times,
+        cost=costs,
         error=error,
     )
 
@@ -103,9 +110,11 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
     if valid_results:
         all_similarities = [s for r in valid_results for s in r.similarity]
         all_execution_times = [t for r in valid_results for t in r.execution_time]
+        all_costs = [c for r in valid_results for c in r.cost]
         avg_similarity = mean(all_similarities)
         std_similarity = stdev(all_similarities) if len(all_similarities) > 1 else 0.0
         avg_execution_time = mean(all_execution_times)
+        avg_cost = mean(all_costs)
         error = (
             None
             if len(valid_results) == len(results)
@@ -115,12 +124,14 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
         avg_similarity = 0.0
         std_similarity = 0.0
         avg_execution_time = 0.0
+        avg_cost = 0.0
         error = f"Failed: {len(results)}/{len(results)}"
 
     return BenchmarkResult(
         config=results[0].config,
         similarity=[avg_similarity, std_similarity],  # Store mean and std dev
         execution_time=[avg_execution_time],
+        cost=[avg_cost],
         error=error,
     )
 
@@ -226,7 +237,7 @@ def format_results(results: List[BenchmarkResult], test_attributes: List[str]) -
     headers = ["Rank"]
     for attr in test_attributes:
         headers.append(attr.replace("_", " ").title())
-    headers.extend(["Mean Similarity", "Std. Dev.", "Time (s)", "Error"])
+    headers.extend(["Mean Similarity", "Std. Dev.", "Time (s)", "Cost ($)", "Error"])
 
     md_lines = [
         "# Parser Benchmark Results\n",
@@ -246,6 +257,7 @@ def format_results(results: List[BenchmarkResult], test_attributes: List[str]) -
                 f"{result.similarity[0]:.3f}",
                 f"{result.similarity[1]:.3f}",
                 f"{result.execution_time[0]:.2f}",
+                f"{result.cost[0]}",
                 error_msg,
             ]
         )
@@ -324,7 +336,7 @@ def main():
     ]
 
     # Number of iterations for each benchmark
-    iterations = 5
+    iterations = 1
 
     results = run_benchmarks(
         input_path, output_dir, test_attributes, benchmark_output_dir, iterations
