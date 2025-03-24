@@ -86,20 +86,20 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
             file_content = file.read()
         base64_file = base64.b64encode(file_content).decode("utf-8")
 
-    # Ideally, we do this ourselves. But, for now this might be a good enough.
-    custom_instruction = f"""- Total number of pages: {kwargs["pages_per_split_"]}. {INSTRUCTIONS_ADD_PG_BREAK}"""
-    if kwargs["pages_per_split_"] == 1:
-        custom_instruction = ""
+    if "system_prompt" in kwargs:
+        prompt = kwargs["system_prompt"]
+    else:
+        # Ideally, we do this ourselves. But, for now this might be a good enough.
+        custom_instruction = f"""- Total number of pages: {kwargs["pages_per_split_"]}. {INSTRUCTIONS_ADD_PG_BREAK}"""
+        if kwargs["pages_per_split_"] == 1:
+            custom_instruction = ""
+        prompt = PARSER_PROMPT.format(custom_instructions=custom_instruction)
 
     payload = {
         "contents": [
             {
                 "parts": [
-                    {
-                        "text": PARSER_PROMPT.format(
-                            custom_instructions=custom_instruction
-                        )
-                    },
+                    {"text": prompt},
                     {"inline_data": {"mime_type": mime_type, "data": base64_file}},
                 ]
             }
@@ -217,35 +217,32 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
 
     # API-specific message formatting
     def get_messages(page_num: int, image_url: str) -> List[Dict]:
-        base_message = {
-            "type": "text",
-            "text": LLAMA_PARSER_PROMPT,
-        }
         image_message = {
             "type": "image_url",
             "image_url": {"url": image_url},
         }
 
         if api == "openai":
+            system_prompt = kwargs.get(
+                "system_prompt", PARSER_PROMPT.format(custom_instructions="")
+            )
+            user_prompt = kwargs.get("user_prompt", OPENAI_USER_PROMPT)
             return [
                 {
                     "role": "system",
-                    "content": PARSER_PROMPT.format(
-                        custom_instructions=INSTRUCTIONS_ADD_PG_BREAK
-                    ),
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": f"{OPENAI_USER_PROMPT} (Page {page_num + 1})",
-                        },
+                        {"type": "text", "text": user_prompt},
                         image_message,
                     ],
                 },
             ]
         else:
+            prompt = kwargs.get("system_prompt", LLAMA_PARSER_PROMPT)
+            base_message = {"type": "text", "text": prompt}
             return [
                 {
                     "role": "user",
