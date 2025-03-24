@@ -389,7 +389,7 @@ def parse_with_pdfplumber(path: str, **kwargs) -> Dict:
     ]
 
     return {
-        "raw": "<page-break>".join(page_texts),
+        "raw": "\n\n".join(page_texts),
         "segments": segments,
         "title": kwargs["title"],
         "url": kwargs.get("url", ""),

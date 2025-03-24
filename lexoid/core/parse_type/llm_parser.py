@@ -60,7 +60,7 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     if model.startswith("gpt"):
         return parse_with_api(path, api="openai", **kwargs)
     if model.startswith("meta-llama"):
-        if model.endswith("Turbo") or model == "meta-llama/Llama-Vision-Free":
+        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
             return parse_with_api(path, api="together", **kwargs)
         return parse_with_api(path, api="huggingface", **kwargs)
     if model.startswith("google") or model.startswith("qwen"):
@@ -137,7 +137,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
     total_tokens = input_tokens + output_tokens
 
     return {
-        "raw": combined_text,
+        "raw": combined_text.replace("<page-break>", "\n\n"),
         "segments": [
             {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
             for page_no, page in enumerate(combined_text.split("<page-break>"), start=1)
@@ -294,7 +294,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
     # Sort results by page number and combine
     all_results.sort(key=lambda x: x[0])
     all_texts = [text for _, text, _, _, _ in all_results]
-    combined_text = "<page-break>".join(all_texts)
+    combined_text = "\n\n".join(all_texts)
 
     return {
         "raw": combined_text,
