@@ -63,7 +63,7 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
         if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
             return parse_with_api(path, api="together", **kwargs)
         return parse_with_api(path, api="huggingface", **kwargs)
-    if model.startswith("google") or model.startswith("qwen"):
+    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
         return parse_with_api(path, api="openrouter", **kwargs)
     raise ValueError(f"Unsupported model: {model}")
 
