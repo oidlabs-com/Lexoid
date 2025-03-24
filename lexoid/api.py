@@ -51,7 +51,8 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
             - token_usage: Dictionary containing token usage statistics
     """
     if parser_type == ParserType.AUTO:
-        parser_type = ParserType[router(path)]
+        router_priority = kwargs.get("router_priority", "speed")
+        parser_type = ParserType[router(path, router_priority)]
         logger.debug(f"Auto-detected parser type: {parser_type}")
 
     kwargs["start"] = (

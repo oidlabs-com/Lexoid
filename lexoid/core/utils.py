@@ -46,7 +46,7 @@ def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
 
 
 def create_sub_pdf(
-    input_path: str, output_path: str, page_nums: Optional[tuple[int, ...]|int] = None
+    input_path: str, output_path: str, page_nums: Optional[tuple[int, ...] | int] = None
 ) -> str:
     if isinstance(page_nums, int):
         page_nums = (page_nums,)
@@ -299,6 +299,7 @@ def html_to_markdown(html: str, title: str, url: str) -> str:
 
     return content
 
+
 def get_webpage_soup(url: str) -> BeautifulSoup:
     try:
         from playwright.async_api import async_playwright
@@ -549,7 +550,7 @@ def has_hyperlink_in_pdf(path: str):
     )
 
 
-def router(path: str, priority: str = "accuracy") -> str:
+def router(path: str, priority: str = "speed") -> str:
     """
     Routes the file path to the appropriate parser based on the file type.
 
@@ -560,7 +561,7 @@ def router(path: str, priority: str = "accuracy") -> str:
     file_type = get_file_type(path)
     if file_type.startswith("text/"):
         return "STATIC_PARSE"
-    
+
     if priority == "accuracy":
         # If the file is a PDF without images but has hyperlinks, use STATIC_PARSE
         # Otherwise, use LLM_PARSE
@@ -574,12 +575,10 @@ def router(path: str, priority: str = "accuracy") -> str:
     else:
         # If the file is a PDF without images, use STATIC_PARSE
         # Otherwise, use LLM_PARSE
-        if (
-            file_type == "application/pdf"
-            and not has_image_in_pdf(path)
-        ):
+        if file_type == "application/pdf" and not has_image_in_pdf(path):
             return "STATIC_PARSE"
         return "LLM_PARSE"
+
 
 def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     temp_path = os.path.join(
