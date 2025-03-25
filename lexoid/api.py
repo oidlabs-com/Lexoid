@@ -144,10 +144,14 @@ def parse(
     ):
         as_pdf = True
     if path.lower().endswith(".xlsx") and parser_type == ParserType.LLM_PARSE:
-        logger.warning("LLM_PARSE does not support Excel files. Using STATIC_PARSE.")
+        logger.warning("LLM_PARSE does not support .xlsx files. Using STATIC_PARSE.")
+        parser_type = ParserType.STATIC_PARSE
+    if path.lower().endswith(".pptx") and parser_type == ParserType.LLM_PARSE:
+        logger.warning("LLM_PARSE does not support .pptx files. Using STATIC_PARSE.")
         parser_type = ParserType.STATIC_PARSE
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        kwargs["temp_dir"] = temp_dir
         if path.startswith(("http://", "https://")):
             kwargs["url"] = path
             download_dir = kwargs.get("save_dir", os.path.join(temp_dir, "downloads/"))

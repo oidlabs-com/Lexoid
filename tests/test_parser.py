@@ -188,7 +188,16 @@ async def test_parsing_docx_type():
 async def test_parsing_xlsx_type():
     sample = "examples/inputs/sample.xlsx"
     parser_type = "STATIC_PARSE"
-    results = parse(sample, parser_type)["raw"]
+    results = parse(sample, parser_type)["segments"]
+    assert len(results) >= 1
+    assert results[0]["content"] is not None
+
+
+@pytest.mark.asyncio
+async def test_parsing_pptx_type():
+    sample = "examples/inputs/sample.pptx"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type)["segments"]
     assert len(results) >= 1
     assert results[0]["content"] is not None
 

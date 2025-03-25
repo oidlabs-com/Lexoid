@@ -107,6 +107,7 @@ def is_supported_file_type(path: str) -> bool:
         file_type == "application/pdf"
         or "wordprocessing" in file_type
         or "spreadsheet" in file_type
+        or "presentation" in file_type
         or file_type.startswith("image/")
         or file_type.startswith("text")
     ):
@@ -218,7 +219,7 @@ def split_md_by_headings(markdown_content: str, heading_pattern: str) -> List[Di
         pattern = r"^([^\n]+)\n-+$"
         sections = re.split(pattern, markdown_content, flags=re.MULTILINE)
         # Remove empty sections and strip whitespace
-        sections = [section.strip() for section in sections if section.strip()]
+        sections = [section.strip() for section in sections]
 
         # Handle content before first heading if it exists
         if sections and not re.match(r"^[^\n]+\n-+$", sections[0], re.MULTILINE):
@@ -245,7 +246,7 @@ def split_md_by_headings(markdown_content: str, heading_pattern: str) -> List[Di
         headings = re.findall(regex, markdown_content, flags=re.MULTILINE)
 
         # Remove empty sections and strip whitespace
-        sections = [section.strip() for section in sections if section.strip()]
+        sections = [section.strip() for section in sections]
 
         # Handle content before first heading if it exists
         if len(sections) > len(headings):

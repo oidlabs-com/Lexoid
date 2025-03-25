@@ -1,12 +1,23 @@
+import os
 import tempfile
+from time import time
+from typing import List, Dict
+
 import pandas as pd
 import pdfplumber
-from typing import List, Dict
-from lexoid.core.utils import get_file_type, get_uri_rect, html_to_markdown, split_pdf
+from docx import Document
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
-from docx import Document
+from pptx2md import convert, ConversionConfig
+
+from lexoid.core.utils import (
+    get_file_type,
+    get_uri_rect,
+    html_to_markdown,
+    split_pdf,
+    split_md_by_headings,
+)
 
 
 def parse_static_doc(path: str, **kwargs) -> Dict:
@@ -56,6 +67,27 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
         return {
             "raw": content,
             "segments": [{"metadata": {"page": 1}, "content": content}],
+            "title": kwargs["title"],
+            "url": kwargs.get("url", ""),
+            "parent_title": kwargs.get("parent_title", ""),
+            "recursive_docs": [],
+        }
+    elif "presentation" in file_type:
+        md_path = os.path.join(kwargs["temp_dir"], f"{int(time())}.md")
+        convert(
+            ConversionConfig(
+                pptx_path=path,
+                output_path=md_path,
+                image_dir=None,
+                disable_image=True,
+                disable_notes=True,
+            )
+        )
+        with open(md_path, "r") as f:
+            content = f.read()
+        return {
+            "raw": content,
+            "segments": split_md_by_headings(content, "#"),
             "title": kwargs["title"],
             "url": kwargs.get("url", ""),
             "parent_title": kwargs.get("parent_title", ""),
