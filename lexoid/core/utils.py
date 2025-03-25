@@ -106,6 +106,7 @@ def is_supported_file_type(path: str) -> bool:
     if (
         file_type == "application/pdf"
         or "wordprocessing" in file_type
+        or "spreadsheet" in file_type
         or file_type.startswith("image/")
         or file_type.startswith("text")
     ):
@@ -559,7 +560,7 @@ def router(path: str, priority: str = "speed") -> str:
         priority (str): The priority for routing: "accuracy" (preference to LLM_PARSE) or "speed" (preference to STATIC_PARSE).
     """
     file_type = get_file_type(path)
-    if file_type.startswith("text/"):
+    if file_type.startswith("text/") or "spreadsheet" in file_type:
         return "STATIC_PARSE"
 
     if priority == "accuracy":

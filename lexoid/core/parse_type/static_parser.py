@@ -47,8 +47,11 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
                 "parent_title": kwargs.get("parent_title", ""),
                 "recursive_docs": [],
             }
-    elif file_type == "text/csv":
-        df = pd.read_csv(path)
+    elif file_type == "text/csv" or "spreadsheet" in file_type:
+        if "spreadsheet" in file_type:
+            df = pd.read_excel(path)
+        else:
+            df = pd.read_csv(path)
         content = df.to_markdown(index=False)
         return {
             "raw": content,
