@@ -561,7 +561,7 @@ def router(path: str, priority: str = "speed") -> str:
         priority (str): The priority for routing: "accuracy" (preference to LLM_PARSE) or "speed" (preference to STATIC_PARSE).
     """
     file_type = get_file_type(path)
-    if file_type.startswith("text/") or "spreadsheet" in file_type:
+    if file_type.startswith("text/") or "spreadsheet" in file_type or "presentation" in file_type:
         return "STATIC_PARSE"
 
     if priority == "accuracy":
