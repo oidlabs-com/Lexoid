@@ -208,6 +208,12 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         extra_attrs=["size", "top", "bottom", "fontname"],
     )
 
+    if words:
+        font_sizes = [w.get('size', 12) for w in words]
+        body_font_size = max(set(font_sizes), key=font_sizes.count)
+    else:
+        body_font_size = 12
+
     def format_paragraph(text_elements):
         """Format a paragraph with styling applied to individual words"""
         formatted_words = []
@@ -246,12 +252,22 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             text = f"*{text}*"
         return text
 
-    def detect_heading_level(font_size):
-        if font_size >= 24:
+    def detect_heading_level(font_size, body_font_size):
+        """Determine heading level based on font size ratio.
+        
+        Args:
+            font_size: The font size to evaluate
+            body_font_size: The base body font size for comparison
+            
+        Returns:
+            int: The heading level (1-3) or None if not a heading
+        """
+        size_ratio = font_size / body_font_size
+        if size_ratio >= 2:
             return 1
-        elif font_size >= 20:
+        elif size_ratio >= 1.5:
             return 2
-        elif font_size >= 16:
+        elif size_ratio >= 1.2:
             return 3
         return None
 
@@ -279,7 +295,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         if element_type == "table":
             # If there are any pending paragraphs or headings, add them first
             if current_heading:
-                level = detect_heading_level(current_heading[0]["size"])
+                level = detect_heading_level(current_heading[0]["size"],body_font_size)
                 heading_text = format_paragraph(current_heading)
                 markdown_content.append(f"{'#' * level} {heading_text}")
                 current_heading = []
@@ -293,7 +309,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             # Process word
             word = element
             # Check if this might be a heading
-            heading_level = detect_heading_level(word["size"])
+            heading_level = detect_heading_level(word["size"],body_font_size)
 
             # Detect new line based on vertical position
             is_new_line = last_y is not None and abs(word["top"] - last_y) > y_tolerance
@@ -301,7 +317,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             if is_new_line:
                 # If we were collecting a heading
                 if current_heading:
-                    level = detect_heading_level(current_heading[0]["size"])
+                    level = detect_heading_level(current_heading[0]["size"],body_font_size)
                     heading_text = format_paragraph(current_heading)
                     markdown_content.append(f"{'#' * level} {heading_text}")
                     current_heading = []
@@ -319,7 +335,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                 current_heading.append(word)
             else:
                 if current_heading:  # Flush any pending heading
-                    level = detect_heading_level(current_heading[0]["size"])
+                    level = detect_heading_level(current_heading[0]["size"],body_font_size)
                     heading_text = format_paragraph(current_heading)
                     markdown_content.append(f"{'#' * level} {heading_text}")
                     current_heading = []
@@ -329,7 +345,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
 
     # Handle remaining content
     if current_heading:
-        level = detect_heading_level(current_heading[0]["size"])
+        level = detect_heading_level(current_heading[0]["size"],body_font_size)
         heading_text = format_paragraph(current_heading)
         markdown_content.append(f"{'#' * level} {heading_text}")
 

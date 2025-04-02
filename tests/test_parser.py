@@ -305,3 +305,17 @@ async def test_token_cost(model):
     assert result["token_cost"]["input"] > 0
     assert result["token_cost"]["output"] > 0
     assert result["token_cost"]["total"] > 0
+
+
+@pytest.mark.asyncio
+async def test_pdf_headings():
+    sample_path = "examples/inputs/test_headings.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample_path, parser_type, framework='pdfplumber')["raw"]
+
+    print(results)
+    
+    # Test for h1 (should have # in markdown)
+    assert "#" in results
+    assert "##" in results
+    assert "Main Title" in results
