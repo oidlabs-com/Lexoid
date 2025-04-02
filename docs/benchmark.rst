@@ -168,3 +168,10 @@ Here are the detailed parsing performance results for various models:
      - 0.257
      - 4.54
      - 0
+   * - 16
+     - microsoft/phi-4-multimodal-instruct
+     - 0.366
+     - 0.287
+     - 10.80
+     - 0.000019
+    
