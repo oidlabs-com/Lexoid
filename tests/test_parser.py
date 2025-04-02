@@ -305,3 +305,16 @@ async def test_token_cost(model):
     assert result["token_cost"]["input"] > 0
     assert result["token_cost"]["output"] > 0
     assert result["token_cost"]["total"] > 0
+
+
+@pytest.mark.asyncio
+async def test_monospace_code_block():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    # Assert that there is at least one fenced code block
+    print(results)
+
+    assert "```" in results
+    # Assert that a Python code block (with a language hint) is present
+    # assert "python" in results
