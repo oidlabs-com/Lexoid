@@ -1,6 +1,7 @@
 import tempfile
 import pandas as pd
 import pdfplumber
+import re
 from typing import List, Dict
 from lexoid.core.utils import get_file_type, get_uri_rect, html_to_markdown, split_pdf
 from pdfminer.high_level import extract_pages
@@ -166,6 +167,16 @@ def embed_links_in_text(page, text, links):
             )
 
     return text
+
+def embed_email_links(text: str) -> str:
+    """
+    Detect email addresses in text and wrap them in angle brackets.
+    For example, 'mail@example.com' becomes '<mail@example.com>'.
+    """
+    email_pattern = re.compile(
+        r'(?<![<\[])(?P<email>\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)(?![>\]])'
+    )
+    return email_pattern.sub(lambda match: f"<{match.group('email')}>", text)
 
 
 def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
@@ -347,6 +358,8 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
 
         if links:
             content = embed_links_in_text(page, content, links)
+    
+    content = embed_email_links(content)
 
     # Remove redundant formatting
     content = content.replace("** **", " ").replace("* *", " ")
