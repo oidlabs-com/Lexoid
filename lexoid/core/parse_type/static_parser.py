@@ -9,7 +9,7 @@ from docx import Document
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
-from pptx2md import convert, ConversionConfig
+# from pptx2md import convert, ConversionConfig
 
 from lexoid.core.utils import (
     get_file_type,
@@ -202,6 +202,51 @@ def embed_links_in_text(page, text, links):
 
     return text
 
+def detect_indentation_level(word, base_left_position, x_tolerance=5):
+    """Determine indentation level based on left position difference."""
+    left_diff = word["x0"] - base_left_position
+    if left_diff > 50:
+        return 3
+    elif left_diff > 25:
+        return 2
+    elif left_diff > x_tolerance:
+        return 1
+    return 0
+
+
+def apply_indentation(content):
+    """Convert indent markers to actual indentation in markdown."""
+    lines = content.split('\n')
+    result = []
+    for line in lines:
+        if "indent" in line:
+            # Split the line into indent marker and actual content
+            parts = line.split(')', 1)
+            indent_marker = parts[0] + ")"
+            rest = parts[1] if len(parts) > 1 else ""
+            
+            # Find the indent level
+            indent_level = 0
+            if "(indent, 1)" in indent_marker:
+                indent_level = 1
+            elif "(indent, 2)" in indent_marker:
+                indent_level = 2
+            elif "(indent, 3)" in indent_marker:
+                indent_level = 3
+            
+            # Apply markdown indentation
+            if indent_level == 1:
+                rest = f"| {rest}"
+            elif indent_level == 2:
+                rest = f"| | {rest}"
+            elif indent_level == 3:
+                rest = f"| | | {rest}"
+            
+            result.append(rest)
+        else:
+            result.append(line)
+    return '\n'.join(result)
+
 
 def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     """
@@ -244,12 +289,17 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     )
 
     def format_paragraph(text_elements):
-        """Format a paragraph with styling applied to individual words"""
+        """Format a paragraph with styling applied to individual words.
+        Now handles both regular words and indentation markers.
+        """
         formatted_words = []
         for element in text_elements:
-            text = element["text"]
-            formatting = get_text_formatting(element)
-            formatted_words.append(apply_markdown_formatting(text, formatting))
+            if isinstance(element, tuple) and element[0] == "indent":
+                formatted_words.append(f"(indent, {element[1]})")
+            else:
+                text = element["text"]
+                formatting = get_text_formatting(element)
+                formatted_words.append(apply_markdown_formatting(text, formatting))
         return f"{' '.join(formatted_words)}\n\n"
 
     def get_text_formatting(word):
@@ -303,6 +353,21 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             )
         )
     tables.sort(key=lambda x: x[1]["bottom"])
+
+    left_positions = []
+    prev_bottom = None
+    for word in words:
+        # Check if this is likely a new line (first word in line)
+        if prev_bottom is None or abs(word["top"] - prev_bottom) > y_tolerance:
+            left_positions.append(word["x0"])
+        prev_bottom = word["top"]
+
+    # Find the most common minimum left position (mode)
+    if left_positions:
+        base_left = max(set(left_positions), key=left_positions.count)
+    else:
+        base_left = 0
+
     content_elements = []
     for word in words:
         while tables and word["bottom"] > tables[0][1]["bottom"]:
@@ -346,6 +411,9 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                     markdown_content.append(format_paragraph(current_paragraph))
                     current_paragraph = []
 
+                indent_level = detect_indentation_level(word, base_left)
+                current_paragraph.append(("indent", indent_level))
+
             # Add word to appropriate collection
             if heading_level:
                 if current_paragraph:  # Flush any pending paragraph
@@ -385,7 +453,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
 
     # Remove redundant formatting
     content = content.replace("** **", " ").replace("* *", " ")
-
+    content = apply_indentation(content)
     return content
 
 
