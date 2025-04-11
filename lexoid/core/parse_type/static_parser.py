@@ -9,7 +9,7 @@ from docx import Document
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
-from pptx2md import convert, ConversionConfig
+# from pptx2md import convert, ConversionConfig
 
 from lexoid.core.utils import (
     get_file_type,
@@ -225,7 +225,6 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                     'x0': line['x0'],
                     'x1': line['x1']
                 })
-
     # Table settings
     vertical_strategy = kwargs.get("vertical_strategy", "lines")
     horizontal_strategy = kwargs.get("horizontal_strategy", "lines")
@@ -254,6 +253,25 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         y_tolerance=y_tolerance,
         extra_attrs=["size", "top", "bottom", "fontname"],
     )
+
+    for line in horizontal_lines:        
+        # Check each word to see if it overlaps with this line
+        for word in words:
+            # Get word bounding box coordinates
+            word_left = word['x0']
+            word_right = word['x1']
+            word_top = word['top']
+            word_bottom = word['bottom']
+            
+            # Check if word overlaps with line in both x and y dimensions
+            x_overlap = (word_left <= line['x1']) and (word_right >= line['x0'])
+            y_overlap = (word_top <= line['bottom']) and (word_bottom >= line['top'])
+            
+            if x_overlap and y_overlap:
+                line_overlaps_word = True
+                word['text'] = f"~~{word['text']}~~"
+                break
+                
 
     def format_paragraph(text_elements):
         """Format a paragraph with styling applied to individual words"""
