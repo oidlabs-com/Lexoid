@@ -175,30 +175,12 @@ async def test_parsing_docx_type():
     sample = "examples/inputs/sample.docx"
     parser_type = "STATIC_PARSE"
     results = parse(sample, parser_type)["segments"]
-    assert len(results) >= 1
+    assert len(results) == 1
     assert results[0]["content"] is not None
 
     parser_type = "LLM_PARSE"
     results = parse(sample, parser_type)["segments"]
     assert len(results) > 1
-    assert results[0]["content"] is not None
-
-
-@pytest.mark.asyncio
-async def test_parsing_xlsx_type():
-    sample = "examples/inputs/sample.xlsx"
-    parser_type = "STATIC_PARSE"
-    results = parse(sample, parser_type)["segments"]
-    assert len(results) >= 1
-    assert results[0]["content"] is not None
-
-
-@pytest.mark.asyncio
-async def test_parsing_pptx_type():
-    sample = "examples/inputs/sample.pptx"
-    parser_type = "STATIC_PARSE"
-    results = parse(sample, parser_type)["segments"]
-    assert len(results) >= 1
     assert results[0]["content"] is not None
 
 
@@ -323,3 +305,12 @@ async def test_token_cost(model):
     assert result["token_cost"]["input"] > 0
     assert result["token_cost"]["output"] > 0
     assert result["token_cost"]["total"] > 0
+
+
+@pytest.mark.asyncio
+async def test_horizontal_lines():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    
+    assert "\n---\n" in results, "Markdown horizontal rule not found"

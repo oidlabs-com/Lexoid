@@ -58,11 +58,8 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
                 "parent_title": kwargs.get("parent_title", ""),
                 "recursive_docs": [],
             }
-    elif file_type == "text/csv" or "spreadsheet" in file_type:
-        if "spreadsheet" in file_type:
-            df = pd.read_excel(path)
-        else:
-            df = pd.read_csv(path)
+    elif file_type == "text/csv":
+        df = pd.read_csv(path)
         content = df.to_markdown(index=False)
         return {
             "raw": content,
@@ -213,6 +210,21 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     last_y = None
     x_tolerance = kwargs.get("x_tolerance", 1)
     y_tolerance = kwargs.get("y_tolerance", 5)
+    next_h_line_idx =0
+
+    # First detect horizontal lines that could be markdown rules
+    horizontal_lines = []
+    if hasattr(page, 'lines'):
+        for line in page.lines:
+            # Check if line is approximately horizontal (within 5 degrees)
+            if abs(line['height']) < 0.1 or abs(line['width']) > abs(line['height']) * 20:
+                # Consider it a horizontal rule candidate
+                horizontal_lines.append({
+                    'top': line['top'],
+                    'bottom': line['bottom'],
+                    'x0': line['x0'],
+                    'x1': line['x1']
+                })
 
     # Table settings
     vertical_strategy = kwargs.get("vertical_strategy", "lines")
@@ -304,11 +316,23 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         )
     tables.sort(key=lambda x: x[1]["bottom"])
     content_elements = []
+    for line in horizontal_lines:
+        content_elements.append(
+            ("horizontal_line", {
+                "top": line["top"],
+                "bottom": line["bottom"],
+                "x0": line["x0"],
+                "x1": line["x1"]
+            })
+        )
+    
     for word in words:
         while tables and word["bottom"] > tables[0][1]["bottom"]:
             content_elements.append(tables.pop(0))
         content_elements.append(("word", word))
     content_elements.extend(tables)
+
+    content_elements.sort(key=lambda x: x[1]["top"] if isinstance(x[1], dict) and "top" in x[1] else 0)
 
     for element_type, element in content_elements:
         if element_type == "table":
@@ -324,6 +348,15 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             # Add the table
             markdown_content.append(element["content"])
             last_y = element["bottom"]
+        elif element_type == "horizontal_line":
+            while (next_h_line_idx < len(horizontal_lines)) and \
+            (last_y is not None and horizontal_lines[next_h_line_idx]['top'] <= last_y):
+            # Insert the horizontal rule *after* the preceding text
+                if current_paragraph:  # Flush any pending paragraph
+                    markdown_content.append(format_paragraph(current_paragraph))
+                    current_paragraph = []
+                markdown_content.append("\n---\n\n")  # Add the rule
+                next_h_line_idx += 1
         else:
             # Process word
             word = element
