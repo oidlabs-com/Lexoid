@@ -202,14 +202,14 @@ def embed_links_in_text(page, text, links):
 
     return text
 
-def detect_indentation_level(word, base_left_position, x_tolerance=5):
+def detect_indentation_level(word, base_left_position):
     """Determine indentation level based on left position difference."""
     left_diff = word["x0"] - base_left_position
     if left_diff > 50:
         return 3
     elif left_diff > 25:
         return 2
-    elif left_diff > x_tolerance:
+    elif left_diff > 10:
         return 1
     return 0
 
