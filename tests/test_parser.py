@@ -323,3 +323,14 @@ async def test_token_cost(model):
     assert result["token_cost"]["input"] > 0
     assert result["token_cost"]["output"] > 0
     assert result["token_cost"]["total"] > 0
+
+
+@pytest.mark.asyncio
+async def test_blockquote():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    # Assert that there is at least one fenced code block
+    print(results)
+
+    assert "| |" in results
