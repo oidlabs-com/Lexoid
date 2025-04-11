@@ -221,6 +221,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             "italic": False,
             "monospace": False,
         }
+        # Check font name for common bold/italic indicators
         font_name = word.get("fontname", "").lower()
         if any(style in font_name for style in ["bold", "heavy", "black"]):
             formatting["bold"] = True
@@ -232,11 +233,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         return formatting
 
     def apply_markdown_formatting(text, formatting):
-        """
-        Apply markdown formatting to text based on detected styles.
-        For monospace words that are not part of an entire code block,
-        output inline code formatting.
-        """
+        """Apply markdown formatting to text based on detected styles"""
         if formatting["monospace"]:
             text = f"`{text}`"
         if formatting["bold"] and formatting["italic"]:
@@ -323,6 +320,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     content_elements.extend(tables)
 
     for element_type, element in content_elements:
+        # If there are any pending paragraphs or headings, add them first
         if element_type == "table":
             if current_heading:
                 level = detect_heading_level(current_heading[0]["size"])
@@ -332,22 +330,32 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             if current_paragraph:
                 markdown_content.append(format_paragraph(current_paragraph))
                 current_paragraph = []
+            # Add the table
             markdown_content.append(element["content"])
             last_y = element["bottom"]
         else:
+            # Process word
             word = element
+            # Check if this might be a heading
             heading_level = detect_heading_level(word["size"])
+
+            # Detect new line based on vertical position
             is_new_line = last_y is not None and abs(word["top"] - last_y) > y_tolerance
 
             if is_new_line:
+                # If we were collecting a heading
                 if current_heading:
                     level = detect_heading_level(current_heading[0]["size"])
                     heading_text = format_paragraph(current_heading)
                     markdown_content.append(f"{'#' * level} {heading_text}")
                     current_heading = []
+
+                # If we were collecting a paragraph
                 if current_paragraph:
                     markdown_content.append(format_paragraph(current_paragraph))
                     current_paragraph = []
+            
+            # Add word to appropriate collection
             if heading_level:
                 if current_paragraph:  # Flush any pending paragraph
                     markdown_content.append(format_paragraph(current_paragraph))
@@ -360,15 +368,19 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                     markdown_content.append(f"{'#' * level} {heading_text}")
                     current_heading = []
                 current_paragraph.append(word)
+
             last_y = word["top"]
 
+    # Handle remaining content
     if current_heading:
         level = detect_heading_level(current_heading[0]["size"])
         heading_text = format_paragraph(current_heading)
         markdown_content.append(f"{'#' * level} {heading_text}")
+        
     if current_paragraph:
         markdown_content.append(format_paragraph(current_paragraph))
 
+    # Process links for the page
     content = "".join(markdown_content)
     if page.annots:
         links = []
@@ -376,9 +388,13 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             uri = annot.get("uri")
             if uri and uri_rects.get(uri):
                 links.append((uri_rects[uri], uri))
+
         if links:
             content = embed_links_in_text(page, content, links)
+
+    # Remove redundant formatting
     content = content.replace("** **", " ").replace("* *", " ")
+    
     return content
 
 
