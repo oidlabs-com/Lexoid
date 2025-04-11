@@ -9,7 +9,7 @@ from docx import Document
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
-# from pptx2md import convert, ConversionConfig
+from pptx2md import convert, ConversionConfig
 
 from lexoid.core.utils import (
     get_file_type,
