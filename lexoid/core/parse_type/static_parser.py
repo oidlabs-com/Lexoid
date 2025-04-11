@@ -243,36 +243,34 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         extra_attrs=["size", "top", "bottom", "fontname"],
     )
 
-    def format_paragraph(text_elements):
-        """Format a paragraph with styling applied to individual words"""
-        formatted_words = []
-        for element in text_elements:
-            text = element["text"]
-            formatting = get_text_formatting(element)
-            formatted_words.append(apply_markdown_formatting(text, formatting))
-        return f"{' '.join(formatted_words)}\n\n"
+    # --- Updated helper functions for monospace detection and code block output ---
 
     def get_text_formatting(word):
         """
-        Detect text formatting based on font properties
-        Returns a dict of formatting attributes
+        Detect text formatting based on font properties.
+        Returns a dict of formatting attributes.
+        Now also detects monospace fonts.
         """
         formatting = {
             "bold": False,
             "italic": False,
+            "monospace": False,
         }
-
         # Check font name for common bold/italic indicators
         font_name = word.get("fontname", "").lower()
         if any(style in font_name for style in ["bold", "heavy", "black"]):
             formatting["bold"] = True
         if any(style in font_name for style in ["italic", "oblique"]):
             formatting["italic"] = True
-
+        if "mono" in font_name:  # Detect monospace fonts
+            formatting["monospace"] = True
+        print(f"Formatting",formatting)
         return formatting
 
     def apply_markdown_formatting(text, formatting):
         """Apply markdown formatting to text based on detected styles"""
+        if formatting["monospace"]:
+            text = f"`{text}`"
         if formatting["bold"] and formatting["italic"]:
             text = f"***{text}***"
         elif formatting["bold"]:
@@ -280,6 +278,52 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         elif formatting["italic"]:
             text = f"*{text}*"
         return text
+
+    def format_paragraph(text_elements):
+        """
+        Format a paragraph with styling applied to individual words.
+        If all words are monospace, treat the paragraph as a code block.
+        If the preceding normal text contains a known language, use it as a language hint.
+        """
+        # List of known programming languages for hint extraction
+        known_languages = {
+            "python", "javascript", "java", "c++", "c", "ruby",
+            "go", "php", "html", "css", "sql", "bash", "shell"
+        }
+
+        # Extract the preceding normal text to detect language hint
+        detected_language = ""
+        normal_texts = []
+        code_elements = []
+
+        for element in text_elements:
+            text = element["text"]
+            formatting = get_text_formatting(element)
+
+            if formatting.get("monospace", False):
+                code_elements.append(text)  # Collect monospace (code) elements
+            else:
+                normal_texts.append(text)  # Collect normal text elements
+
+        # Try to detect language from normal text before the code block
+        preceding_text = " ".join(normal_texts).lower()
+        for lang in known_languages:
+            if lang in preceding_text:
+                detected_language = lang
+                break  # Stop at the first match
+
+        # If it's a monospace block, format it as code with language hint
+        if code_elements:
+            code_content = " ".join(code_elements)
+            return f"```{detected_language}\n{code_content}\n```\n\n"
+
+        # Otherwise, return normal text with proper markdown formatting
+        formatted_words = [
+            apply_markdown_formatting(element["text"], get_text_formatting(element))
+            for element in text_elements
+        ]
+        return f"{' '.join(formatted_words)}\n\n"
+
 
     def detect_heading_level(font_size):
         if font_size >= 24:
@@ -311,8 +355,8 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     content_elements.extend(tables)
 
     for element_type, element in content_elements:
+        # If there are any pending paragraphs or headings, add them first
         if element_type == "table":
-            # If there are any pending paragraphs or headings, add them first
             if current_heading:
                 level = detect_heading_level(current_heading[0]["size"])
                 heading_text = format_paragraph(current_heading)
@@ -345,7 +389,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                 if current_paragraph:
                     markdown_content.append(format_paragraph(current_paragraph))
                     current_paragraph = []
-
+            
             # Add word to appropriate collection
             if heading_level:
                 if current_paragraph:  # Flush any pending paragraph
@@ -367,7 +411,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         level = detect_heading_level(current_heading[0]["size"])
         heading_text = format_paragraph(current_heading)
         markdown_content.append(f"{'#' * level} {heading_text}")
-
+        
     if current_paragraph:
         markdown_content.append(format_paragraph(current_paragraph))
 
@@ -385,7 +429,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
 
     # Remove redundant formatting
     content = content.replace("** **", " ").replace("* *", " ")
-
+    
     return content
 
 
