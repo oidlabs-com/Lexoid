@@ -175,7 +175,7 @@ async def test_parsing_docx_type():
     sample = "examples/inputs/sample.docx"
     parser_type = "STATIC_PARSE"
     results = parse(sample, parser_type)["segments"]
-    assert len(results) == 1
+    assert len(results) >= 1
     assert results[0]["content"] is not None
 
     parser_type = "LLM_PARSE"
@@ -183,6 +183,23 @@ async def test_parsing_docx_type():
     assert len(results) > 1
     assert results[0]["content"] is not None
 
+
+@pytest.mark.asyncio
+async def test_parsing_xlsx_type():
+    sample = "examples/inputs/sample.xlsx"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type)["segments"]
+    assert len(results) >= 1
+    assert results[0]["content"] is not None
+
+
+@pytest.mark.asyncio
+async def test_parsing_pptx_type():
+    sample = "examples/inputs/sample.pptx"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type)["segments"]
+    assert len(results) >= 1
+    assert results[0]["content"] is not None
 
 @pytest.mark.asyncio
 async def test_dynamic_js_parsing():

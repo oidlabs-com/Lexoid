@@ -9,7 +9,7 @@ from docx import Document
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
-# from pptx2md import convert, ConversionConfig
+from pptx2md import convert, ConversionConfig
 
 from lexoid.core.utils import (
     get_file_type,
@@ -58,8 +58,11 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
                 "parent_title": kwargs.get("parent_title", ""),
                 "recursive_docs": [],
             }
-    elif file_type == "text/csv":
-        df = pd.read_csv(path)
+    elif file_type == "text/csv" or "spreadsheet" in file_type:
+        if "spreadsheet" in file_type:
+            df = pd.read_excel(path)
+        else:
+            df = pd.read_csv(path)
         content = df.to_markdown(index=False)
         return {
             "raw": content,
