@@ -311,10 +311,8 @@ async def test_token_cost(model):
 async def test_pdf_headings():
     sample_path = "examples/inputs/test_headings.pdf"
     parser_type = "STATIC_PARSE"
-    results = parse(sample_path, parser_type, framework='pdfplumber')["raw"]
+    results = parse(sample_path, parser_type, framework="pdfplumber")["raw"]
 
-    print(results)
-    
     # Test for h1 (should have # in markdown)
     assert "#" in results
     assert "##" in results
