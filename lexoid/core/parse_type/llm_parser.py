@@ -60,10 +60,10 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     if model.startswith("gpt"):
         return parse_with_api(path, api="openai", **kwargs)
     if model.startswith("meta-llama"):
-        if model.endswith("Turbo") or model == "meta-llama/Llama-Vision-Free":
+        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
             return parse_with_api(path, api="together", **kwargs)
         return parse_with_api(path, api="huggingface", **kwargs)
-    if model.startswith("google") or model.startswith("qwen"):
+    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
         return parse_with_api(path, api="openrouter", **kwargs)
     raise ValueError(f"Unsupported model: {model}")
 
@@ -86,20 +86,20 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
             file_content = file.read()
         base64_file = base64.b64encode(file_content).decode("utf-8")
 
-    # Ideally, we do this ourselves. But, for now this might be a good enough.
-    custom_instruction = f"""- Total number of pages: {kwargs["pages_per_split_"]}. {INSTRUCTIONS_ADD_PG_BREAK}"""
-    if kwargs["pages_per_split_"] == 1:
-        custom_instruction = ""
+    if "system_prompt" in kwargs:
+        prompt = kwargs["system_prompt"]
+    else:
+        # Ideally, we do this ourselves. But, for now this might be a good enough.
+        custom_instruction = f"""- Total number of pages: {kwargs["pages_per_split_"]}. {INSTRUCTIONS_ADD_PG_BREAK}"""
+        if kwargs["pages_per_split_"] == 1:
+            custom_instruction = ""
+        prompt = PARSER_PROMPT.format(custom_instructions=custom_instruction)
 
     payload = {
         "contents": [
             {
                 "parts": [
-                    {
-                        "text": PARSER_PROMPT.format(
-                            custom_instructions=custom_instruction
-                        )
-                    },
+                    {"text": prompt},
                     {"inline_data": {"mime_type": mime_type, "data": base64_file}},
                 ]
             }
@@ -137,7 +137,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
     total_tokens = input_tokens + output_tokens
 
     return {
-        "raw": combined_text,
+        "raw": combined_text.replace("<page-break>", "\n\n"),
         "segments": [
             {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
             for page_no, page in enumerate(combined_text.split("<page-break>"), start=1)
@@ -217,35 +217,32 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
 
     # API-specific message formatting
     def get_messages(page_num: int, image_url: str) -> List[Dict]:
-        base_message = {
-            "type": "text",
-            "text": LLAMA_PARSER_PROMPT,
-        }
         image_message = {
             "type": "image_url",
             "image_url": {"url": image_url},
         }
 
         if api == "openai":
+            system_prompt = kwargs.get(
+                "system_prompt", PARSER_PROMPT.format(custom_instructions="")
+            )
+            user_prompt = kwargs.get("user_prompt", OPENAI_USER_PROMPT)
             return [
                 {
                     "role": "system",
-                    "content": PARSER_PROMPT.format(
-                        custom_instructions=INSTRUCTIONS_ADD_PG_BREAK
-                    ),
+                    "content": system_prompt,
                 },
                 {
                     "role": "user",
                     "content": [
-                        {
-                            "type": "text",
-                            "text": f"{OPENAI_USER_PROMPT} (Page {page_num + 1})",
-                        },
+                        {"type": "text", "text": user_prompt},
                         image_message,
                     ],
                 },
             ]
         else:
+            prompt = kwargs.get("system_prompt", LLAMA_PARSER_PROMPT)
+            base_message = {"type": "text", "text": prompt}
             return [
                 {
                     "role": "user",
@@ -294,7 +291,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
     # Sort results by page number and combine
     all_results.sort(key=lambda x: x[0])
     all_texts = [text for _, text, _, _, _ in all_results]
-    combined_text = "<page-break>".join(all_texts)
+    combined_text = "\n\n".join(all_texts)
 
     return {
         "raw": combined_text,

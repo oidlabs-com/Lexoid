@@ -51,7 +51,8 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
             - token_usage: Dictionary containing token usage statistics
     """
     if parser_type == ParserType.AUTO:
-        parser_type = ParserType[router(path)]
+        router_priority = kwargs.get("router_priority", "speed")
+        parser_type = ParserType[router(path, router_priority)]
         logger.debug(f"Auto-detected parser type: {parser_type}")
 
     kwargs["start"] = (
@@ -137,14 +138,20 @@ def parse(
 
     if type(parser_type) == str:
         parser_type = ParserType[parser_type]
+    if (
+        path.lower().endswith((".doc", ".docx"))
+        and parser_type != ParserType.STATIC_PARSE
+    ):
+        as_pdf = True
+    if path.lower().endswith(".xlsx") and parser_type == ParserType.LLM_PARSE:
+        logger.warning("LLM_PARSE does not support .xlsx files. Using STATIC_PARSE.")
+        parser_type = ParserType.STATIC_PARSE
+    if path.lower().endswith(".pptx") and parser_type == ParserType.LLM_PARSE:
+        logger.warning("LLM_PARSE does not support .pptx files. Using STATIC_PARSE.")
+        parser_type = ParserType.STATIC_PARSE
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        if (
-            path.lower().endswith((".doc", ".docx"))
-            and parser_type != ParserType.STATIC_PARSE
-        ):
-            as_pdf = True
-
+        kwargs["temp_dir"] = temp_dir
         if path.startswith(("http://", "https://")):
             kwargs["url"] = path
             download_dir = kwargs.get("save_dir", os.path.join(temp_dir, "downloads/"))

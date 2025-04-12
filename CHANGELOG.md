@@ -134,3 +134,14 @@
 
 ### Fixed
 - Segmentation fault when PyQT app is reinitialized
+
+## [0.1.12] - 2025-04-11
+
+### Added
+* Support for OpenRouter models
+* Return token cost when cost mapping is provided
+* Support for custom prompts
+* Support for parsing Excel and PowerPoint files
+
+### Changed
+* Set default `router_priority` to `speed`
