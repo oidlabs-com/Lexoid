@@ -46,7 +46,7 @@ def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
 
 
 def create_sub_pdf(
-    input_path: str, output_path: str, page_nums: Optional[tuple[int, ...]|int] = None
+    input_path: str, output_path: str, page_nums: Optional[tuple[int, ...] | int] = None
 ) -> str:
     if isinstance(page_nums, int):
         page_nums = (page_nums,)
@@ -106,6 +106,8 @@ def is_supported_file_type(path: str) -> bool:
     if (
         file_type == "application/pdf"
         or "wordprocessing" in file_type
+        or "spreadsheet" in file_type
+        or "presentation" in file_type
         or file_type.startswith("image/")
         or file_type.startswith("text")
     ):
@@ -217,7 +219,7 @@ def split_md_by_headings(markdown_content: str, heading_pattern: str) -> List[Di
         pattern = r"^([^\n]+)\n-+$"
         sections = re.split(pattern, markdown_content, flags=re.MULTILINE)
         # Remove empty sections and strip whitespace
-        sections = [section.strip() for section in sections if section.strip()]
+        sections = [section.strip() for section in sections]
 
         # Handle content before first heading if it exists
         if sections and not re.match(r"^[^\n]+\n-+$", sections[0], re.MULTILINE):
@@ -244,7 +246,7 @@ def split_md_by_headings(markdown_content: str, heading_pattern: str) -> List[Di
         headings = re.findall(regex, markdown_content, flags=re.MULTILINE)
 
         # Remove empty sections and strip whitespace
-        sections = [section.strip() for section in sections if section.strip()]
+        sections = [section.strip() for section in sections]
 
         # Handle content before first heading if it exists
         if len(sections) > len(headings):
@@ -298,6 +300,7 @@ def html_to_markdown(html: str, title: str, url: str) -> str:
     }
 
     return content
+
 
 def get_webpage_soup(url: str) -> BeautifulSoup:
     try:
@@ -549,7 +552,7 @@ def has_hyperlink_in_pdf(path: str):
     )
 
 
-def router(path: str, priority: str = "accuracy") -> str:
+def router(path: str, priority: str = "speed") -> str:
     """
     Routes the file path to the appropriate parser based on the file type.
 
@@ -558,9 +561,9 @@ def router(path: str, priority: str = "accuracy") -> str:
         priority (str): The priority for routing: "accuracy" (preference to LLM_PARSE) or "speed" (preference to STATIC_PARSE).
     """
     file_type = get_file_type(path)
-    if file_type.startswith("text/"):
+    if file_type.startswith("text/") or "spreadsheet" in file_type or "presentation" in file_type:
         return "STATIC_PARSE"
-    
+
     if priority == "accuracy":
         # If the file is a PDF without images but has hyperlinks, use STATIC_PARSE
         # Otherwise, use LLM_PARSE
@@ -574,12 +577,10 @@ def router(path: str, priority: str = "accuracy") -> str:
     else:
         # If the file is a PDF without images, use STATIC_PARSE
         # Otherwise, use LLM_PARSE
-        if (
-            file_type == "application/pdf"
-            and not has_image_in_pdf(path)
-        ):
+        if file_type == "application/pdf" and not has_image_in_pdf(path):
             return "STATIC_PARSE"
         return "LLM_PARSE"
+
 
 def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     temp_path = os.path.join(

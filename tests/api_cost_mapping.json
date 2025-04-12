@@ -54,5 +54,10 @@
         "input": 0.2,
         "input-image": 0.0001445,
         "output": 0.2
+    },
+    "microsoft/phi-4-multimodal-instruct": {
+        "input": 0.05,
+        "input-image": 0.0001769,
+        "output": 0.1
     }
 }

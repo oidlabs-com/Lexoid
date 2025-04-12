@@ -31,13 +31,14 @@ parse
    * ``save_dir`` (str): Directory to save intermediate PDFs
    * ``page_nums`` (List[int]): List of page numbers to parse
    * ``api_cost_mapping`` (Union[dict, str]): Dictionary containing API cost details or the string path to a JSON file containing
-     the cost details. Sample file available at ``tests/api_cost_mapping.json``.
+     the cost details. Sample file available at ``tests/api_cost_mapping.json``
+   * ``router_priority`` (str): What the routing strategy should prioritize. Options are ``"speed"`` and ``"accuracy"``. The router directs a file to either ``STATIC_PARSE`` or ``LLM_PARSE`` based on its type and the selected priority. If priority is "accuracy", it prefers LLM_PARSE unless the PDF has no images but contains embedded/hidden hyperlinks, in which case it uses ``STATIC_PARSE`` (because LLMs currently fail to parse hidden hyperlinks). If priority is "speed", it uses ``STATIC_PARSE`` for documents without images and ``LLM_PARSE`` for documents with images.
 
    Return value format:
    A dictionary containing a subset or all of the following keys:
    
    *  ``raw``: Full markdown content as string
-   * ``segments``: List of dictionaries with metadata and content
+   * ``segments``: List of dictionaries with metadata and content of each segment. For PDFs, a segment denotes a page. For webpages, a segment denotes a section (a heading and its content).
    * ``title``: Title of the document
    * ``url``: URL if applicable
    * ``parent_title``: Title of parent doc if recursively parsed

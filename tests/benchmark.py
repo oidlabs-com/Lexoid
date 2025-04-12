@@ -34,7 +34,7 @@ def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, 
         return []
 
     # Directory mode
-    input_files = glob(os.path.join(input_path, "*"))
+    input_files = sorted(glob(os.path.join(input_path, "*")))
     pairs = []
 
     for input_file in input_files:
@@ -163,6 +163,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
             # Model through OpenRouter
             "google/gemma-3-27b-it",
             "qwen/qwen-2.5-vl-7b-instruct",
+            "microsoft/phi-4-multimodal-instruct",
         ],
         "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
@@ -298,6 +299,7 @@ def run_benchmarks(
         # Run benchmark for each file
         file_results = []
         for input_file, ground_truth_path in file_pairs:
+            print(f"Running benchmark for file: {input_file}")
             with open(ground_truth_path, "r", encoding="utf-8") as f:
                 ground_truth = f.read()
             result = run_benchmark_config(
@@ -336,7 +338,7 @@ def main():
     ]
 
     # Number of iterations for each benchmark
-    iterations = 1
+    iterations = 5
 
     results = run_benchmarks(
         input_path, output_dir, test_attributes, benchmark_output_dir, iterations

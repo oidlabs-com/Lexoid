@@ -103,6 +103,13 @@ print(parsed_md)
 - max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
 - \*\*kwargs: Additional arguments for the parser.
 
+## Supported API Providers
+* Google
+* OpenAI
+* Hugging Face
+* Together AI
+* OpenRouter
+
 ## Benchmark
 
 Results aggregated across 5 iterations each for 5 documents.
@@ -119,10 +126,11 @@ _Note:_ Benchmarks are currently done in the zero-shot setting.
 | 6    | gemini-1.5-pro                                        | 0.732           | 0.265     | 11.44    | 0.003332 |
 | 7    | gpt-4o                                                | 0.687           | 0.247     | 10.16    | 0.004736 |
 | 8    | gpt-4o-mini                                           | 0.642           | 0.213     | 9.71     | 0.000275 |
-| 9    | gemma-3-27b-it                                        | 0.628           | 0.299     | 18.79    | 0.000096 |
+| 9    | gemma-3-27b-it (via OpenRouter)                       | 0.628           | 0.299     | 18.79    | 0.000096 |
 | 10   | gemini-1.5-flash-8b                                   | 0.551           | 0.223     | 3.91     | 0.000055 |
 | 11   | Llama-Vision-Free (via Together AI)                   | 0.531           | 0.198     | 6.93     | 0        |
 | 12   | Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI) | 0.524           | 0.192     | 3.68     | 0.000060 |
-| 13   | qwen/qwen-2.5-vl-7b-instruct                          | 0.482           | 0.209     | 11.53    | 0.000052 |
+| 13   | qwen/qwen-2.5-vl-7b-instruct (via OpenRouter)         | 0.482           | 0.209     | 11.53    | 0.000052 |
 | 14   | Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI) | 0.461           | 0.306     | 19.26    | 0.000426 |
-| 15   | Llama-3.2-11B-Vision-Instruct (via Hugging Face)      | 0.451           | 0.257     | 4.54     |   0    |
+| 15   | Llama-3.2-11B-Vision-Instruct (via Hugging Face)      | 0.451           | 0.257     | 4.54     |   0      |
+| 16   | microsoft/phi-4-multimodal-instruct (via OpenRouter)  | 0.366           | 0.287     | 10.80    | 0.000019 |
