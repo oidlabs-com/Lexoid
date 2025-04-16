@@ -274,12 +274,26 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         extra_attrs=["size", "top", "bottom", "fontname"],
     )
 
-    # --- Updated helper functions for monospace detection and code block output ---
     if words:
         font_sizes = [w.get("size", 12) for w in words]
         body_font_size = max(set(font_sizes), key=font_sizes.count)
     else:
         body_font_size = 12
+
+    left_positions = []
+    prev_bottom = None
+
+    for word in words:
+        # Check if this is likely a new line (first word in line)
+        if prev_bottom is None or abs(word["top"] - prev_bottom) > y_tolerance:
+            left_positions.append(word["x0"])
+        prev_bottom = word["top"]
+
+    # Find the most common minimum left position (mode)
+    if left_positions:
+        base_left = max(set(left_positions), key=left_positions.count)
+    else:
+        base_left = 0
 
     for line in horizontal_lines:
         # Check each word to see if it overlaps with this line
@@ -297,7 +311,6 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             if x_overlap and y_overlap:
                 word["text"] = f"~~{word['text']}~~"
                 break
-
 
     def get_text_formatting(word):
         """
@@ -332,52 +345,41 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             text = f"*{text}*"
         return text
 
-
     def format_paragraph(text_elements):
         """
         Format a paragraph with styling applied to individual words.
         If all words are monospace, treat the paragraph as a code block.
-        If the preceding normal text contains a known language, use it as a language hint.
+        Otherwise, wrap monospace words with backticks (`).
         """
-        # List of known programming languages for hint extraction
-        known_languages = {
-            "python", "javascript", "java", "c++", "c", "ruby",
-            "go", "php", "html", "css", "sql", "bash", "shell"
-        }
 
-        # Extract the preceding normal text to detect language hint
-        detected_language = ""
-        normal_texts = []
-        code_elements_text = []
-        code_elements = []
+        all_monospace = True
+        formatted_words = []
 
         for element in text_elements:
-            # print(text_elements[0])
             text = element["text"]
             formatting = get_text_formatting(element)
 
             if formatting.get("monospace", False):
-                code_elements_text.append(text)
-                code_elements.append(element) # Collect monospace (code) elements
+                # Wrap monospace words with backticks
+                formatted_words.append(f"`{text}`")
             else:
-                normal_texts.append(text)  # Collect normal text elements
+                all_monospace = False
+                # Apply other markdown formatting
+                formatted_words.append(apply_markdown_formatting(text, formatting))
 
-        # If it's a monospace block, format it as code with language hint
-        if code_elements_text:
-            indent = code_elements[0]["x0"] - base_left
-            if(code_elements[0]["x0"] > base_left):
-                code_elements_text[0] = " " * int(indent/5)+ code_elements_text[0]
-            
-            code_content = " ".join(code_elements_text)
-            return f"```{detected_language}\n{code_content}\n```\n\n"
+        # If all words are monospace, format as a code block
+        if all_monospace:
+            indent = text_elements[0]["x0"] - base_left
+            if text_elements[0]["x0"] > base_left:
+                text_elements[0]["text"] = (
+                    " " * int(indent / 5) + text_elements[0]["text"]
+                )
 
-        # Otherwise, return normal text with proper markdown formatting
-        formatted_words = [
-            apply_markdown_formatting(element["text"], get_text_formatting(element))
-            for element in text_elements
-        ]
+            code_content = " ".join([element["text"] for element in text_elements])
+            return f"```\n{code_content}\n```\n\n"
+
+        # Otherwise, return the formatted paragraph
         return f"{' '.join(formatted_words)}\n\n"
-
 
     def detect_heading_level(font_size, body_font_size):
         """Determine heading level based on font size ratio.
@@ -411,20 +413,6 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             )
         )
     tables.sort(key=lambda x: x[1]["bottom"])
-
-    left_positions = []
-    prev_bottom = None
- 
-    for word in words:
-        # Check if this is likely a new line (first word in line
-        if prev_bottom is None or abs(word["top"] - prev_bottom) > y_tolerance:
-            left_positions.append(word["x0"])
-        prev_bottom = word["top"]
-    # Find the most common minimum left position (mode)
-    if left_positions:
-        base_left = max(set(left_positions), key=left_positions.count)
-    else:
-        base_left = 0
 
     content_elements = []
     for line in horizontal_lines:
@@ -498,7 +486,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                 if current_paragraph:
                     markdown_content.append(format_paragraph(current_paragraph))
                     current_paragraph = []
-            
+
             # Add word to appropriate collection
             if heading_level:
                 if current_paragraph:  # Flush any pending paragraph
@@ -522,7 +510,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         level = detect_heading_level(current_heading[0]["size"], body_font_size)
         heading_text = format_paragraph(current_heading)
         markdown_content.append(f"{'#' * level} {heading_text}")
-        
+
     if current_paragraph:
         markdown_content.append(format_paragraph(current_paragraph))
 
@@ -541,8 +529,13 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     content = embed_email_links(content)
 
     # Remove redundant formatting
-    content = content.replace("** **", " ").replace("* *", " ")
-    
+    content = (
+        content.replace("** **", " ")
+        .replace("* *", " ")
+        .replace("` `", " ")
+        .replace("\n```\n\n```", "")
+    )
+
     return content
 
 
