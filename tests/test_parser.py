@@ -334,9 +334,8 @@ async def test_monospace_code_block():
     print(results)
 
     assert "```" in results
-    # Assert that a Python code block (with a language hint) is present
-    # assert "python" in results
-    
+
+
 @pytest.mark.asyncio
 async def test_pdf_headings():
     sample_path = "examples/inputs/bench_md.pdf"

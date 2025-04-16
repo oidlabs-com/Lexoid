@@ -314,9 +314,8 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
 
     def get_text_formatting(word):
         """
-        Detect text formatting based on font properties.
-        Returns a dict of formatting attributes.
-        Now also detects monospace fonts.
+        Detect text formatting based on font properties
+        Returns a dict of formatting attributes
         """
         formatting = {
             "bold": False,
