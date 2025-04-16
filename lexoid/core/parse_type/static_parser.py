@@ -428,9 +428,14 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             )
         )
 
-    for word in words:
+    for i, word in enumerate(words):
         while tables and word["bottom"] > tables[0][1]["bottom"]:
             content_elements.append(tables.pop(0))
+
+        # Equate position of words on the same line
+        if i > 0 and abs(word["top"] - words[i - 1]["top"]) < 3:
+            word["top"] = words[i - 1]["top"]
+
         content_elements.append(("word", word))
     content_elements.extend(tables)
 
