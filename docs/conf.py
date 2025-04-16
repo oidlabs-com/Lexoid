@@ -9,7 +9,7 @@
 project = "Lexoid"
 copyright = "2025, Lexoid Contributors"
 author = "Lexoid Contributors"
-release = "0.1.11"
+release = "0.1.12"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

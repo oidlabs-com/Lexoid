@@ -1,12 +1,24 @@
+import os
+import re
 import tempfile
+from time import time
+from typing import Dict, List
+
 import pandas as pd
 import pdfplumber
-from typing import List, Dict
-from lexoid.core.utils import get_file_type, get_uri_rect, html_to_markdown, split_pdf
+from docx import Document
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
-from docx import Document
+from pptx2md import ConversionConfig, convert
+
+from lexoid.core.utils import (
+    get_file_type,
+    get_uri_rect,
+    html_to_markdown,
+    split_md_by_headings,
+    split_pdf,
+)
 
 
 def parse_static_doc(path: str, **kwargs) -> Dict:
@@ -47,12 +59,36 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
                 "parent_title": kwargs.get("parent_title", ""),
                 "recursive_docs": [],
             }
-    elif file_type == "text/csv":
-        df = pd.read_csv(path)
+    elif file_type == "text/csv" or "spreadsheet" in file_type:
+        if "spreadsheet" in file_type:
+            df = pd.read_excel(path)
+        else:
+            df = pd.read_csv(path)
         content = df.to_markdown(index=False)
         return {
             "raw": content,
             "segments": [{"metadata": {"page": 1}, "content": content}],
+            "title": kwargs["title"],
+            "url": kwargs.get("url", ""),
+            "parent_title": kwargs.get("parent_title", ""),
+            "recursive_docs": [],
+        }
+    elif "presentation" in file_type:
+        md_path = os.path.join(kwargs["temp_dir"], f"{int(time())}.md")
+        convert(
+            ConversionConfig(
+                pptx_path=path,
+                output_path=md_path,
+                image_dir=None,
+                disable_image=True,
+                disable_notes=True,
+            )
+        )
+        with open(md_path, "r") as f:
+            content = f.read()
+        return {
+            "raw": content,
+            "segments": split_md_by_headings(content, "#"),
             "title": kwargs["title"],
             "url": kwargs.get("url", ""),
             "parent_title": kwargs.get("parent_title", ""),
@@ -168,6 +204,17 @@ def embed_links_in_text(page, text, links):
     return text
 
 
+def embed_email_links(text: str) -> str:
+    """
+    Detect email addresses in text and wrap them in angle brackets.
+    For example, 'mail@example.com' becomes '<mail@example.com>'.
+    """
+    email_pattern = re.compile(
+        r"(?<![<\[])(?P<email>\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)(?![>\]])"
+    )
+    return email_pattern.sub(lambda match: f"<{match.group('email')}>", text)
+
+
 def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     """
     Process a single page's content and return formatted markdown text.
@@ -178,7 +225,26 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     last_y = None
     x_tolerance = kwargs.get("x_tolerance", 1)
     y_tolerance = kwargs.get("y_tolerance", 5)
+    next_h_line_idx = 0
 
+    # First detect horizontal lines that could be markdown rules
+    horizontal_lines = []
+    if hasattr(page, "lines"):
+        for line in page.lines:
+            # Check if line is approximately horizontal (within 5 degrees)
+            if (
+                abs(line["height"]) < 0.1
+                or abs(line["width"]) > abs(line["height"]) * 20
+            ):
+                # Consider it a horizontal rule candidate
+                horizontal_lines.append(
+                    {
+                        "top": line["top"],
+                        "bottom": line["bottom"],
+                        "x0": line["x0"],
+                        "x1": line["x1"],
+                    }
+                )
     # Table settings
     vertical_strategy = kwargs.get("vertical_strategy", "lines")
     horizontal_strategy = kwargs.get("horizontal_strategy", "lines")
@@ -209,6 +275,29 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     )
 
     # --- Updated helper functions for monospace detection and code block output ---
+    if words:
+        font_sizes = [w.get("size", 12) for w in words]
+        body_font_size = max(set(font_sizes), key=font_sizes.count)
+    else:
+        body_font_size = 12
+
+    for line in horizontal_lines:
+        # Check each word to see if it overlaps with this line
+        for word in words:
+            # Get word bounding box coordinates
+            word_left = word["x0"]
+            word_right = word["x1"]
+            word_top = word["top"]
+            word_bottom = word["bottom"]
+
+            # Check if word overlaps with line in both x and y dimensions
+            x_overlap = (word_left <= line["x1"]) and (word_right >= line["x0"])
+            y_overlap = (word_top <= line["bottom"]) and (word_bottom >= line["top"])
+
+            if x_overlap and y_overlap:
+                word["text"] = f"~~{word['text']}~~"
+                break
+
 
     def get_text_formatting(word):
         """
@@ -242,6 +331,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         elif formatting["italic"]:
             text = f"*{text}*"
         return text
+
 
     def format_paragraph(text_elements):
         """
@@ -289,12 +379,22 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         return f"{' '.join(formatted_words)}\n\n"
 
 
-    def detect_heading_level(font_size):
-        if font_size >= 24:
+    def detect_heading_level(font_size, body_font_size):
+        """Determine heading level based on font size ratio.
+
+        Args:
+            font_size: The font size to evaluate
+            body_font_size: The base body font size for comparison
+
+        Returns:
+            int: The heading level (1-3) or None if not a heading
+        """
+        size_ratio = font_size / body_font_size
+        if size_ratio >= 2:
             return 1
-        elif font_size >= 20:
+        elif size_ratio >= 1.5:
             return 2
-        elif font_size >= 16:
+        elif size_ratio >= 1.2:
             return 3
         return None
 
@@ -327,17 +427,34 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         base_left = 0
 
     content_elements = []
+    for line in horizontal_lines:
+        content_elements.append(
+            (
+                "horizontal_line",
+                {
+                    "top": line["top"],
+                    "bottom": line["bottom"],
+                    "x0": line["x0"],
+                    "x1": line["x1"],
+                },
+            )
+        )
+
     for word in words:
         while tables and word["bottom"] > tables[0][1]["bottom"]:
             content_elements.append(tables.pop(0))
         content_elements.append(("word", word))
     content_elements.extend(tables)
 
+    content_elements.sort(
+        key=lambda x: x[1]["top"] if isinstance(x[1], dict) and "top" in x[1] else 0
+    )
+
     for element_type, element in content_elements:
         # If there are any pending paragraphs or headings, add them first
         if element_type == "table":
             if current_heading:
-                level = detect_heading_level(current_heading[0]["size"])
+                level = detect_heading_level(current_heading[0]["size"], body_font_size)
                 heading_text = format_paragraph(current_heading)
                 markdown_content.append(f"{'#' * level} {heading_text}")
                 current_heading = []
@@ -347,11 +464,22 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             # Add the table
             markdown_content.append(element["content"])
             last_y = element["bottom"]
+        elif element_type == "horizontal_line":
+            while (next_h_line_idx < len(horizontal_lines)) and (
+                last_y is not None
+                and horizontal_lines[next_h_line_idx]["top"] <= last_y
+            ):
+                # Insert the horizontal rule *after* the preceding text
+                if current_paragraph:  # Flush any pending paragraph
+                    markdown_content.append(format_paragraph(current_paragraph))
+                    current_paragraph = []
+                markdown_content.append("\n---\n\n")  # Add the rule
+                next_h_line_idx += 1
         else:
             # Process word
             word = element
             # Check if this might be a heading
-            heading_level = detect_heading_level(word["size"])
+            heading_level = detect_heading_level(word["size"], body_font_size)
 
             # Detect new line based on vertical position
             is_new_line = last_y is not None and abs(word["top"] - last_y) > y_tolerance
@@ -359,7 +487,9 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             if is_new_line:
                 # If we were collecting a heading
                 if current_heading:
-                    level = detect_heading_level(current_heading[0]["size"])
+                    level = detect_heading_level(
+                        current_heading[0]["size"], body_font_size
+                    )
                     heading_text = format_paragraph(current_heading)
                     markdown_content.append(f"{'#' * level} {heading_text}")
                     current_heading = []
@@ -377,7 +507,9 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                 current_heading.append(word)
             else:
                 if current_heading:  # Flush any pending heading
-                    level = detect_heading_level(current_heading[0]["size"])
+                    level = detect_heading_level(
+                        current_heading[0]["size"], body_font_size
+                    )
                     heading_text = format_paragraph(current_heading)
                     markdown_content.append(f"{'#' * level} {heading_text}")
                     current_heading = []
@@ -387,7 +519,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
 
     # Handle remaining content
     if current_heading:
-        level = detect_heading_level(current_heading[0]["size"])
+        level = detect_heading_level(current_heading[0]["size"], body_font_size)
         heading_text = format_paragraph(current_heading)
         markdown_content.append(f"{'#' * level} {heading_text}")
         
@@ -405,6 +537,8 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
 
         if links:
             content = embed_links_in_text(page, content, links)
+
+    content = embed_email_links(content)
 
     # Remove redundant formatting
     content = content.replace("** **", " ").replace("* *", " ")
@@ -447,7 +581,7 @@ def parse_with_pdfplumber(path: str, **kwargs) -> Dict:
     ]
 
     return {
-        "raw": "<page-break>".join(page_texts),
+        "raw": "\n\n".join(page_texts),
         "segments": segments,
         "title": kwargs["title"],
         "url": kwargs.get("url", ""),
