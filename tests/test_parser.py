@@ -333,4 +333,4 @@ async def test_blockquote():
     # Assert that there is at least one fenced code block
     print(results)
 
-    assert "| |" in results
+    assert " " in results

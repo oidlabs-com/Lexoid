@@ -9,7 +9,7 @@ from docx import Document
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
-from pptx2md import convert, ConversionConfig
+# from pptx2md import convert, ConversionConfig
 
 from lexoid.core.utils import (
     get_file_type,
@@ -209,7 +209,7 @@ def detect_indentation_level(word, base_left_position):
         return 3
     elif left_diff > 25:
         return 2
-    elif left_diff > 10:
+    elif left_diff > 5:
         return 1
     return 0
 
@@ -236,11 +236,11 @@ def apply_indentation(content):
             
             # Apply markdown indentation
             if indent_level == 1:
-                rest = f"| {rest}"
+                rest = f" {rest}"
             elif indent_level == 2:
-                rest = f"| | {rest}"
+                rest = f"  {rest}"
             elif indent_level == 3:
-                rest = f"| | | {rest}"
+                rest = f"   {rest}"
             
             result.append(rest)
         else:
