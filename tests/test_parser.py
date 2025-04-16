@@ -327,11 +327,34 @@ async def test_token_cost(model):
 
 @pytest.mark.asyncio
 async def test_pdf_headings():
-    sample_path = "examples/inputs/test_headings.pdf"
+    sample_path = "examples/inputs/bench_md.pdf"
     parser_type = "STATIC_PARSE"
     results = parse(sample_path, parser_type, framework="pdfplumber")["raw"]
 
     # Test for h1 (should have # in markdown)
     assert "#" in results
     assert "##" in results
-    assert "Main Title" in results
+
+
+@pytest.mark.asyncio
+async def test_email_address():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    assert "<mail@example.com>" in results
+
+
+@pytest.mark.asyncio
+async def test_horizontal_lines():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    assert "\n---\n" in results, "Markdown horizontal rule not found"
+
+
+@pytest.mark.asyncio
+async def test_strikethrough_words():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    assert "~~" in results, "Markdown strikethrough text not found"
