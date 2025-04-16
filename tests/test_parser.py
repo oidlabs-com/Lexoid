@@ -323,3 +323,19 @@ async def test_token_cost(model):
     assert result["token_cost"]["input"] > 0
     assert result["token_cost"]["output"] > 0
     assert result["token_cost"]["total"] > 0
+
+
+@pytest.mark.asyncio
+async def test_horizontal_lines():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    assert "\n---\n" in results, "Markdown horizontal rule not found"
+
+
+@pytest.mark.asyncio
+async def test_strikethrough_words():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    assert "~~" in results, "Markdown horizontal rule not found"
