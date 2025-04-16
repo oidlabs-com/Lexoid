@@ -229,7 +229,6 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             formatting["italic"] = True
         if "mono" in font_name:  # Detect monospace fonts
             formatting["monospace"] = True
-        print(f"Formatting",formatting)
         return formatting
 
     def apply_markdown_formatting(text, formatting):
@@ -259,27 +258,27 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         # Extract the preceding normal text to detect language hint
         detected_language = ""
         normal_texts = []
+        code_elements_text = []
         code_elements = []
 
         for element in text_elements:
+            # print(text_elements[0])
             text = element["text"]
             formatting = get_text_formatting(element)
 
             if formatting.get("monospace", False):
-                code_elements.append(text)  # Collect monospace (code) elements
+                code_elements_text.append(text)
+                code_elements.append(element) # Collect monospace (code) elements
             else:
                 normal_texts.append(text)  # Collect normal text elements
 
-        # Try to detect language from normal text before the code block
-        preceding_text = " ".join(normal_texts).lower()
-        for lang in known_languages:
-            if lang in preceding_text:
-                detected_language = lang
-                break  # Stop at the first match
-
         # If it's a monospace block, format it as code with language hint
-        if code_elements:
-            code_content = " ".join(code_elements)
+        if code_elements_text:
+            indent = code_elements[0]["x0"] - base_left
+            if(code_elements[0]["x0"] > base_left):
+                code_elements_text[0] = " " * int(indent/5)+ code_elements_text[0]
+            
+            code_content = " ".join(code_elements_text)
             return f"```{detected_language}\n{code_content}\n```\n\n"
 
         # Otherwise, return normal text with proper markdown formatting
@@ -312,6 +311,21 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             )
         )
     tables.sort(key=lambda x: x[1]["bottom"])
+
+    left_positions = []
+    prev_bottom = None
+ 
+    for word in words:
+        # Check if this is likely a new line (first word in line
+        if prev_bottom is None or abs(word["top"] - prev_bottom) > y_tolerance:
+            left_positions.append(word["x0"])
+        prev_bottom = word["top"]
+    # Find the most common minimum left position (mode)
+    if left_positions:
+        base_left = max(set(left_positions), key=left_positions.count)
+    else:
+        base_left = 0
+
     content_elements = []
     for word in words:
         while tables and word["bottom"] > tables[0][1]["bottom"]:
