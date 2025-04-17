@@ -331,7 +331,7 @@ async def test_blockquote():
     parser_type = "STATIC_PARSE"
     results = parse(sample, parser_type, framework="pdfplumber")["raw"]
     # Assert that there is at least one fenced code block
-    assert "   " in results
+    assert "&nbsp;" * 3 in results
 
 
 @pytest.mark.asyncio
