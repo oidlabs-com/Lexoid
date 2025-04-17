@@ -326,13 +326,20 @@ async def test_token_cost(model):
 
 
 @pytest.mark.asyncio
+async def test_blockquote():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    # Assert that there is at least one fenced code block
+    assert "&nbsp;" * 3 in results
+
+
+@pytest.mark.asyncio
 async def test_monospace_code_block():
     sample = "examples/inputs/bench_md.pdf"
     parser_type = "STATIC_PARSE"
     results = parse(sample, parser_type, framework="pdfplumber")["raw"]
     # Assert that there is at least one fenced code block
-    print(results)
-
     assert "```" in results
 
 

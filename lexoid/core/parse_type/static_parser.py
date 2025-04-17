@@ -12,6 +12,7 @@ from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
 from pptx2md import ConversionConfig, convert
 
+
 from lexoid.core.utils import (
     get_file_type,
     get_uri_rect,
@@ -204,6 +205,14 @@ def embed_links_in_text(page, text, links):
     return text
 
 
+def detect_indentation_level(word, base_left_position):
+    """Determine indentation level based on left position difference."""
+    left_diff = word["x0"] - base_left_position
+    if left_diff < 5:
+        return 0
+    return int(left_diff // 25) + 1
+
+
 def embed_email_links(text: str) -> str:
     """
     Detect email addresses in text and wrap them in angle brackets.
@@ -355,6 +364,11 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         formatted_words = []
 
         for element in text_elements:
+            if isinstance(element, tuple) and element[0] == "indent":
+                indent = "&nbsp;" * element[1] * 3
+                formatted_words.append(indent)
+                continue
+
             text = element["text"]
             formatting = get_text_formatting(element)
 
@@ -368,12 +382,13 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
 
         # If all words are monospace, format as a code block
         if all_monospace:
-            indent = text_elements[0]["x0"] - base_left
-            if text_elements[0]["x0"] > base_left:
-                text_elements[0]["text"] = (
-                    " " * int(indent / 5) + text_elements[0]["text"]
-                )
-
+            if isinstance(text_elements[0], tuple):
+                indent_str = " " * text_elements[0][1]
+                if len(text_elements) > 1:
+                    text_elements = text_elements[1:]
+                    text_elements[0]["text"] = indent_str + text_elements[0]["text"]
+                else:
+                    return indent_str
             code_content = " ".join([element["text"] for element in text_elements])
             return f"```\n{code_content}\n```\n\n"
 
@@ -490,6 +505,9 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                 if current_paragraph:
                     markdown_content.append(format_paragraph(current_paragraph))
                     current_paragraph = []
+
+                indent_level = detect_indentation_level(word, base_left)
+                current_paragraph.append(("indent", indent_level))
 
             # Add word to appropriate collection
             if heading_level:
