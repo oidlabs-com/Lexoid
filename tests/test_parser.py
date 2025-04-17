@@ -331,10 +331,18 @@ async def test_blockquote():
     parser_type = "STATIC_PARSE"
     results = parse(sample, parser_type, framework="pdfplumber")["raw"]
     # Assert that there is at least one fenced code block
-    print(results)
+    assert "   " in results
 
-    assert " " in results
-    
+
+@pytest.mark.asyncio
+async def test_monospace_code_block():
+    sample = "examples/inputs/bench_md.pdf"
+    parser_type = "STATIC_PARSE"
+    results = parse(sample, parser_type, framework="pdfplumber")["raw"]
+    # Assert that there is at least one fenced code block
+    assert "```" in results
+
+
 @pytest.mark.asyncio
 async def test_pdf_headings():
     sample_path = "examples/inputs/bench_md.pdf"

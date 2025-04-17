@@ -204,50 +204,13 @@ def embed_links_in_text(page, text, links):
 
     return text
 
+
 def detect_indentation_level(word, base_left_position):
     """Determine indentation level based on left position difference."""
     left_diff = word["x0"] - base_left_position
-    if left_diff > 50:
-        return 3
-    elif left_diff > 25:
-        return 2
-    elif left_diff > 5:
-        return 1
-    return 0
-
-
-def apply_indentation(content):
-    """Convert indent markers to actual indentation in markdown."""
-    lines = content.split('\n')
-    result = []
-    for line in lines:
-        if "indent" in line:
-            # Split the line into indent marker and actual content
-            parts = line.split(')', 1)
-            indent_marker = parts[0] + ")"
-            rest = parts[1] if len(parts) > 1 else ""
-            
-            # Find the indent level
-            indent_level = 0
-            if "(indent, 1)" in indent_marker:
-                indent_level = 1
-            elif "(indent, 2)" in indent_marker:
-                indent_level = 2
-            elif "(indent, 3)" in indent_marker:
-                indent_level = 3
-            
-            # Apply markdown indentation
-            if indent_level == 1:
-                rest = f" {rest}"
-            elif indent_level == 2:
-                rest = f"  {rest}"
-            elif indent_level == 3:
-                rest = f"   {rest}"
-            
-            result.append(rest)
-        else:
-            result.append(line)
-    return '\n'.join(result)
+    if left_diff < 5:
+        return 0
+    return int(left_diff // 25) + 1
 
 
 def embed_email_links(text: str) -> str:
@@ -326,6 +289,21 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     else:
         body_font_size = 12
 
+    left_positions = []
+    prev_bottom = None
+
+    for word in words:
+        # Check if this is likely a new line (first word in line)
+        if prev_bottom is None or abs(word["top"] - prev_bottom) > y_tolerance:
+            left_positions.append(word["x0"])
+        prev_bottom = word["top"]
+
+    # Find the most common minimum left position (mode)
+    if left_positions:
+        base_left = max(set(left_positions), key=left_positions.count)
+    else:
+        base_left = 0
+
     for line in horizontal_lines:
         # Check each word to see if it overlaps with this line
         for word in words:
@@ -343,20 +321,6 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
                 word["text"] = f"~~{word['text']}~~"
                 break
 
-    def format_paragraph(text_elements):
-        """Format a paragraph with styling applied to individual words.
-        Now handles both regular words and indentation markers.
-        """
-        formatted_words = []
-        for element in text_elements:
-            if isinstance(element, tuple) and element[0] == "indent":
-                formatted_words.append(f"(indent, {element[1]})")
-            else:
-                text = element["text"]
-                formatting = get_text_formatting(element)
-                formatted_words.append(apply_markdown_formatting(text, formatting))
-        return f"{' '.join(formatted_words)}\n\n"
-
     def get_text_formatting(word):
         """
         Detect text formatting based on font properties
@@ -365,19 +329,22 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         formatting = {
             "bold": False,
             "italic": False,
+            "monospace": False,
         }
-
         # Check font name for common bold/italic indicators
         font_name = word.get("fontname", "").lower()
         if any(style in font_name for style in ["bold", "heavy", "black"]):
             formatting["bold"] = True
         if any(style in font_name for style in ["italic", "oblique"]):
             formatting["italic"] = True
-
+        if "mono" in font_name:  # Detect monospace fonts
+            formatting["monospace"] = True
         return formatting
 
     def apply_markdown_formatting(text, formatting):
         """Apply markdown formatting to text based on detected styles"""
+        if formatting["monospace"]:
+            text = f"`{text}`"
         if formatting["bold"] and formatting["italic"]:
             text = f"***{text}***"
         elif formatting["bold"]:
@@ -385,6 +352,48 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         elif formatting["italic"]:
             text = f"*{text}*"
         return text
+
+    def format_paragraph(text_elements):
+        """
+        Format a paragraph with styling applied to individual words.
+        If all words are monospace, treat the paragraph as a code block.
+        Otherwise, wrap monospace words with backticks (`).
+        """
+
+        all_monospace = True
+        formatted_words = []
+
+        for element in text_elements:
+            if isinstance(element, tuple) and element[0] == "indent":
+                indent = "&nbsp;" * element[1] * 3
+                formatted_words.append(indent)
+                continue
+
+            text = element["text"]
+            formatting = get_text_formatting(element)
+
+            if formatting.get("monospace", False):
+                # Wrap monospace words with backticks
+                formatted_words.append(f"`{text}`")
+            else:
+                all_monospace = False
+                # Apply other markdown formatting
+                formatted_words.append(apply_markdown_formatting(text, formatting))
+
+        # If all words are monospace, format as a code block
+        if all_monospace:
+            if isinstance(text_elements[0], tuple):
+                indent_str = " " * text_elements[0][1]
+                if len(text_elements) > 1:
+                    text_elements = text_elements[1:]
+                    text_elements[0]["text"] = indent_str + text_elements[0]["text"]
+                else:
+                    return indent_str
+            code_content = " ".join([element["text"] for element in text_elements])
+            return f"```\n{code_content}\n```\n\n"
+
+        # Otherwise, return the formatted paragraph
+        return f"{' '.join(formatted_words)}\n\n"
 
     def detect_heading_level(font_size, body_font_size):
         """Determine heading level based on font size ratio.
@@ -419,20 +428,6 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         )
     tables.sort(key=lambda x: x[1]["bottom"])
 
-    left_positions = []
-    prev_bottom = None
-    for word in words:
-        # Check if this is likely a new line (first word in line)
-        if prev_bottom is None or abs(word["top"] - prev_bottom) > y_tolerance:
-            left_positions.append(word["x0"])
-        prev_bottom = word["top"]
-
-    # Find the most common minimum left position (mode)
-    if left_positions:
-        base_left = max(set(left_positions), key=left_positions.count)
-    else:
-        base_left = 0
-
     content_elements = []
     for line in horizontal_lines:
         content_elements.append(
@@ -447,9 +442,14 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
             )
         )
 
-    for word in words:
+    for i, word in enumerate(words):
         while tables and word["bottom"] > tables[0][1]["bottom"]:
             content_elements.append(tables.pop(0))
+
+        # Equate position of words on the same line
+        if i > 0 and abs(word["top"] - words[i - 1]["top"]) < 3:
+            word["top"] = words[i - 1]["top"]
+
         content_elements.append(("word", word))
     content_elements.extend(tables)
 
@@ -458,8 +458,8 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     )
 
     for element_type, element in content_elements:
+        # If there are any pending paragraphs or headings, add them first
         if element_type == "table":
-            # If there are any pending paragraphs or headings, add them first
             if current_heading:
                 level = detect_heading_level(current_heading[0]["size"], body_font_size)
                 heading_text = format_paragraph(current_heading)
@@ -551,8 +551,13 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
     content = embed_email_links(content)
 
     # Remove redundant formatting
-    content = content.replace("** **", " ").replace("* *", " ")
-    content = apply_indentation(content)
+    content = (
+        content.replace("** **", " ")
+        .replace("* *", " ")
+        .replace("` `", " ")
+        .replace("\n```\n\n```", "")
+    )
+
     return content
 
 
