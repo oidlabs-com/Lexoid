@@ -408,7 +408,7 @@ def process_pdf_page_with_pdfplumber(page, uri_rects, **kwargs):
         size_ratio = font_size / body_font_size
         if size_ratio >= 2:
             return 1
-        elif size_ratio >= 1.5:
+        elif size_ratio >= 1.4:
             return 2
         elif size_ratio >= 1.2:
             return 3
