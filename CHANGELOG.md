@@ -145,3 +145,16 @@
 
 ### Changed
 * Set default `router_priority` to `speed`
+
+## [0.1.13] - 2025-04-20
+
+### Added
+* `STATIC_PARSE` improvements
+    * Horizontal line detection
+    * Strikethrough text detection
+    * Email address formatting
+    * Improved heading level detection
+    * Monospace font detection
+    * Indentation detection
+
+
