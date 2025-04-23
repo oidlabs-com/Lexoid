@@ -345,7 +345,7 @@ def get_webpage_soup(url: str) -> BeautifulSoup:
                 # Additional wait for any dynamic content
                 try:
                     await page.wait_for_selector("body", timeout=30000)
-                except:
+                except Exception:
                     pass
 
                 html = await page.content()
@@ -561,7 +561,11 @@ def router(path: str, priority: str = "speed") -> str:
         priority (str): The priority for routing: "accuracy" (preference to LLM_PARSE) or "speed" (preference to STATIC_PARSE).
     """
     file_type = get_file_type(path)
-    if file_type.startswith("text/") or "spreadsheet" in file_type or "presentation" in file_type:
+    if (
+        file_type.startswith("text/")
+        or "spreadsheet" in file_type
+        or "presentation" in file_type
+    ):
         return "STATIC_PARSE"
 
     if priority == "accuracy":
