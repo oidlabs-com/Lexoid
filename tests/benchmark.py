@@ -164,6 +164,9 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
             "google/gemma-3-27b-it",
             "qwen/qwen-2.5-vl-7b-instruct",
             "microsoft/phi-4-multimodal-instruct",
+            # Model through fireworks
+            "accounts/fireworks/models/llama4-maverick-instruct-basic",
+            "accounts/fireworks/models/llama4-scout-instruct-basic",
         ],
         "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
@@ -290,7 +293,7 @@ def run_benchmarks(
     total_files = len(file_pairs)
 
     print(
-        f"Running {total_configs} configurations across {total_files} file{'s' if total_files > 1 else ''}..."
+        f"Running {total_configs} configurations across {total_files} file(s) for {iterations} iterations..."
     )
 
     for i, config in enumerate(configs, 1):
