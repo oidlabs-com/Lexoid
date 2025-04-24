@@ -103,84 +103,90 @@ Here are the detailed parsing performance results for various models:
      - 11.95
      - TBA
    * - 5
+     - AUTO
+     - 0.76
+     - 0.184
+     - 5.14
+     - 0.000217
+   * - 6
      - gemini-2.0-flash-thinking-exp
      - 0.746
      - 0.266
      - 10.46
      - TBA
-   * - 6
+   * - 7
      - gemini-1.5-pro
      - 0.732
      - 0.265
      - 11.44
      - 0.003332
-   * - 7
+   * - 8
      - accounts/fireworks/models/llama4-maverick-instruct-basic (via Fireworks)
      - 0.687
      - 0.221
      - 8.07
      - 0.000419
-   * - 8
+   * - 9
      - gpt-4o
      - 0.687
      - 0.247
      - 10.16
      - 0.004736
-   * - 9
+   * - 10
      - accounts/fireworks/models/llama4-scout-instruct-basic (via Fireworks)
      - 0.675
      - 0.184
      - 5.98
      - 0.000226
-   * - 10
+   * - 11
      - gpt-4o-mini
      - 0.642
      - 0.213
      - 9.71
      - 0.000275
-   * - 11
+   * - 12
      - gemma-3-27b-it (via OpenRouter)
      - 0.628
      - 0.299
      - 18.79
      - 0.000096
-   * - 12
+   * - 13
      - gemini-1.5-flash-8b
      - 0.551
      - 0.223
      - 3.91
      - 0.000055
-   * - 13
+   * - 14
      - Llama-Vision-Free (via Together AI)
      - 0.531
      - 0.198
      - 6.93
      - 0
-   * - 14
+   * - 15
      - Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI)
      - 0.524
      - 0.192
      - 3.68
      - 0.00006
-   * - 15
+   * - 16
      - qwen/qwen-2.5-vl-7b-instruct (via OpenRouter)
      - 0.482
      - 0.209
      - 11.53
      - 0.000052
-   * - 16
+   * - 17
      - Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI)
      - 0.461
      - 0.306
      - 19.26
      - 0.000426
-   * - 17
+   * - 18
      - Llama-3.2-11B-Vision-Instruct (via Hugging Face)
      - 0.451
      - 0.257
      - 4.54
      - 0
-   * - 18
+   * - 19
      - microsoft/phi-4-multimodal-instruct (via OpenRouter)
      - 0.366
      - 0.287

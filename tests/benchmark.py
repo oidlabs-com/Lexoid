@@ -64,7 +64,15 @@ def run_benchmark_config(
         try:
             start_time = time.time()
             config["api_cost_mapping"] = "tests/api_cost_mapping.json"
-            result = parse(input_path, "LLM_PARSE", **config)
+            config["parse_type"] = config.get(
+                "parser_type",
+                (
+                    "LLM_PARSE"
+                    if "model" in config
+                    else ("STATIC_PARSE" if "framework" in config else "AUTO")
+                ),
+            )
+            result = parse(input_path, **config)
             execution_time = time.time() - start_time
 
             if output_save_dir:
@@ -141,7 +149,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     Generate different configuration combinations to test based on specified attributes.
     """
     config_options = {
-        "parser_type": ["LLM_PARSE", "STATIC_PARSE"],
+        "parser_type": ["LLM_PARSE", "STATIC_PARSE", "AUTO"],
         "model": [
             # Google models
             "gemini-2.0-pro-exp",

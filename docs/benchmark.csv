@@ -3,6 +3,7 @@ gemini-2.0-flash,0.829,0.102,7.41,0.00048
 gemini-2.0-flash-001,0.814,0.176,6.85,0.000421
 gemini-1.5-flash,0.797,0.143,9.54,0.000238
 gemini-2.0-pro-exp,0.764,0.227,11.95,TBA
+AUTO,0.760,0.184,5.14,0.000217
 gemini-2.0-flash-thinking-exp,0.746,0.266,10.46,TBA
 gemini-1.5-pro,0.732,0.265,11.44,0.003332
 accounts/fireworks/models/llama4-maverick-instruct-basic (via Fireworks),0.687,0.221,8.07,0.000419
