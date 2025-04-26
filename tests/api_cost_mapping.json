@@ -59,5 +59,13 @@
         "input": 0.05,
         "input-image": 0.0001769,
         "output": 0.1
+    },
+    "accounts/fireworks/models/llama4-maverick-instruct-basic": {
+        "input": 0.22,
+        "output": 0.88
+    },
+    "accounts/fireworks/models/llama4-scout-instruct-basic": {
+        "input": 0.15,
+        "output": 0.6
     }
 }

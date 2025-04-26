@@ -65,6 +65,8 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
         return parse_with_api(path, api="huggingface", **kwargs)
     if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
         return parse_with_api(path, api="openrouter", **kwargs)
+    if model.startswith("accounts/fireworks"):
+        return parse_with_api(path, api="fireworks", **kwargs)
     raise ValueError(f"Unsupported model: {model}")
 
 
@@ -191,6 +193,10 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
         "openrouter": lambda: OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=os.environ["OPENROUTER_API_KEY"],
+        ),
+        "fireworks": lambda: OpenAI(
+            base_url="https://api.fireworks.ai/inference/v1",
+            api_key=os.environ["FIREWORKS_API_KEY"],
         ),
     }
     assert api in clients, f"Unsupported API: {api}"

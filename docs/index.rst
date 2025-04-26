@@ -25,6 +25,16 @@ Key Features
 * Parallel processing support
 * Permissive license
 
+Supported API Providers
+-----------------------
+
+* Google
+* OpenAI
+* Hugging Face
+* Together AI
+* OpenRouter
+* Fireworks
+
 Indices and tables
 ==================
 

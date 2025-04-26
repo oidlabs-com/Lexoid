@@ -64,7 +64,15 @@ def run_benchmark_config(
         try:
             start_time = time.time()
             config["api_cost_mapping"] = "tests/api_cost_mapping.json"
-            result = parse(input_path, "LLM_PARSE", **config)
+            config["parse_type"] = config.get(
+                "parser_type",
+                (
+                    "LLM_PARSE"
+                    if "model" in config
+                    else ("STATIC_PARSE" if "framework" in config else "AUTO")
+                ),
+            )
+            result = parse(input_path, **config)
             execution_time = time.time() - start_time
 
             if output_save_dir:
@@ -141,7 +149,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     Generate different configuration combinations to test based on specified attributes.
     """
     config_options = {
-        "parser_type": ["LLM_PARSE", "STATIC_PARSE"],
+        "parser_type": ["LLM_PARSE", "STATIC_PARSE", "AUTO"],
         "model": [
             # Google models
             "gemini-2.0-pro-exp",
@@ -164,6 +172,9 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
             "google/gemma-3-27b-it",
             "qwen/qwen-2.5-vl-7b-instruct",
             "microsoft/phi-4-multimodal-instruct",
+            # Model through fireworks
+            "accounts/fireworks/models/llama4-maverick-instruct-basic",
+            "accounts/fireworks/models/llama4-scout-instruct-basic",
         ],
         "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
@@ -290,7 +301,7 @@ def run_benchmarks(
     total_files = len(file_pairs)
 
     print(
-        f"Running {total_configs} configurations across {total_files} file{'s' if total_files > 1 else ''}..."
+        f"Running {total_configs} configurations across {total_files} file(s) for {iterations} iterations..."
     )
 
     for i, config in enumerate(configs, 1):
