@@ -571,18 +571,22 @@ def router(path: str, priority: str = "speed") -> str:
     if priority == "accuracy":
         # If the file is a PDF without images but has hyperlinks, use STATIC_PARSE
         # Otherwise, use LLM_PARSE
-        if (
-            file_type == "application/pdf"
-            and not has_image_in_pdf(path)
-            and has_hyperlink_in_pdf(path)
-        ):
+        has_image = has_image_in_pdf(path)
+        has_hyperlink = has_hyperlink_in_pdf(path)
+        if file_type == "application/pdf" and not has_image and has_hyperlink:
+            logger.debug("Using STATIC_PARSE for PDF with hyperlinks and no images.")
             return "STATIC_PARSE"
+        logger.debug(
+            f"Using LLM_PARSE because PDF has image ({has_image}) or has no hyperlink ({has_hyperlink})."
+        )
         return "LLM_PARSE"
     else:
         # If the file is a PDF without images, use STATIC_PARSE
         # Otherwise, use LLM_PARSE
         if file_type == "application/pdf" and not has_image_in_pdf(path):
+            logger.debug("Using STATIC_PARSE for PDF without images.")
             return "STATIC_PARSE"
+        logger.debug("Using LLM_PARSE because PDF has images")
         return "LLM_PARSE"
 
 
