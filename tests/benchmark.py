@@ -64,7 +64,7 @@ def run_benchmark_config(
         try:
             start_time = time.time()
             config["api_cost_mapping"] = "tests/api_cost_mapping.json"
-            config["parse_type"] = config.get(
+            config["parser_type"] = config.get(
                 "parser_type",
                 (
                     "LLM_PARSE"
