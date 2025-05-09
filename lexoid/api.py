@@ -49,6 +49,7 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
             - parent_title: Title of parent doc if recursively parsed
             - recursive_docs: List of dictionaries for recursively parsed documents
             - token_usage: Dictionary containing token usage statistics
+            - parser_used: Which parser was actually used
     """
     if parser_type == ParserType.AUTO:
         router_priority = kwargs.get("router_priority", "speed")
@@ -60,10 +61,13 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
     )
     if parser_type == ParserType.STATIC_PARSE:
         logger.debug("Using static parser")
-        return parse_static_doc(path, **kwargs)
+        result = parse_static_doc(path, **kwargs)
     else:
         logger.debug("Using LLM parser")
-        return parse_llm_doc(path, **kwargs)
+        result = parse_llm_doc(path, **kwargs)
+
+    result["parser_used"] = parser_type
+    return result
 
 
 def parse_chunk_list(
@@ -82,15 +86,18 @@ def parse_chunk_list(
     """
     combined_segments = []
     raw_texts = []
-    token_usage = {"input": 0, "output": 0, "image_count": 0}
+    token_usage = {"input": 0, "output": 0, "llm_page_count": 0}
     for file_path in file_paths:
         result = parse_chunk(file_path, parser_type, **kwargs)
         combined_segments.extend(result["segments"])
         raw_texts.append(result["raw"])
-        if "token_usage" in result:
+        if (
+            result.get("parser_used") == ParserType.LLM_PARSE
+            and "token_usage" in result
+        ):
             token_usage["input"] += result["token_usage"]["input"]
             token_usage["output"] += result["token_usage"]["output"]
-            token_usage["image_count"] += len(result["segments"])
+            token_usage["llm_page_count"] += len(result["segments"])
     token_usage["total"] = token_usage["input"] + token_usage["output"]
 
     return {
@@ -136,7 +143,7 @@ def parse(
     as_pdf = kwargs.get("as_pdf", False)
     depth = kwargs.get("depth", 1)
 
-    if type(parser_type) == str:
+    if type(parser_type) is str:
         parser_type = ParserType[parser_type]
     if (
         path.lower().endswith((".doc", ".docx"))
@@ -184,7 +191,7 @@ def parse(
 
         if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
             kwargs["split"] = False
-            result = parse_chunk(path, parser_type, **kwargs)
+            result = parse_chunk_list([path], parser_type, kwargs)
         else:
             kwargs["split"] = True
             split_dir = os.path.join(temp_dir, "splits/")
@@ -219,42 +226,43 @@ def parse(
                 "token_usage": {
                     "input": sum(r["token_usage"]["input"] for r in chunk_results),
                     "output": sum(r["token_usage"]["output"] for r in chunk_results),
-                    "image_count": sum(
-                        r["token_usage"]["image_count"] for r in chunk_results
+                    "llm_page_count": sum(
+                        r["token_usage"]["llm_page_count"] for r in chunk_results
                     ),
                     "total": sum(r["token_usage"]["total"] for r in chunk_results),
                 },
             }
 
-            if "api_cost_mapping" in kwargs:
-                api_cost_mapping = kwargs["api_cost_mapping"]
-                if isinstance(api_cost_mapping, dict):
-                    api_cost_mapping = api_cost_mapping
-                elif isinstance(api_cost_mapping, str) and os.path.exists(
-                    api_cost_mapping
-                ):
-                    with open(api_cost_mapping, "r") as f:
-                        api_cost_mapping = json.load(f)
-                else:
-                    raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
+        if "api_cost_mapping" in kwargs and "token_usage" in result:
+            api_cost_mapping = kwargs["api_cost_mapping"]
+            if isinstance(api_cost_mapping, dict):
+                api_cost_mapping = api_cost_mapping
+            elif isinstance(api_cost_mapping, str) and os.path.exists(api_cost_mapping):
+                with open(api_cost_mapping, "r") as f:
+                    api_cost_mapping = json.load(f)
+            else:
+                raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
 
-                api_cost = api_cost_mapping.get(
-                    kwargs.get("model", "gemini-2.0-flash"), None
+            api_cost = api_cost_mapping.get(
+                kwargs.get("model", "gemini-2.0-flash"), None
+            )
+            if api_cost:
+                token_usage = result["token_usage"]
+                token_cost = {
+                    "input": token_usage["input"] * api_cost["input"] / 1_000_000,
+                    "input-image": api_cost.get("input-image", 0)
+                    * token_usage.get("llm_page_count", 0),
+                    "output": token_usage["output"] * api_cost["output"] / 1_000_000,
+                }
+                token_cost["total"] = (
+                    token_cost["input"]
+                    + token_cost["input-image"]
+                    + token_cost["output"]
                 )
-                if api_cost:
-                    token_usage = result["token_usage"]
-                    token_cost = {
-                        "input": token_usage["input"] * api_cost["input"] / 1_000_000
-                        + api_cost.get("input-image", 0) * token_usage["image_count"],
-                        "output": token_usage["output"]
-                        * api_cost["output"]
-                        / 1_000_000,
-                    }
-                    token_cost["total"] = token_cost["input"] + token_cost["output"]
-                    result["token_cost"] = token_cost
+                result["token_cost"] = token_cost
 
-            if as_pdf:
-                result["pdf_path"] = path
+        if as_pdf:
+            result["pdf_path"] = path
 
     if depth > 1:
         recursive_docs = []
