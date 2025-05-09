@@ -41,7 +41,8 @@ Think step-by-step.
     '0' is typically more oval than 'O'
     '8' has a more angular top than 'B'
 {custom_instructions}
-- Return only the correct markdown without additional text or explanations. Do not any additional text (such as "```html" or "```markdown") in the output.
+- Return only the correct markdown without additional text or explanations.
+- DO NOT use code blocks such as "```html" or "```markdown" in the output unless there is a code block in the content.
 - Think before generating the output in <thinking></thinking> tags.
 
 Remember, your primary objective is to create an output that, when rendered, structurally replicates the original document's content as closely as possible without losing any textual details.

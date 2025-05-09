@@ -71,6 +71,7 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
 
 
 def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
+    logger.debug(f"Parsing with Gemini API and model {kwargs['model']}")
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("GOOGLE_API_KEY environment variable is not set")
@@ -107,7 +108,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
             }
         ],
         "generationConfig": {
-            "temperature": kwargs.get("temperature", 0.7),
+            "temperature": kwargs.get("temperature", 0.2),
         },
     }
 
@@ -129,7 +130,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
 
     combined_text = ""
     if "<output>" in raw_text:
-        combined_text = raw_text.split("<output>")[1].strip()
+        combined_text = raw_text.split("<output>")[-1].strip()
     if "</output>" in result:
         combined_text = result.split("</output>")[0].strip()
 
@@ -266,7 +267,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             "model": kwargs["model"],
             "messages": messages,
             "max_tokens": kwargs.get("max_tokens", 1024),
-            "temperature": kwargs.get("temperature", 0.7),
+            "temperature": kwargs.get("temperature", 0.2),
         }
 
         # Get completion from selected API
@@ -281,7 +282,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
         # Extract content between output tags if present
         result = page_text
         if "<output>" in page_text:
-            result = page_text.split("<output>")[1].strip()
+            result = page_text.split("<output>")[-1].strip()
         if "</output>" in result:
             result = result.split("</output>")[0].strip()
         all_results.append(

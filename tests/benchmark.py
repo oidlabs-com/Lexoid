@@ -1,11 +1,12 @@
-from glob import glob
 import os
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
-from statistics import mean, stdev
+from glob import glob
 from pathlib import Path
+from statistics import mean, stdev
+from typing import Dict, List, Optional, Tuple
 
+import pandas as pd
 from dotenv import load_dotenv
 
 from lexoid.api import parse
@@ -63,7 +64,6 @@ def run_benchmark_config(
     for _ in range(iterations):
         try:
             start_time = time.time()
-            config["api_cost_mapping"] = "tests/api_cost_mapping.json"
             config["parser_type"] = config.get(
                 "parser_type",
                 (
@@ -72,7 +72,12 @@ def run_benchmark_config(
                     else ("STATIC_PARSE" if "framework" in config else "AUTO")
                 ),
             )
-            result = parse(input_path, **config)
+            result = parse(
+                input_path,
+                pages_per_split=1,
+                api_cost_mapping="tests/api_cost_mapping.json",
+                **config,
+            )
             execution_time = time.time() - start_time
 
             if output_save_dir:
@@ -84,7 +89,7 @@ def run_benchmark_config(
                             for key, value in config.items()
                         ]
                     )
-                    + ".md"
+                    + f"{int(start_time)}.md"
                 )
                 with open(os.path.join(output_save_dir, filename), "w") as fp:
                     fp.write(result["raw"])
@@ -151,35 +156,38 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     config_options = {
         "parser_type": ["LLM_PARSE", "STATIC_PARSE", "AUTO"],
         "model": [
-            # Google models
-            "gemini-2.0-pro-exp",
+            # # Google models
+            "gemini-2.5-flash-preview-04-17",
+            # "gemini-2.5-pro-preview-03-25",
+            # "gemini-2.0-pro-exp",
             "gemini-2.0-flash",
-            "gemini-2.0-flash-thinking-exp",
-            "gemini-2.0-flash-001",
-            "gemini-1.5-flash-8b",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
-            # OpenAI models
+            # "gemini-2.0-flash-thinking-exp",
+            # "gemini-2.0-flash-001",
+            # "gemini-1.5-flash-8b",
+            # "gemini-1.5-flash",
+            # "gemini-1.5-pro",
+            # # OpenAI models
             "gpt-4o",
             "gpt-4o-mini",
-            # Meta-LLAMA models through HF Hub
-            "meta-llama/Llama-3.2-11B-Vision-Instruct",
-            # Meta-LLAMA models through Together AI
-            "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+            # # Meta-LLAMA models through HF Hub
+            # "meta-llama/Llama-3.2-11B-Vision-Instruct",
+            # # Meta-LLAMA models through Together AI
+            # "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
             "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
-            "meta-llama/Llama-Vision-Free",
-            # Model through OpenRouter
+            # "meta-llama/Llama-Vision-Free",
+            # # Model through OpenRouter
             "google/gemma-3-27b-it",
             "qwen/qwen-2.5-vl-7b-instruct",
-            "microsoft/phi-4-multimodal-instruct",
-            # Model through fireworks
+            # "microsoft/phi-4-multimodal-instruct",
+            # # Model through fireworks
             "accounts/fireworks/models/llama4-maverick-instruct-basic",
-            "accounts/fireworks/models/llama4-scout-instruct-basic",
+            # "accounts/fireworks/models/llama4-scout-instruct-basic",
         ],
         "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
         "max_threads": [1, 2, 4, 8],
         "as_pdf": [True, False],
+        "temperature": [0.2, 0.7],
     }
 
     # Only test as_pdf if input is not a PDF
@@ -192,7 +200,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     for attr in test_attributes:
         new_configs = []
         for config in configs:
-            if attr == "parser_type":
+            if attr == "parser_type" or attr == "temperature":
                 for value in config_options[attr]:
                     new_config = config.copy()
                     new_config[attr] = value
@@ -226,19 +234,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
                 new_configs.append(config)
         configs = new_configs
 
-    # Filter out invalid combinations
-    valid_configs = []
-    for config in configs:
-        if config.get("parser_type") == "LLM_PARSE":
-            if "framework" not in config and "model" in config:
-                valid_configs.append(config)
-        elif config.get("parser_type") == "STATIC_PARSE":
-            if "model" not in config and "framework" in config:
-                valid_configs.append(config)
-        else:
-            valid_configs.append(config)
-
-    return valid_configs
+    return configs
 
 
 def format_results(results: List[BenchmarkResult], test_attributes: List[str]) -> str:
@@ -304,6 +300,7 @@ def run_benchmarks(
         f"Running {total_configs} configurations across {total_files} file(s) for {iterations} iterations..."
     )
 
+    all_results = []
     for i, config in enumerate(configs, 1):
         print(f"Progress: {i}/{total_configs} - Testing config: {config}")
 
@@ -317,14 +314,53 @@ def run_benchmarks(
                 input_file, ground_truth, config, benchmark_output_dir, iterations
             )
             file_results.append(result)
+            all_results.append((input_file, result))
 
-        # Aggregate results if multiple files
-        if len(file_results) > 1:
-            result = aggregate_results(file_results)
-        else:
-            result = file_results[0]
+        result = aggregate_results(file_results)
 
         results.append(result)
+
+        # Format and save results
+        save_format = "csv"
+        if save_format == "markdown":
+            markdown_report = format_results(results, test_attributes)
+            result_path = os.path.join(benchmark_output_dir, "results.md")
+            with open(result_path, "w", encoding="utf-8") as f:
+                f.write(markdown_report)
+        elif save_format == "csv":
+            df = pd.DataFrame(
+                [
+                    {
+                        "Model": result.config.get("model", "-"),
+                        "Mean Similarity": result.similarity[0],
+                        "Std. Dev.": result.similarity[1],
+                        "Time (s)": result.execution_time[0],
+                        "Cost($)": result.cost[0],
+                    }
+                    for result in results
+                ]
+            )
+            result_path = os.path.join(benchmark_output_dir, "results.csv")
+            df.to_csv(result_path, index=False)
+
+        print(f"\nBenchmark complete! Results saved to {result_path}")
+
+    # Save document-wise results to CSV
+    doc_results = []
+    for input_file, result in all_results:
+        doc_result = {
+            "Input File": os.path.basename(input_file),
+            "Mean Similarity": result.similarity[0],
+            "Time (s)": result.execution_time[0],
+            "Cost($)": result.cost[0],
+        }
+        for key, value in result.config.items():
+            doc_result[key] = value
+        doc_results.append(doc_result)
+    doc_df = pd.DataFrame(doc_results)
+    doc_result_path = os.path.join(benchmark_output_dir, "document_results.csv")
+    doc_df.to_csv(doc_result_path, index=False)
+    print(f"Document-wise results saved to {doc_result_path}")
 
     return results
 
@@ -335,7 +371,6 @@ def main():
     output_dir = "examples/outputs"
 
     benchmark_output_dir = f"tests/outputs/benchmark_{int(time.time())}/"
-    result_path = os.path.join(benchmark_output_dir, "results.md")
     os.makedirs(benchmark_output_dir, exist_ok=True)
 
     # Specify which attributes to test
@@ -346,6 +381,7 @@ def main():
         # "pages_per_split",
         # "max_threads",
         # "as_pdf",
+        # "temperature",
     ]
 
     # Number of iterations for each benchmark
@@ -354,15 +390,6 @@ def main():
     results = run_benchmarks(
         input_path, output_dir, test_attributes, benchmark_output_dir, iterations
     )
-    if not results:
-        return
-
-    # Format and save results
-    markdown_report = format_results(results, test_attributes)
-    with open(result_path, "w", encoding="utf-8") as f:
-        f.write(markdown_report)
-
-    print(f"\nBenchmark complete! Results saved to {result_path}")
 
     # Print top 3 configurations
     top_results = sorted(results, key=lambda x: x.similarity[0], reverse=True)[:3]
