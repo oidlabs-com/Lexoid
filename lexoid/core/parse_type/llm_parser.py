@@ -212,7 +212,7 @@ def get_messages(
     return messages
 
 
-def call_api(
+def create_response(
     api: str,
     model: str,
     system_prompt: Optional[str] = None,
@@ -308,7 +308,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             system_prompt = kwargs.get("system_prompt", None)
             user_prompt = kwargs.get("user_prompt", LLAMA_PARSER_PROMPT)
 
-        response = call_api(
+        response = create_response(
             api=api,
             model=kwargs["model"],
             system_prompt=system_prompt,
