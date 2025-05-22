@@ -3,23 +3,24 @@ import io
 import mimetypes
 import os
 import time
+from functools import wraps
+from typing import Dict, List, Optional
+
 import pypdfium2 as pdfium
 import requests
-from functools import wraps
+from huggingface_hub import InferenceClient
+from loguru import logger
+from openai import OpenAI
 from requests.exceptions import HTTPError
-from typing import Dict, List
+from together import Together
 
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
+    LLAMA_PARSER_PROMPT,
     OPENAI_USER_PROMPT,
     PARSER_PROMPT,
-    LLAMA_PARSER_PROMPT,
 )
 from lexoid.core.utils import convert_image_to_pdf
-from loguru import logger
-from openai import OpenAI
-from together import Together
-from huggingface_hub import InferenceClient
 
 
 def retry_on_http_error(func):
@@ -172,18 +173,54 @@ def convert_pdf_page_to_base64(
     return base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
 
-def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
-    """
-    Parse documents (PDFs or images) using various vision model APIs.
+def get_messages(
+    system_prompt: Optional[str], user_prompt: Optional[str], image_url: Optional[str]
+) -> List[Dict]:
+    messages = []
+    if system_prompt:
+        messages.append(
+            {
+                "role": "system",
+                "content": system_prompt,
+            }
+        )
+    base_message = (
+        [
+            {"type": "text", "text": user_prompt},
+        ]
+        if user_prompt
+        else []
+    )
+    image_message = (
+        [
+            {
+                "type": "image_url",
+                "image_url": {"url": image_url},
+            }
+        ]
+        if image_url
+        else []
+    )
 
-    Args:
-        path (str): Path to the document to parse
-        api (str): Which API to use ("openai", "huggingface", or "together")
-        **kwargs: Additional arguments including model, temperature, title, etc.
+    messages.append(
+        {
+            "role": "user",
+            "content": base_message + image_message,
+        }
+    )
 
-    Returns:
-        Dict: Dictionary containing parsed document data
-    """
+    return messages
+
+
+def create_response(
+    api: str,
+    model: str,
+    system_prompt: Optional[str] = None,
+    user_prompt: Optional[str] = None,
+    image_url: Optional[str] = None,
+    temperature: float = 0.2,
+    max_tokens: int = 1024,
+) -> Dict:
     # Initialize appropriate client
     clients = {
         "openai": lambda: OpenAI(),
@@ -201,8 +238,45 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
         ),
     }
     assert api in clients, f"Unsupported API: {api}"
-    logger.debug(f"Parsing with {api} API and model {kwargs['model']}")
     client = clients[api]()
+
+    # Prepare messages for the API call
+    messages = get_messages(system_prompt, user_prompt, image_url)
+
+    # Common completion parameters
+    completion_params = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+
+    # Get completion from selected API
+    response = client.chat.completions.create(**completion_params)
+    token_usage = response.usage
+
+    # Extract the response text
+    page_text = response.choices[0].message.content
+
+    return {
+        "response": page_text,
+        "usage": token_usage,
+    }
+
+
+def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
+    """
+    Parse documents (PDFs or images) using various vision model APIs.
+
+    Args:
+        path (str): Path to the document to parse
+        api (str): Which API to use ("openai", "huggingface", or "together")
+        **kwargs: Additional arguments including model, temperature, title, etc.
+
+    Returns:
+        Dict: Dictionary containing parsed document data
+    """
+    logger.debug(f"Parsing with {api} API and model {kwargs['model']}")
 
     # Handle different input types
     mime_type, _ = mimetypes.guess_type(path)
@@ -222,60 +296,32 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             for page_num in range(len(pdf_document))
         ]
 
-    # API-specific message formatting
-    def get_messages(page_num: int, image_url: str) -> List[Dict]:
-        image_message = {
-            "type": "image_url",
-            "image_url": {"url": image_url},
-        }
-
+    # Process each page/image
+    all_results = []
+    for page_num, image_url in images:
         if api == "openai":
             system_prompt = kwargs.get(
                 "system_prompt", PARSER_PROMPT.format(custom_instructions="")
             )
             user_prompt = kwargs.get("user_prompt", OPENAI_USER_PROMPT)
-            return [
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": user_prompt},
-                        image_message,
-                    ],
-                },
-            ]
         else:
-            prompt = kwargs.get("system_prompt", LLAMA_PARSER_PROMPT)
-            base_message = {"type": "text", "text": prompt}
-            return [
-                {
-                    "role": "user",
-                    "content": [base_message, image_message],
-                }
-            ]
+            system_prompt = kwargs.get("system_prompt", None)
+            user_prompt = kwargs.get("user_prompt", LLAMA_PARSER_PROMPT)
 
-    # Process each page/image
-    all_results = []
-    for page_num, image_url in images:
-        messages = get_messages(page_num, image_url)
-
-        # Common completion parameters
-        completion_params = {
-            "model": kwargs["model"],
-            "messages": messages,
-            "max_tokens": kwargs.get("max_tokens", 1024),
-            "temperature": kwargs.get("temperature", 0.2),
-        }
+        response = create_response(
+            api=api,
+            model=kwargs["model"],
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            image_url=image_url,
+            temperature=kwargs.get("temperature", 0.2),
+            max_tokens=kwargs.get("max_tokens", 1024),
+        )
 
         # Get completion from selected API
-        response = client.chat.completions.create(**completion_params)
-        token_usage = response.usage
+        page_text = response["response"]
+        token_usage = response["usage"]
 
-        # Extract the response text
-        page_text = response.choices[0].message.content
         if kwargs.get("verbose", None):
             logger.debug(f"Page {page_num + 1} response: {page_text}")
 
