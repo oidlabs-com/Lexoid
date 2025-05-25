@@ -1,3 +1,4 @@
+from PIL import Image
 import base64
 import io
 import mimetypes
@@ -13,6 +14,8 @@ from loguru import logger
 from openai import OpenAI
 from requests.exceptions import HTTPError
 from together import Together
+import torch
+from transformers import AutoProcessor, AutoModelForImageTextToText
 
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
@@ -68,7 +71,64 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
         return parse_with_api(path, api="openrouter", **kwargs)
     if model.startswith("accounts/fireworks"):
         return parse_with_api(path, api="fireworks", **kwargs)
+    if "smoldocling" in model.lower():
+        return parse_with_local_model(path, **kwargs)
     raise ValueError(f"Unsupported model: {model}")
+
+
+def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
+    model_name = kwargs.get("model", "ds4sd/SmolDocling-256M-preview")
+    processor = AutoProcessor.from_pretrained(model_name)
+    model = AutoModelForImageTextToText.from_pretrained(model_name)
+    image = Image.open(path)
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": "Convert this page to docling."},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "<output>\n"},
+            ],
+        },
+    ]
+    prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+    inputs = processor(text=prompt, images=[image], return_tensors="pt")
+    with torch.no_grad():  # Add this to save memory
+        generated_ids = model.generate(
+            **inputs,
+            max_new_tokens=1500,  # Increased for better results
+            do_sample=False,  # Deterministic generation
+            num_beams=1,  # Simple beam search
+            temperature=1.0,  # No temperature scaling
+        )
+
+    prompt_length = inputs.input_ids.shape[1]
+    trimmed_generated_ids = generated_ids[:, prompt_length:]
+    output = (
+        processor.batch_decode(
+            trimmed_generated_ids,
+            skip_special_tokens=False,
+        )[0]
+        .strip()
+        .replace("<end_of_utterance>", "")
+    )
+    return {
+        "raw": output,
+        "segments": [
+            {
+                "metadata": {"page": kwargs.get("start", 0) + 1},
+                "content": output,
+            }
+        ],
+        "title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+    }
 
 
 def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
@@ -156,6 +216,27 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
             "total": total_tokens,
         },
     }
+
+
+def convert_path_to_images(path):
+    mime_type, _ = mimetypes.guess_type(path)
+    if mime_type and mime_type.startswith("image"):
+        # Single image processing
+        with open(path, "rb") as img_file:
+            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+            return [(0, f"data:{mime_type};base64,{image_base64}")]
+    elif mime_type and mime_type.startswith("application/pdf"):
+        # PDF processing
+        pdf_document = pdfium.PdfDocument(path)
+        return [
+            (
+                page_num,
+                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
+            )
+            for page_num in range(len(pdf_document))
+        ]
+    else:
+        raise ValueError(f"Unsupported file type: {mime_type}")
 
 
 def convert_pdf_page_to_base64(
@@ -295,6 +376,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             )
             for page_num in range(len(pdf_document))
         ]
+    images = convert_path_to_images(path)
 
     # Process each page/image
     all_results = []
