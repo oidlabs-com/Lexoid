@@ -4,7 +4,7 @@ import mimetypes
 import os
 import time
 from functools import wraps
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pypdfium2 as pdfium
 import requests
@@ -372,3 +372,23 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             "total": sum(total_tokens for _, _, _, _, total_tokens in all_results),
         },
     }
+
+
+def pdf_to_base64_images(path: str) -> List[Tuple[int, str]]:
+    """
+    Converts a PDF file to a base64 encoded string.
+
+    Args:
+        path (str): Path to the PDF file.
+
+    Returns:
+        str: Base64 encoded string of the PDF content.
+    """
+    pdf_document = pdfium.PdfDocument(path)
+    return [
+        (
+            page_num,
+            f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
+        )
+        for page_num in range(len(pdf_document))
+    ]

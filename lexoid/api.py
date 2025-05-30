@@ -10,7 +10,11 @@ from typing import Union, Dict, List
 
 from loguru import logger
 
-from lexoid.core.parse_type.llm_parser import parse_llm_doc
+from lexoid.core.parse_type.llm_parser import (
+    parse_llm_doc,
+    create_response,
+    pdf_to_base64_images,
+)
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
     convert_to_pdf,
@@ -175,9 +179,9 @@ def parse(
             else:
                 return recursive_read_html(path, depth)
 
-        assert is_supported_file_type(
-            path
-        ), f"Unsupported file type {os.path.splitext(path)[1]}"
+        assert is_supported_file_type(path), (
+            f"Unsupported file type {os.path.splitext(path)[1]}"
+        )
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
@@ -293,3 +297,45 @@ def parse(
         result["recursive_docs"] = recursive_docs
 
     return result
+
+
+def parse_from_json(path: str, json_data: Union[str, Dict], **kwargs) -> Dict:
+    """
+    Parses a document from JSON data.
+
+    Args:
+        json_data (Union[str, Dict]): JSON string or dictionary containing document data.
+        **kwargs: Additional arguments for the parser.
+
+    Returns:
+        Dict: Dictionary containing parsed document data
+    """
+    json_data.dump()
+    system_prompt = f"""
+            The output should be formatted as a JSON instance that conforms to the JSON schema below.
+            
+            As an example, for the schema {"properties": {"foo": {"title": "Foo", "description": "a list of strings", "type": "array", "items": {"type": "string"}}}, "required": ["foo"]}
+            the object {"foo": ["bar", "baz"]} is a well-formatted instance of the schema. The object {"properties": {"foo": ["bar", "baz"]}} is not well-formatted.
+            
+            Here is the output schema:
+            {json.dumps(json_data)}
+"""
+    user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
+
+    responses = []
+    images = pdf_to_base64_images(path)
+    for i, (page_num, image) in enumerate(images):
+        resp_dict = create_response(
+            api="openai",
+            model="gpt-4o",
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            image_url=image,
+        )
+
+        response = resp_dict.get("response", "")
+
+        new_dict = json.loads(response)
+        responses.append(new_dict)
+
+    return responses
