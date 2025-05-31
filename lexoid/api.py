@@ -310,16 +310,25 @@ def parse_from_json(path: str, json_data: Union[str, Dict], **kwargs) -> Dict:
     Returns:
         Dict: Dictionary containing parsed document data
     """
-    json_data.dump()
     system_prompt = f"""
-            The output should be formatted as a JSON instance that conforms to the JSON schema below.
-            
-            As an example, for the schema {"properties": {"foo": {"title": "Foo", "description": "a list of strings", "type": "array", "items": {"type": "string"}}}, "required": ["foo"]}
-            the object {"foo": ["bar", "baz"]} is a well-formatted instance of the schema. The object {"properties": {"foo": ["bar", "baz"]}} is not well-formatted.
-            
-            Here is the output schema:
-            {json.dumps(json_data)}
-"""
+        The output should be formatted as a JSON instance that conforms to the JSON schema below.
+
+        As an example, for the schema {{
+        "properties": {{
+            "foo": {{
+            "title": "Foo",
+            "description": "a list of strings",
+            "type": "array",
+            "items": {{"type": "string"}}
+            }}
+        }},
+        "required": ["foo"]
+        }}, the object {{"foo": ["bar", "baz"]}} is valid. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not.
+
+        Here is the output schema:
+        {json.dumps(json_data, indent=2)}
+
+        """
     user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
 
     responses = []
