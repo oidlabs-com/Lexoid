@@ -299,8 +299,8 @@ def parse(
     return result
 
 
-def parse_from_json(
-    path: str, json_data: Union[str, Dict], api="openai", model="o4-mini"
+def parse_with_schema(
+    path: str, schema: Union[str, Dict], api="openai", model="o4-mini"
 ) -> Dict:
     """
     Parses a document from JSON data.
@@ -328,7 +328,7 @@ def parse_from_json(
         }}, the object {{"foo": ["bar", "baz"]}} is valid. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not.
 
         Here is the output schema:
-        {json.dumps(json_data, indent=2)}
+        {json.dumps(schema, indent=2)}
 
         """
     user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
