@@ -247,7 +247,7 @@ def create_response(
     completion_params = {
         "model": model,
         "messages": messages,
-        "max_tokens": max_tokens,
+        # "max_tokens": max_tokens, # max_tokens is deprecated
         "temperature": temperature,
     }
 

@@ -299,7 +299,9 @@ def parse(
     return result
 
 
-def parse_from_json(path: str, json_data: Union[str, Dict], **kwargs) -> Dict:
+def parse_from_json(
+    path: str, json_data: Union[str, Dict], api="openai", model="o4-mini"
+) -> Dict:
     """
     Parses a document from JSON data.
 
@@ -335,15 +337,16 @@ def parse_from_json(path: str, json_data: Union[str, Dict], **kwargs) -> Dict:
     images = pdf_to_base64_images(path)
     for i, (page_num, image) in enumerate(images):
         resp_dict = create_response(
-            api="openai",
-            model="gpt-4o",
+            api=api,
+            model=model,
             user_prompt=user_prompt,
             system_prompt=system_prompt,
             image_url=image,
+            temperature=0,
         )
 
         response = resp_dict.get("response", "")
-
+        print(f"Processing page {page_num + 1} with response: {response}")
         new_dict = json.loads(response)
         responses.append(new_dict)
 
