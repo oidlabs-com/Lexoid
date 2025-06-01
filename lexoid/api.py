@@ -300,17 +300,22 @@ def parse(
 
 
 def parse_with_schema(
-    path: str, schema: Union[str, Dict], api="openai", model="o4-mini"
+    path: str,
+    schema: Union[str, Dict],
+    api="openai",
+    model="o4-mini",
 ) -> Dict:
     """
-    Parses a document from JSON data.
+    Parses a PDF using an LLM to generate structured output conforming to a given JSON schema.
 
     Args:
-        json_data (Union[str, Dict]): JSON string or dictionary containing document data.
-        **kwargs: Additional arguments for the parser.
+        path (str): Path to the PDF file.
+        schema (Union[str, Dict]): JSON schema (as dict or string) to which the parsed output should conform.
+        api (str, optional): LLM API provider.
+        model (str, optional): LLM model name.
 
     Returns:
-        Dict: Dictionary containing parsed document data
+        Dict: A list of JSON-conforming dictionaries parsed from each page of the PDF.
     """
     system_prompt = f"""
         The output should be formatted as a JSON instance that conforms to the JSON schema below.
@@ -342,7 +347,7 @@ def parse_with_schema(
             user_prompt=user_prompt,
             system_prompt=system_prompt,
             image_url=image,
-            temperature=0,
+            temperature=0,  # GPT mini models does not support temperature
         )
 
         response = resp_dict.get("response", "")
