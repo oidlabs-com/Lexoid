@@ -247,7 +247,7 @@ def create_response(
     completion_params = {
         "model": model,
         "messages": messages,
-        # "max_tokens": max_tokens, # max_tokens is deprecated
+        "max_tokens": max_tokens,
         "temperature": temperature,
     }
 
@@ -374,9 +374,9 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
     }
 
 
-def pdf_to_base64_images(path: str) -> List[Tuple[int, str]]:
+def convert_doc_to_base64_images(path: str) -> List[Tuple[int, str]]:
     """
-    Converts a PDF file to a base64 encoded string.
+    Converts a document (PDF or image) to a base64 encoded string.
 
     Args:
         path (str): Path to the PDF file.
@@ -384,11 +384,16 @@ def pdf_to_base64_images(path: str) -> List[Tuple[int, str]]:
     Returns:
         str: Base64 encoded string of the PDF content.
     """
-    pdf_document = pdfium.PdfDocument(path)
-    return [
-        (
-            page_num,
-            f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
-        )
-        for page_num in range(len(pdf_document))
-    ]
+    if path.endswith(".pdf"):
+        pdf_document = pdfium.PdfDocument(path)
+        return [
+            (
+                page_num,
+                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
+            )
+            for page_num in range(len(pdf_document))
+        ]
+    elif mimetypes.guess_type(path)[0].startswith("image"):
+        with open(path, "rb") as img_file:
+            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+            return [(0, f"data:image/png;base64,{image_base64}")]
