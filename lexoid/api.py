@@ -10,7 +10,11 @@ from typing import Union, Dict, List
 
 from loguru import logger
 
-from lexoid.core.parse_type.llm_parser import parse_llm_doc
+from lexoid.core.parse_type.llm_parser import (
+    parse_llm_doc,
+    create_response,
+    convert_doc_to_base64_images,
+)
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
     convert_to_pdf,
@@ -293,3 +297,63 @@ def parse(
         result["recursive_docs"] = recursive_docs
 
     return result
+
+
+def parse_with_schema(
+    path: str, schema: Dict, api: str = "openai", model: str = "gpt-4o-mini", **kwargs
+) -> List[List[Dict]]:
+    """
+    Parses a PDF using an LLM to generate structured output conforming to a given JSON schema.
+
+    Args:
+        path (str): Path to the PDF file.
+        schema (Dict): JSON schema to which the parsed output should conform.
+        api (str, optional): LLM API provider.
+        model (str, optional): LLM model name.
+        **kwargs: Additional arguments for the parser.
+
+    Returns:
+        List[List[Dict]]: List of dictionaries for each page, each conforming to the provided schema.
+    """
+    system_prompt = f"""
+        The output should be formatted as a JSON instance that conforms to the JSON schema below.
+
+        As an example, for the schema {{
+        "properties": {{
+            "foo": {{
+            "title": "Foo",
+            "description": "a list of strings",
+            "type": "array",
+            "items": {{"type": "string"}}
+            }}
+        }},
+        "required": ["foo"]
+        }}, the object {{"foo": ["bar", "baz"]}} is valid. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not.
+
+        Here is the output schema:
+        {json.dumps(schema, indent=2)}
+
+        """
+
+    user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
+
+    responses = []
+    images = convert_doc_to_base64_images(path)
+    for i, (page_num, image) in enumerate(images):
+        resp_dict = create_response(
+            api=api,
+            model=model,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            image_url=image,
+            temperature=kwargs.get("temperature", 0.0),
+            max_tokens=kwargs.get("max_tokens", 1024),
+        )
+
+        response = resp_dict.get("response", "")
+        response = response.split("```json")[-1].split("```")[0].strip()
+        logger.debug(f"Processing page {page_num + 1} with response: {response}")
+        new_dict = json.loads(response)
+        responses.append(new_dict)
+
+    return responses
