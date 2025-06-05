@@ -33,7 +33,7 @@ parse
    * ``api_cost_mapping`` (Union[dict, str]): Dictionary containing API cost details or the string path to a JSON file containing
      the cost details. Sample file available at ``tests/api_cost_mapping.json``
    * ``router_priority`` (str): What the routing strategy should prioritize. Options are ``"speed"`` and ``"accuracy"``. The router directs a file to either ``"STATIC_PARSE"`` or ``"LLM_PARSE"`` based on its type and the selected priority. If priority is "accuracy", it prefers LLM_PARSE unless the PDF has no images but contains embedded/hidden hyperlinks, in which case it uses ``STATIC_PARSE`` (because LLMs currently fail to parse hidden hyperlinks). If priority is "speed", it uses ``STATIC_PARSE`` for documents without images and ``LLM_PARSE`` for documents with images.
-   * ``api_provider`` (str): The API provider to use for LLM parsing. Options are ``openai``, ``huggingface``, ``togetherai``, ``openrouter``, and ``fireworks``. This parameter is only relevant when using LLM parsing.
+   * ``api_provider`` (str): The API provider to use for LLM parsing. Options are ``openai``, ``huggingface``, ``together``, ``openrouter``, and ``fireworks``. This parameter is only relevant when using LLM parsing.
 
    Return value format:
    A dictionary containing a subset or all of the following keys:
@@ -46,6 +46,30 @@ parse
    * ``recursive_docs``: List of dictionaries for recursively parsed documents
    * ``token_usage``: Token usage statistics
    * ``pdf_path``: Path to the intermediate PDF generated when ``as_pdf`` is enabled and the kwarg ``save_dir`` is specified.
+
+
+parse_with_schema
+^^^^^^^^^^^^^^^^^
+
+.. py:function:: lexoid.api.parse_with_schema(path: str, schema: Dict, api: str = "openai", model: str = "gpt-4o-mini", **kwargs) -> List[List[Dict]]
+
+   Parses a PDF using an LLM to generate structured output conforming to a given JSON schema.
+
+   :param path: Path to the PDF file.
+   :param schema: JSON schema to which the parsed output should conform.
+   :param api: LLM API provider to use (``"openai"``, ``"huggingface"``, ``"together"``, ``"openrouter"``, or ``"fireworks"``).
+   :param model: LLM model name.
+   :param kwargs: Additional keyword arguments passed to the LLM (e.g., ``temperature``, ``max_tokens``).
+   :return: A list where each element represents a page, which in turn contains a list of dictionaries conforming to the provided schema.
+
+   Additional keyword arguments:
+
+   * ``temperature`` (float): Sampling temperature for LLM generation.
+   * ``max_tokens`` (int): Maximum number of tokens to generate.
+
+   Return value format:
+   A list of pages, where each page is represented as a list of dictionaries. Each dictionary conforms to the structure defined by the input ``schema``.
+
 
 Examples
 --------
@@ -91,6 +115,28 @@ Static Parsing
 
     # Parse using PDFMiner
     result = parse("document.pdf", parser_type="STATIC_PARSE", model="pdfminer")
+
+
+Parse with Schema
+^^^^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+    from lexoid.api import parse_with_schema
+
+    sample_schema = [
+        {
+            "Disability Category": "string",
+            "Participants": "int",
+            "Ballots Completed": "int",
+            "Ballots Incomplete/Terminated": "int",
+            "Accuracy": ["string"],
+            "Time to complete": ["string"]
+        }
+    ]
+
+    pdf_path = "inputs/test_1.pdf"
+    result = parse_with_schema(path=pdf_path, schema=sample_schema, model="gpt-4o") 
 
 Web Content
 ^^^^^^^^^^^

@@ -308,9 +308,9 @@ def parse_with_schema(
     Args:
         path (str): Path to the PDF file.
         schema (Dict): JSON schema to which the parsed output should conform.
-        api (str, optional): LLM API provider.
+        api (str, optional): LLM API provider (One of "openai", "huggingface", "together", "openrouter", and "fireworks").
         model (str, optional): LLM model name.
-        **kwargs: Additional arguments for the parser.
+        **kwargs: Additional arguments for the parser (e.g.: temperature, max_tokens).
 
     Returns:
         List[List[Dict]]: List of dictionaries for each page, each conforming to the provided schema.
