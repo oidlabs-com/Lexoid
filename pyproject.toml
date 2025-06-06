@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.8"
+version = "0.1.14"
 description = ""
 authors = []
 readme = "README.md"
@@ -27,6 +27,9 @@ nest-asyncio ="^1.6.0"
 pyqt5 = {version = "^5.15.11", markers = "platform_system != 'debian'"}
 pyqtwebengine = {version = "^5.15.7", markers = "platform_system != 'debian'"}
 huggingface-hub = "^0.27.0"
+together = "^1.4.0"
+openpyxl = "^3.1.5"
+pptx2md = "^2.0.6"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
@@ -37,6 +40,7 @@ pytest = "^8.3.2"
 [tool.poetry.group.docs.dependencies]
 sphinx = "^8.1.3"
 pydata-sphinx-theme = "^0.16.1"
+docutils = "^0.21.2"
 
 [build-system]
 requires = ["poetry-core", "wheel"]

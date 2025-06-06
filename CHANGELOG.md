@@ -80,7 +80,85 @@
 ## [0.1.8] - 2025-01-23
 
 ### Added
-* Rretry and error handling for LLM_PARSE
+* Retry and error handling for LLM_PARSE
 
 ### Changed
 * Remove together Python client dependency and use REST API calls instead
+
+## [0.1.8.post1] - 2025-01-28
+
+### Added
+* Documentation
+
+### Changed
+* Specify headers for Playwright web page retrieval
+
+## [0.1.9] - 2025-02-17
+
+### Added
+- Parameters to specify intermediate PDF save path when `as_pdf=True`.
+- Return `token_uage` and `pdf_path` with `parse()` output where applicable
+
+### Changed
+- Switched back to together Python client
+- Improved `parse()` function return format to be a dictionary.
+
+
+## [0.1.10] - 2025-02-23
+
+### Added
+- Parameter to specify page numbers for parsing
+
+### Fixed
+- Errors caused by empty token_usage
+
+## [0.1.11] - 2025-02-27
+
+### Added
+- Priority setting to AUTO routing
+- More models to benchmark
+
+### Changed
+- Set default parse_type to AUTO
+- Set default LLM to Gemini 2.0 Flash
+- Updated benchmark script to aggregate over multiple runs
+
+### Fixed
+- Incorrect title when `as_pdf=True`
+
+
+## [0.1.11.post1] - 2025-03-05
+
+### Added
+- Code of Conduct
+
+### Fixed
+- Segmentation fault when PyQT app is reinitialized
+
+## [0.1.12] - 2025-04-11
+
+### Added
+* Support for OpenRouter models
+* Return token cost when cost mapping is provided
+* Support for custom prompts
+* Support for parsing Excel and PowerPoint files
+
+### Changed
+* Set default `router_priority` to `speed`
+
+## [0.1.13] - 2025-04-20
+
+### Added
+* `STATIC_PARSE` improvements
+    * Horizontal line detection
+    * Strikethrough text detection
+    * Email address formatting
+    * Improved heading level detection
+    * Monospace font detection
+    * Indentation detection
+
+## [0.1.14] - 2025-06-05
+
+### Added
+* Add support for Fireworks API
+* Add support for matching data in document to pre-defined schema or template

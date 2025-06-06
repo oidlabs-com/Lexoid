@@ -1,11 +1,12 @@
-from glob import glob
 import os
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
-from statistics import mean
+from glob import glob
 from pathlib import Path
+from statistics import mean, stdev
+from typing import Dict, List, Optional, Tuple
 
+import pandas as pd
 from dotenv import load_dotenv
 
 from lexoid.api import parse
@@ -17,9 +18,10 @@ load_dotenv()
 @dataclass
 class BenchmarkResult:
     config: Dict
-    similarity: float
-    execution_time: float
-    error: str = None
+    similarity: List[float]  # Store all similarity scores for iterations
+    execution_time: List[float]  # Store all execution times for iterations
+    cost: Optional[List[float]] = None
+    error: Optional[str] = None
 
 
 def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, str]]:
@@ -33,7 +35,7 @@ def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, 
         return []
 
     # Directory mode
-    input_files = glob(os.path.join(input_path, "*"))
+    input_files = sorted(glob(os.path.join(input_path, "*")))
     pairs = []
 
     for input_file in input_files:
@@ -47,38 +49,69 @@ def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, 
 
 
 def run_benchmark_config(
-    input_path: str, ground_truth: str, config: Dict, output_save_dir: str = None
+    input_path: str,
+    ground_truth: str,
+    config: Dict,
+    output_save_dir: str = None,
+    iterations: int = 1,
 ) -> BenchmarkResult:
-    """Run a single benchmark configuration."""
-    try:
-        start_time = time.time()
-        result = parse(input_path, raw=True, **config)
-        execution_time = time.time() - start_time
+    """Run a single benchmark configuration for a specified number of iterations."""
+    similarities = []
+    execution_times = []
+    costs = []
+    error = None
 
-        if output_save_dir:
-            filename = (
-                f"{Path(input_path).stem}_"
-                + ", ".join(
-                    [
-                        f"{key}={str(value).replace('/', '_')}"
-                        for key, value in config.items()
-                    ]
-                )
-                + ".md"
+    for _ in range(iterations):
+        try:
+            start_time = time.time()
+            config["parser_type"] = config.get(
+                "parser_type",
+                (
+                    "LLM_PARSE"
+                    if "model" in config
+                    else ("STATIC_PARSE" if "framework" in config else "AUTO")
+                ),
             )
-            with open(os.path.join(output_save_dir, filename), "w") as fp:
-                fp.write(result)
+            result = parse(
+                input_path,
+                pages_per_split=1,
+                api_cost_mapping="tests/api_cost_mapping.json",
+                **config,
+            )
+            execution_time = time.time() - start_time
 
-        similarity = calculate_similarity(result, ground_truth)
+            if output_save_dir:
+                filename = (
+                    f"{Path(input_path).stem}_"
+                    + ", ".join(
+                        [
+                            f"{key}={str(value).replace('/', '_')}"
+                            for key, value in config.items()
+                        ]
+                    )
+                    + f"{int(start_time)}.md"
+                )
+                with open(os.path.join(output_save_dir, filename), "w") as fp:
+                    fp.write(result["raw"])
 
-        return BenchmarkResult(
-            config=config, similarity=similarity, execution_time=execution_time
-        )
-    except Exception as e:
-        print(f"Error running benchmark for config: {config}\n{e}")
-        return BenchmarkResult(
-            config=config, similarity=0.0, execution_time=0.0, error=str(e)
-        )
+            similarity = calculate_similarity(result["raw"], ground_truth)
+            similarities.append(similarity)
+            execution_times.append(execution_time)
+            costs.append(
+                result["token_cost"]["output"] if "token_cost" in result else 0.0
+            )
+        except Exception as e:
+            print(f"Error running benchmark for config: {config}\n{e}")
+            error = str(e)
+            break  # Stop further iterations if an error occurs
+
+    return BenchmarkResult(
+        config=config,
+        similarity=similarities,
+        execution_time=execution_times,
+        cost=costs,
+        error=error,
+    )
 
 
 def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
@@ -88,8 +121,13 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
 
     valid_results = [r for r in results if r.error is None]
     if valid_results:
-        avg_similarity = mean(r.similarity for r in valid_results)
-        avg_execution_time = mean(r.execution_time for r in valid_results)
+        all_similarities = [s for r in valid_results for s in r.similarity]
+        all_execution_times = [t for r in valid_results for t in r.execution_time]
+        all_costs = [c for r in valid_results for c in r.cost]
+        avg_similarity = mean(all_similarities)
+        std_similarity = stdev(all_similarities) if len(all_similarities) > 1 else 0.0
+        avg_execution_time = mean(all_execution_times)
+        avg_cost = mean(all_costs)
         error = (
             None
             if len(valid_results) == len(results)
@@ -97,13 +135,16 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
         )
     else:
         avg_similarity = 0.0
+        std_similarity = 0.0
         avg_execution_time = 0.0
+        avg_cost = 0.0
         error = f"Failed: {len(results)}/{len(results)}"
 
     return BenchmarkResult(
         config=results[0].config,
-        similarity=avg_similarity,
-        execution_time=avg_execution_time,
+        similarity=[avg_similarity, std_similarity],  # Store mean and std dev
+        execution_time=[avg_execution_time],
+        cost=[avg_cost],
         error=error,
     )
 
@@ -111,30 +152,42 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
 def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[Dict]:
     """
     Generate different configuration combinations to test based on specified attributes.
-
-    Args:
-        input_path (str): Path to input file
-        test_attributes (List[str]): List of attributes to test, can include:
-            'parser_type', 'model', 'framework', 'pages_per_split', 'max_threads', 'as_pdf'
     """
     config_options = {
-        "parser_type": ["LLM_PARSE", "STATIC_PARSE"],
+        "parser_type": ["LLM_PARSE", "STATIC_PARSE", "AUTO"],
         "model": [
-            "gemini-exp-1121",
-            "gemini-2.0-flash-exp",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
+            # # Google models
+            "gemini-2.5-flash-preview-04-17",
+            # "gemini-2.5-pro-preview-03-25",
+            # "gemini-2.0-pro-exp",
+            "gemini-2.0-flash",
+            # "gemini-2.0-flash-thinking-exp",
+            # "gemini-2.0-flash-001",
+            # "gemini-1.5-flash-8b",
+            # "gemini-1.5-flash",
+            # "gemini-1.5-pro",
+            # # OpenAI models
             "gpt-4o",
             "gpt-4o-mini",
-            "meta-llama/Llama-3.2-11B-Vision-Instruct",
-            "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
+            # # Meta-LLAMA models through HF Hub
+            # "meta-llama/Llama-3.2-11B-Vision-Instruct",
+            # # Meta-LLAMA models through Together AI
+            # "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
             "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
-            "meta-llama/Llama-Vision-Free",
+            # "meta-llama/Llama-Vision-Free",
+            # # Model through OpenRouter
+            "google/gemma-3-27b-it",
+            "qwen/qwen-2.5-vl-7b-instruct",
+            # "microsoft/phi-4-multimodal-instruct",
+            # # Model through fireworks
+            "accounts/fireworks/models/llama4-maverick-instruct-basic",
+            # "accounts/fireworks/models/llama4-scout-instruct-basic",
         ],
         "framework": ["pdfminer", "pdfplumber"],
         "pages_per_split": [1, 2, 4, 8],
         "max_threads": [1, 2, 4, 8],
         "as_pdf": [True, False],
+        "temperature": [0.2, 0.7],
     }
 
     # Only test as_pdf if input is not a PDF
@@ -147,7 +200,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     for attr in test_attributes:
         new_configs = []
         for config in configs:
-            if attr == "parser_type":
+            if attr == "parser_type" or attr == "temperature":
                 for value in config_options[attr]:
                     new_config = config.copy()
                     new_config[attr] = value
@@ -181,46 +234,41 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
                 new_configs.append(config)
         configs = new_configs
 
-    # Filter out invalid combinations
-    valid_configs = []
-    for config in configs:
-        if config.get("parser_type") == "LLM_PARSE":
-            if "framework" not in config and "model" in config:
-                valid_configs.append(config)
-        elif config.get("parser_type") == "STATIC_PARSE":
-            if "model" not in config and "framework" in config:
-                valid_configs.append(config)
-        else:
-            valid_configs.append(config)
-
-    return valid_configs
+    return configs
 
 
-def format_results(results: List[BenchmarkResult]) -> str:
-    """Format benchmark results as a markdown table."""
-    sorted_results = sorted(results, key=lambda x: x.similarity, reverse=True)
+def format_results(results: List[BenchmarkResult], test_attributes: List[str]) -> str:
+    """Format benchmark results as a markdown table, including only tested attributes."""
+    sorted_results = sorted(results, key=lambda x: x.similarity[0], reverse=True)
+
+    # Dynamically generate table headers based on test_attributes
+    headers = ["Rank"]
+    for attr in test_attributes:
+        headers.append(attr.replace("_", " ").title())
+    headers.extend(["Mean Similarity", "Std. Dev.", "Time (s)", "Cost ($)", "Error"])
 
     md_lines = [
         "# Parser Benchmark Results\n",
-        "| Rank | Parser Type | Model/Framework | Pages/Split | Threads | PDF Conv. | Similarity | Time (s) | Error |",
-        "|------|-------------|-----------------|-------------|----------|-----------|------------|----------|--------|",
+        "| " + " | ".join(headers) + " |",
+        "|" + "|".join(["---"] * len(headers)) + "|",
     ]
 
     for i, result in enumerate(sorted_results, 1):
         config = result.config
         error_msg = result.error if result.error else "-"
 
-        row = [
-            str(i),
-            config.get("parser_type", "-"),
-            config.get("model", config.get("framework", "-")),
-            str(config.get("pages_per_split", "-")),
-            str(config.get("max_threads", "-")),
-            str(config.get("as_pdf", "-")),
-            f"{result.similarity:.3f}",
-            f"{result.execution_time:.2f}",
-            error_msg,
-        ]
+        row = [str(i)]
+        for attr in test_attributes:
+            row.append(str(config.get(attr, "-")))
+        row.extend(
+            [
+                f"{result.similarity[0]:.3f}",
+                f"{result.similarity[1]:.3f}",
+                f"{result.execution_time[0]:.2f}",
+                f"{result.cost[0]}",
+                error_msg,
+            ]
+        )
         md_lines.append("| " + " | ".join(row) + " |")
 
     return "\n".join(md_lines)
@@ -231,6 +279,7 @@ def run_benchmarks(
     output_dir: str,
     test_attributes: List[str],
     benchmark_output_dir: str,
+    iterations: int = 3,
 ) -> List[BenchmarkResult]:
     """Run all benchmarks for given input(s) and return results."""
     # Get input/output file pairs
@@ -248,29 +297,70 @@ def run_benchmarks(
     total_files = len(file_pairs)
 
     print(
-        f"Running {total_configs} configurations across {total_files} file{'s' if total_files > 1 else ''}..."
+        f"Running {total_configs} configurations across {total_files} file(s) for {iterations} iterations..."
     )
 
+    all_results = []
     for i, config in enumerate(configs, 1):
         print(f"Progress: {i}/{total_configs} - Testing config: {config}")
 
         # Run benchmark for each file
         file_results = []
         for input_file, ground_truth_path in file_pairs:
+            print(f"Running benchmark for file: {input_file}")
             with open(ground_truth_path, "r", encoding="utf-8") as f:
                 ground_truth = f.read()
             result = run_benchmark_config(
-                input_file, ground_truth, config, benchmark_output_dir
+                input_file, ground_truth, config, benchmark_output_dir, iterations
             )
             file_results.append(result)
+            all_results.append((input_file, result))
 
-        # Aggregate results if multiple files
-        if len(file_results) > 1:
-            result = aggregate_results(file_results)
-        else:
-            result = file_results[0]
+        result = aggregate_results(file_results)
 
         results.append(result)
+
+        # Format and save results
+        save_format = "csv"
+        if save_format == "markdown":
+            markdown_report = format_results(results, test_attributes)
+            result_path = os.path.join(benchmark_output_dir, "results.md")
+            with open(result_path, "w", encoding="utf-8") as f:
+                f.write(markdown_report)
+        elif save_format == "csv":
+            df = pd.DataFrame(
+                [
+                    {
+                        "Model": result.config.get("model", "-"),
+                        "Mean Similarity": result.similarity[0],
+                        "Std. Dev.": result.similarity[1],
+                        "Time (s)": result.execution_time[0],
+                        "Cost($)": result.cost[0],
+                    }
+                    for result in results
+                ]
+            )
+            result_path = os.path.join(benchmark_output_dir, "results.csv")
+            df.to_csv(result_path, index=False)
+
+        print(f"\nBenchmark complete! Results saved to {result_path}")
+
+    # Save document-wise results to CSV
+    doc_results = []
+    for input_file, result in all_results:
+        doc_result = {
+            "Input File": os.path.basename(input_file),
+            "Mean Similarity": result.similarity[0],
+            "Time (s)": result.execution_time[0],
+            "Cost($)": result.cost[0],
+        }
+        for key, value in result.config.items():
+            doc_result[key] = value
+        doc_results.append(doc_result)
+    doc_df = pd.DataFrame(doc_results)
+    doc_result_path = os.path.join(benchmark_output_dir, "document_results.csv")
+    doc_df.to_csv(doc_result_path, index=False)
+    print(f"Document-wise results saved to {doc_result_path}")
 
     return results
 
@@ -281,7 +371,6 @@ def main():
     output_dir = "examples/outputs"
 
     benchmark_output_dir = f"tests/outputs/benchmark_{int(time.time())}/"
-    result_path = os.path.join(benchmark_output_dir, "results.md")
     os.makedirs(benchmark_output_dir, exist_ok=True)
 
     # Specify which attributes to test
@@ -292,27 +381,22 @@ def main():
         # "pages_per_split",
         # "max_threads",
         # "as_pdf",
+        # "temperature",
     ]
 
+    # Number of iterations for each benchmark
+    iterations = 5
+
     results = run_benchmarks(
-        input_path, output_dir, test_attributes, benchmark_output_dir
+        input_path, output_dir, test_attributes, benchmark_output_dir, iterations
     )
-    if not results:
-        return
-
-    # Format and save results
-    markdown_report = format_results(results)
-    with open(result_path, "w", encoding="utf-8") as f:
-        f.write(markdown_report)
-
-    print(f"\nBenchmark complete! Results saved to {result_path}")
 
     # Print top 3 configurations
-    top_results = sorted(results, key=lambda x: x.similarity, reverse=True)[:3]
+    top_results = sorted(results, key=lambda x: x.similarity[0], reverse=True)[:3]
     print("\nTop 3 Configurations:")
     for i, result in enumerate(top_results, 1):
         print(
-            f"{i}. Similarity: {result.similarity:.3f}, Time: {result.execution_time:.2f}s"
+            f"{i}. Similarity: {result.similarity[0]:.3f} (±{result.similarity[1]:.3f}), Time: {result.execution_time[0]:.2f}s"
         )
         print(f"   Config: {result.config}")
 

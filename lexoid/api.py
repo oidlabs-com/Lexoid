@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import tempfile
@@ -9,7 +10,11 @@ from typing import Union, Dict, List
 
 from loguru import logger
 
-from lexoid.core.parse_type.llm_parser import parse_llm_doc
+from lexoid.core.parse_type.llm_parser import (
+    parse_llm_doc,
+    create_response,
+    convert_doc_to_base64_images,
+)
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
     convert_to_pdf,
@@ -19,6 +24,8 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
+    create_sub_pdf,
+    get_webpage_soup,
 )
 
 
@@ -28,23 +35,29 @@ class ParserType(Enum):
     AUTO = "AUTO"
 
 
-def parse_chunk(
-    path: str, parser_type: ParserType, raw: bool, **kwargs
-) -> List[Dict] | str:
+def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
     """
     Parses a file using the specified parser type.
 
     Args:
         path (str): The file path or URL.
         parser_type (ParserType): The type of parser to use (LLM_PARSE, STATIC_PARSE, or AUTO).
-        raw (bool): Whether to return raw text or structured data.
         **kwargs: Additional arguments for the parser.
 
     Returns:
-        List[Dict] | str: Parsed document data as a list of dictionaries or raw text.
+        Dict: Dictionary containing:
+            - raw: Full markdown content as string
+            - segments: List of dictionaries with metadata and content
+            - title: Title of the document
+            - url: URL if applicable
+            - parent_title: Title of parent doc if recursively parsed
+            - recursive_docs: List of dictionaries for recursively parsed documents
+            - token_usage: Dictionary containing token usage statistics
+            - parser_used: Which parser was actually used
     """
     if parser_type == ParserType.AUTO:
-        parser_type = ParserType[router(path)]
+        router_priority = kwargs.get("router_priority", "speed")
+        parser_type = ParserType[router(path, router_priority)]
         logger.debug(f"Auto-detected parser type: {parser_type}")
 
     kwargs["start"] = (
@@ -52,83 +65,119 @@ def parse_chunk(
     )
     if parser_type == ParserType.STATIC_PARSE:
         logger.debug("Using static parser")
-        return parse_static_doc(path, raw, **kwargs)
+        result = parse_static_doc(path, **kwargs)
     else:
         logger.debug("Using LLM parser")
-        return parse_llm_doc(path, raw, **kwargs)
+        result = parse_llm_doc(path, **kwargs)
+
+    result["parser_used"] = parser_type
+    return result
 
 
 def parse_chunk_list(
-    file_paths: List[str], parser_type: ParserType, raw: bool, kwargs: Dict
-) -> List[Dict | str]:
+    file_paths: List[str], parser_type: ParserType, kwargs: Dict
+) -> Dict:
     """
     Parses a list of files using the specified parser type.
 
     Args:
         file_paths (list): List of file paths.
         parser_type (ParserType): The type of parser to use.
-        raw (bool): Whether to return raw text or structured data.
         kwargs (dict): Additional arguments for the parser.
 
     Returns:
-        List[Dict | str]: List of parsed documents with raw text and/or metadata.
+        Dict: Dictionary containing parsed document data
     """
-    local_docs = []
+    combined_segments = []
+    raw_texts = []
+    token_usage = {"input": 0, "output": 0, "llm_page_count": 0}
     for file_path in file_paths:
-        result = parse_chunk(file_path, parser_type, raw, **kwargs)
-        if isinstance(result, list):
-            local_docs.extend(result)
-        else:
-            local_docs.append(result.replace("<page break>", "\n\n"))
-    return local_docs
+        result = parse_chunk(file_path, parser_type, **kwargs)
+        combined_segments.extend(result["segments"])
+        raw_texts.append(result["raw"])
+        if (
+            result.get("parser_used") == ParserType.LLM_PARSE
+            and "token_usage" in result
+        ):
+            token_usage["input"] += result["token_usage"]["input"]
+            token_usage["output"] += result["token_usage"]["output"]
+            token_usage["llm_page_count"] += len(result["segments"])
+    token_usage["total"] = token_usage["input"] + token_usage["output"]
+
+    return {
+        "raw": "\n\n".join(raw_texts),
+        "segments": combined_segments,
+        "title": kwargs.get("title", ""),
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+        "token_usage": token_usage,
+    }
 
 
 def parse(
     path: str,
-    parser_type: Union[str, ParserType] = "LLM_PARSE",
-    raw: bool = False,
+    parser_type: Union[str, ParserType] = "AUTO",
     pages_per_split: int = 4,
     max_processes: int = 4,
     **kwargs,
-) -> Union[List[Dict], str]:
+) -> Dict:
     """
     Parses a document or URL, optionally splitting it into chunks and using multiprocessing.
 
     Args:
         path (str): The file path or URL.
-        parser_type (Union[str, ParserType], optional): The type of parser to use ("LLM_PARSE", "STATIC_PARSE", or "AUTO"). Defaults to "LLM_PARSE".
-        raw (bool, optional): Whether to return raw text or structured data. Defaults to False.
-        pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
-        max_processes (int, optional): Maximum number of processes for parallel processing. Defaults to 4.
+        parser_type (Union[str, ParserType], optional): Parser type ("LLM_PARSE", "STATIC_PARSE", or "AUTO").
+        pages_per_split (int, optional): Number of pages per split for chunking.
+        max_processes (int, optional): Maximum number of processes for parallel processing.
         **kwargs: Additional arguments for the parser.
 
     Returns:
-        Union[List[Dict], str]: Parsed document data as a list of dictionaries or raw text.
+        Dict: Dictionary containing:
+            - raw: Full markdown content as string
+            - segments: List of dictionaries with metadata and content
+            - title: Title of the document
+            - url: URL if applicable
+            - parent_title: Title of parent doc if recursively parsed
+            - recursive_docs: List of dictionaries for recursively parsed documents
+            - token_usage: Dictionary containing token usage statistics
     """
     kwargs["title"] = os.path.basename(path)
     kwargs["pages_per_split_"] = pages_per_split
     as_pdf = kwargs.get("as_pdf", False)
     depth = kwargs.get("depth", 1)
-    if type(parser_type) == str:
+
+    if type(parser_type) is str:
         parser_type = ParserType[parser_type]
+    if (
+        path.lower().endswith((".doc", ".docx"))
+        and parser_type != ParserType.STATIC_PARSE
+    ):
+        as_pdf = True
+    if path.lower().endswith(".xlsx") and parser_type == ParserType.LLM_PARSE:
+        logger.warning("LLM_PARSE does not support .xlsx files. Using STATIC_PARSE.")
+        parser_type = ParserType.STATIC_PARSE
+    if path.lower().endswith(".pptx") and parser_type == ParserType.LLM_PARSE:
+        logger.warning("LLM_PARSE does not support .pptx files. Using STATIC_PARSE.")
+        parser_type = ParserType.STATIC_PARSE
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        if (
-            path.lower().endswith((".doc", ".docx"))
-            and parser_type != ParserType.STATIC_PARSE
-        ):
-            as_pdf = True
-
+        kwargs["temp_dir"] = temp_dir
         if path.startswith(("http://", "https://")):
-            download_dir = os.path.join(temp_dir, "downloads/")
+            kwargs["url"] = path
+            download_dir = kwargs.get("save_dir", os.path.join(temp_dir, "downloads/"))
             os.makedirs(download_dir, exist_ok=True)
             if is_supported_url_file_type(path):
                 path = download_file(path, download_dir)
             elif as_pdf:
-                pdf_path = os.path.join(download_dir, f"webpage_{int(time())}.pdf")
+                kwargs["title"] = get_webpage_soup(path).title.string.strip()
+                pdf_filename = kwargs.get("save_filename", f"webpage_{int(time())}.pdf")
+                if not pdf_filename.endswith(".pdf"):
+                    pdf_filename += ".pdf"
+                pdf_path = os.path.join(download_dir, pdf_filename)
                 path = convert_to_pdf(path, pdf_path)
             else:
-                return recursive_read_html(path, depth, raw)
+                return recursive_read_html(path, depth)
 
         assert is_supported_file_type(
             path
@@ -138,11 +187,15 @@ def parse(
             pdf_path = os.path.join(temp_dir, "converted.pdf")
             path = convert_to_pdf(path, pdf_path)
 
+        if "page_nums" in kwargs and path.lower().endswith(".pdf"):
+            sub_pdf_dir = os.path.join(temp_dir, "sub_pdfs")
+            os.makedirs(sub_pdf_dir, exist_ok=True)
+            sub_pdf_path = os.path.join(sub_pdf_dir, f"{os.path.basename(path)}")
+            path = create_sub_pdf(path, sub_pdf_path, kwargs["page_nums"])
+
         if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
             kwargs["split"] = False
-            all_docs = parse_chunk(path, parser_type, raw, **kwargs)
-            if raw:
-                all_docs = [all_docs]
+            result = parse_chunk_list([path], parser_type, kwargs)
         else:
             kwargs["split"] = True
             split_dir = os.path.join(temp_dir, "splits/")
@@ -156,22 +209,71 @@ def parse(
                 for i in range(0, len(split_files), chunk_size)
             ]
 
-            process_args = [(chunk, parser_type, raw, kwargs) for chunk in file_chunks]
+            process_args = [(chunk, parser_type, kwargs) for chunk in file_chunks]
 
             if max_processes == 1 or len(file_chunks) == 1:
-                all_docs = [parse_chunk_list(*args) for args in process_args]
+                chunk_results = [parse_chunk_list(*args) for args in process_args]
             else:
                 with ProcessPoolExecutor(max_workers=max_processes) as executor:
-                    all_docs = list(executor.map(parse_chunk_list, *zip(*process_args)))
+                    chunk_results = list(
+                        executor.map(parse_chunk_list, *zip(*process_args))
+                    )
 
-            all_docs = [item for sublist in all_docs for item in sublist]
+            # Combine results from all chunks
+            result = {
+                "raw": "\n\n".join(r["raw"] for r in chunk_results),
+                "segments": [seg for r in chunk_results for seg in r["segments"]],
+                "title": kwargs["title"],
+                "url": kwargs.get("url", ""),
+                "parent_title": kwargs.get("parent_title", ""),
+                "recursive_docs": [],
+                "token_usage": {
+                    "input": sum(r["token_usage"]["input"] for r in chunk_results),
+                    "output": sum(r["token_usage"]["output"] for r in chunk_results),
+                    "llm_page_count": sum(
+                        r["token_usage"]["llm_page_count"] for r in chunk_results
+                    ),
+                    "total": sum(r["token_usage"]["total"] for r in chunk_results),
+                },
+            }
+
+        if "api_cost_mapping" in kwargs and "token_usage" in result:
+            api_cost_mapping = kwargs["api_cost_mapping"]
+            if isinstance(api_cost_mapping, dict):
+                api_cost_mapping = api_cost_mapping
+            elif isinstance(api_cost_mapping, str) and os.path.exists(api_cost_mapping):
+                with open(api_cost_mapping, "r") as f:
+                    api_cost_mapping = json.load(f)
+            else:
+                raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
+
+            api_cost = api_cost_mapping.get(
+                kwargs.get("model", "gemini-2.0-flash"), None
+            )
+            if api_cost:
+                token_usage = result["token_usage"]
+                token_cost = {
+                    "input": token_usage["input"] * api_cost["input"] / 1_000_000,
+                    "input-image": api_cost.get("input-image", 0)
+                    * token_usage.get("llm_page_count", 0),
+                    "output": token_usage["output"] * api_cost["output"] / 1_000_000,
+                }
+                token_cost["total"] = (
+                    token_cost["input"]
+                    + token_cost["input-image"]
+                    + token_cost["output"]
+                )
+                result["token_cost"] = token_cost
+
+        if as_pdf:
+            result["pdf_path"] = path
 
     if depth > 1:
-        new_docs = all_docs.copy()
-        for doc in all_docs:
+        recursive_docs = []
+        for segment in result["segments"]:
             urls = re.findall(
                 r'https?://[^\s<>"\']+|www\.[^\s<>"\']+(?:\.[^\s<>"\']+)*',
-                doc if raw else doc["content"],
+                segment["content"],
             )
             for url in urls:
                 if "](" in url:
@@ -182,19 +284,76 @@ def parse(
 
                 kwargs_cp = kwargs.copy()
                 kwargs_cp["depth"] = depth - 1
-                res = parse(
+                kwargs_cp["parent_title"] = result["title"]
+                sub_doc = parse(
                     url,
                     parser_type=parser_type,
-                    raw=raw,
                     pages_per_split=pages_per_split,
                     max_processes=max_processes,
                     **kwargs_cp,
                 )
+                recursive_docs.append(sub_doc)
 
-                if raw:
-                    new_docs.append(res)
-                else:
-                    new_docs.extend(res)
-        all_docs = new_docs
+        result["recursive_docs"] = recursive_docs
 
-    return "\n".join(all_docs) if raw else all_docs
+    return result
+
+
+def parse_with_schema(
+    path: str, schema: Dict, api: str = "openai", model: str = "gpt-4o-mini", **kwargs
+) -> List[List[Dict]]:
+    """
+    Parses a PDF using an LLM to generate structured output conforming to a given JSON schema.
+
+    Args:
+        path (str): Path to the PDF file.
+        schema (Dict): JSON schema to which the parsed output should conform.
+        api (str, optional): LLM API provider (One of "openai", "huggingface", "together", "openrouter", and "fireworks").
+        model (str, optional): LLM model name.
+        **kwargs: Additional arguments for the parser (e.g.: temperature, max_tokens).
+
+    Returns:
+        List[List[Dict]]: List of dictionaries for each page, each conforming to the provided schema.
+    """
+    system_prompt = f"""
+        The output should be formatted as a JSON instance that conforms to the JSON schema below.
+
+        As an example, for the schema {{
+        "properties": {{
+            "foo": {{
+            "title": "Foo",
+            "description": "a list of strings",
+            "type": "array",
+            "items": {{"type": "string"}}
+            }}
+        }},
+        "required": ["foo"]
+        }}, the object {{"foo": ["bar", "baz"]}} is valid. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not.
+
+        Here is the output schema:
+        {json.dumps(schema, indent=2)}
+
+        """
+
+    user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
+
+    responses = []
+    images = convert_doc_to_base64_images(path)
+    for i, (page_num, image) in enumerate(images):
+        resp_dict = create_response(
+            api=api,
+            model=model,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            image_url=image,
+            temperature=kwargs.get("temperature", 0.0),
+            max_tokens=kwargs.get("max_tokens", 1024),
+        )
+
+        response = resp_dict.get("response", "")
+        response = response.split("```json")[-1].split("```")[0].strip()
+        logger.debug(f"Processing page {page_num + 1} with response: {response}")
+        new_dict = json.loads(response)
+        responses.append(new_dict)
+
+    return responses
