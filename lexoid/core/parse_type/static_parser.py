@@ -1,12 +1,14 @@
 import os
 import re
 import tempfile
+from functools import wraps
 from time import time
 from typing import Dict, List
 
 import pandas as pd
 import pdfplumber
 from docx import Document
+from loguru import logger
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
@@ -22,6 +24,38 @@ from lexoid.core.utils import (
 )
 
 
+def retry_with_different_parser(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            if "pdfplumber" in kwargs.get("framework", "pdfplumber") and not kwargs.get(
+                "routed", False
+            ):
+                kwargs["framework"] = "pdfminer"
+                logger.warning(
+                    f"Retrying with pdfminer due to error: {e}. Original framework: {kwargs['framework']}"
+                )
+                return func(*args, **kwargs)
+            elif "pdfminer" in kwargs.get("framework", "pdfplumber") and not kwargs.get(
+                "routed", False
+            ):
+                kwargs["framework"] = "pdfplumber"
+                logger.warning(
+                    f"Retrying with pdfplumber due to error: {e}. Original framework: {kwargs['framework']}"
+                )
+                return func(*args, **kwargs)
+            else:
+                logger.error(
+                    f"Failed to parse document with both pdfplumber and pdfminer: {e}"
+                )
+                raise e
+
+    return wrapper
+
+
+@retry_with_different_parser
 def parse_static_doc(path: str, **kwargs) -> Dict:
     """
     Parses a document using static parsing methods.

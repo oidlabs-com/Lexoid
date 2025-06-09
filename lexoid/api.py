@@ -4,6 +4,7 @@ import re
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
+from functools import wraps
 from glob import glob
 from time import time
 from typing import Union, Dict, List
@@ -35,6 +36,44 @@ class ParserType(Enum):
     AUTO = "AUTO"
 
 
+def retry_with_different_parser_type(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            if len(args) > 0:
+                kwargs["path"] = args[0]
+            if len(args) > 1 and args[1] == ParserType.AUTO:
+                router_priority = kwargs.get("router_priority", "speed")
+                parser_type = ParserType[router(kwargs["path"], router_priority)]
+                kwargs["routed"] = True
+                kwargs["parser_type"] = parser_type
+                logger.debug(f"Auto-detected parser type: {parser_type}")
+            return func(**kwargs)
+        except Exception as e:
+            if kwargs.get("parser_type") == ParserType.LLM_PARSE:
+                logger.warning(
+                    f"LLM_PARSE failed with error: {e}. Retrying with STATIC_PARSE."
+                )
+                kwargs["parser_type"] = ParserType.STATIC_PARSE
+                kwargs["routed"] = False
+                return func(**kwargs)
+            elif kwargs.get("parser_type") == ParserType.STATIC_PARSE:
+                logger.warning(
+                    f"STATIC_PARSE failed with error: {e}. Retrying with LLM_PARSE."
+                )
+                kwargs["parser_type"] = ParserType.LLM_PARSE
+                kwargs["routed"] = False
+                return func(**kwargs)
+            else:
+                logger.error(
+                    f"Parsing failed with error: {e}. No fallback parser available."
+                )
+                raise e
+
+    return wrapper
+
+
+@retry_with_different_parser_type
 def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
     """
     Parses a file using the specified parser type.
@@ -55,11 +94,6 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
             - token_usage: Dictionary containing token usage statistics
             - parser_used: Which parser was actually used
     """
-    if parser_type == ParserType.AUTO:
-        router_priority = kwargs.get("router_priority", "speed")
-        parser_type = ParserType[router(path, router_priority)]
-        logger.debug(f"Auto-detected parser type: {parser_type}")
-
     kwargs["start"] = (
         int(os.path.basename(path).split("_")[1]) - 1 if kwargs.get("split") else 0
     )
@@ -193,7 +227,7 @@ def parse(
             sub_pdf_path = os.path.join(sub_pdf_dir, f"{os.path.basename(path)}")
             path = create_sub_pdf(path, sub_pdf_path, kwargs["page_nums"])
 
-        if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
+        if not path.lower().endswith(".pdf"):
             kwargs["split"] = False
             result = parse_chunk_list([path], parser_type, kwargs)
         else:
