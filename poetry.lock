@@ -1943,6 +1943,28 @@ files = [
 ]
 
 [[package]]
+name = "mistralai"
+version = "1.8.2"
+description = "Python Client SDK for the Mistral AI API."
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "mistralai-1.8.2-py3-none-any.whl", hash = "sha256:d7f2c3c9d02475c1f1911cff2458bd01e91bbe8e15bfb57cb7ac397a9440ef8e"},
+    {file = "mistralai-1.8.2.tar.gz", hash = "sha256:3a2fdf35498dd71cca3ee065adf8d75331f3bc6bbfbc7ffdd20dc82ae01d9d6d"},
+]
+
+[package.dependencies]
+eval-type-backport = ">=0.2.0"
+httpx = ">=0.28.1"
+pydantic = ">=2.10.3"
+python-dateutil = ">=2.8.2"
+typing-inspection = ">=0.4.0"
+
+[package.extras]
+agents = ["authlib (>=1.5.2,<2.0)", "griffe (>=1.7.3,<2.0)", "mcp (>=1.0,<2.0)"]
+gcp = ["google-auth (>=2.27.0)", "requests (>=2.32.3)"]
+
+[[package]]
 name = "multidict"
 version = "6.1.0"
 description = "multidict implementation"
@@ -4095,6 +4117,20 @@ files = [
 ]
 
 [[package]]
+name = "typing-inspection"
+version = "0.4.1"
+description = "Runtime typing introspection tools"
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "typing_inspection-0.4.1-py3-none-any.whl", hash = "sha256:389055682238f53b04f7badcb49b989835495a96700ced5dab2d8feae4b26f51"},
+    {file = "typing_inspection-0.4.1.tar.gz", hash = "sha256:6ae134cc0203c33377d43188d4064e9b357dba58cff3185f22924610e70a9d28"},
+]
+
+[package.dependencies]
+typing-extensions = ">=4.12.0"
+
+[[package]]
 name = "tzdata"
 version = "2025.1"
 description = "Provider of IANA time zone data"
@@ -4356,4 +4392,4 @@ propcache = ">=0.2.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "c26fa362be6f5122fbfd052e6fb1e2d80d2d911bfe9b25b1f13de8fa00e98f2c"
+content-hash = "c9078719935944b05f9d05c86402cef4cc776c6702ed1687639c84bbb0c02694"

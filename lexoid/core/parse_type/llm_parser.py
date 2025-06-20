@@ -10,6 +10,7 @@ import pypdfium2 as pdfium
 import requests
 from huggingface_hub import InferenceClient
 from loguru import logger
+from mistralai import Mistral
 from openai import OpenAI
 from requests.exceptions import HTTPError
 from together import Together
@@ -68,6 +69,8 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
         return parse_with_api(path, api="openrouter", **kwargs)
     if model.startswith("accounts/fireworks"):
         return parse_with_api(path, api="fireworks", **kwargs)
+    if model.startswith("mistral"):
+        return parse_with_api(path, api="mistral", **kwargs)
     raise ValueError(f"Unsupported model: {model}")
 
 
@@ -236,9 +239,37 @@ def create_response(
             base_url="https://api.fireworks.ai/inference/v1",
             api_key=os.environ["FIREWORKS_API_KEY"],
         ),
+        "mistral": lambda: Mistral(
+            api_key=os.environ["MISTRAL_API_KEY"],
+        ),
     }
     assert api in clients, f"Unsupported API: {api}"
     client = clients[api]()
+
+    if api == "mistral":
+        if "ocr" not in model:
+            raise ValueError("Only OCR models are currently supported for Mistral")
+        response = client.ocr.process(
+            model=model,
+            document={
+                "type": "image_url",
+                "image_url": image_url,
+            },
+            include_image_base64=True,
+        )
+
+        class TokenUsage:
+            def __init__(self, prompt_tokens, completion_tokens, total_tokens):
+                self.prompt_tokens = prompt_tokens
+                self.completion_tokens = completion_tokens
+                self.total_tokens = total_tokens
+
+        token_usage = TokenUsage(0, 0, 0)  # Mistral does not provide token usage
+
+        return {
+            "response": response.pages[0].markdown,
+            "usage": token_usage,
+        }
 
     # Prepare messages for the API call
     messages = get_messages(system_prompt, user_prompt, image_url)
