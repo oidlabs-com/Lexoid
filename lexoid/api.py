@@ -4,13 +4,18 @@ import re
 import tempfile
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
+from functools import wraps
 from glob import glob
 from time import time
 from typing import Union, Dict, List
 
 from loguru import logger
 
-from lexoid.core.parse_type.llm_parser import parse_llm_doc
+from lexoid.core.parse_type.llm_parser import (
+    parse_llm_doc,
+    create_response,
+    convert_doc_to_base64_images,
+)
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
     convert_to_pdf,
@@ -31,6 +36,44 @@ class ParserType(Enum):
     AUTO = "AUTO"
 
 
+def retry_with_different_parser_type(func):
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            if len(args) > 0:
+                kwargs["path"] = args[0]
+            if len(args) > 1 and args[1] == ParserType.AUTO:
+                router_priority = kwargs.get("router_priority", "speed")
+                parser_type = ParserType[router(kwargs["path"], router_priority)]
+                kwargs["routed"] = True
+                kwargs["parser_type"] = parser_type
+                logger.debug(f"Auto-detected parser type: {parser_type}")
+            return func(**kwargs)
+        except Exception as e:
+            if kwargs.get("parser_type") == ParserType.LLM_PARSE:
+                logger.warning(
+                    f"LLM_PARSE failed with error: {e}. Retrying with STATIC_PARSE."
+                )
+                kwargs["parser_type"] = ParserType.STATIC_PARSE
+                kwargs["routed"] = False
+                return func(**kwargs)
+            elif kwargs.get("parser_type") == ParserType.STATIC_PARSE:
+                logger.warning(
+                    f"STATIC_PARSE failed with error: {e}. Retrying with LLM_PARSE."
+                )
+                kwargs["parser_type"] = ParserType.LLM_PARSE
+                kwargs["routed"] = False
+                return func(**kwargs)
+            else:
+                logger.error(
+                    f"Parsing failed with error: {e}. No fallback parser available."
+                )
+                raise e
+
+    return wrapper
+
+
+@retry_with_different_parser_type
 def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
     """
     Parses a file using the specified parser type.
@@ -51,11 +94,6 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
             - token_usage: Dictionary containing token usage statistics
             - parser_used: Which parser was actually used
     """
-    if parser_type == ParserType.AUTO:
-        router_priority = kwargs.get("router_priority", "speed")
-        parser_type = ParserType[router(path, router_priority)]
-        logger.debug(f"Auto-detected parser type: {parser_type}")
-
     kwargs["start"] = (
         int(os.path.basename(path).split("_")[1]) - 1 if kwargs.get("split") else 0
     )
@@ -189,7 +227,7 @@ def parse(
             sub_pdf_path = os.path.join(sub_pdf_dir, f"{os.path.basename(path)}")
             path = create_sub_pdf(path, sub_pdf_path, kwargs["page_nums"])
 
-        if not path.lower().endswith(".pdf") or parser_type == ParserType.STATIC_PARSE:
+        if not path.lower().endswith(".pdf"):
             kwargs["split"] = False
             result = parse_chunk_list([path], parser_type, kwargs)
         else:
@@ -293,3 +331,63 @@ def parse(
         result["recursive_docs"] = recursive_docs
 
     return result
+
+
+def parse_with_schema(
+    path: str, schema: Dict, api: str = "openai", model: str = "gpt-4o-mini", **kwargs
+) -> List[List[Dict]]:
+    """
+    Parses a PDF using an LLM to generate structured output conforming to a given JSON schema.
+
+    Args:
+        path (str): Path to the PDF file.
+        schema (Dict): JSON schema to which the parsed output should conform.
+        api (str, optional): LLM API provider (One of "openai", "huggingface", "together", "openrouter", and "fireworks").
+        model (str, optional): LLM model name.
+        **kwargs: Additional arguments for the parser (e.g.: temperature, max_tokens).
+
+    Returns:
+        List[List[Dict]]: List of dictionaries for each page, each conforming to the provided schema.
+    """
+    system_prompt = f"""
+        The output should be formatted as a JSON instance that conforms to the JSON schema below.
+
+        As an example, for the schema {{
+        "properties": {{
+            "foo": {{
+            "title": "Foo",
+            "description": "a list of strings",
+            "type": "array",
+            "items": {{"type": "string"}}
+            }}
+        }},
+        "required": ["foo"]
+        }}, the object {{"foo": ["bar", "baz"]}} is valid. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not.
+
+        Here is the output schema:
+        {json.dumps(schema, indent=2)}
+
+        """
+
+    user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
+
+    responses = []
+    images = convert_doc_to_base64_images(path)
+    for i, (page_num, image) in enumerate(images):
+        resp_dict = create_response(
+            api=api,
+            model=model,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            image_url=image,
+            temperature=kwargs.get("temperature", 0.0),
+            max_tokens=kwargs.get("max_tokens", 1024),
+        )
+
+        response = resp_dict.get("response", "")
+        response = response.split("```json")[-1].split("```")[0].strip()
+        logger.debug(f"Processing page {page_num + 1} with response: {response}")
+        new_dict = json.loads(response)
+        responses.append(new_dict)
+
+    return responses
