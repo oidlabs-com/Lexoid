@@ -157,4 +157,8 @@
     * Monospace font detection
     * Indentation detection
 
+## [0.1.14] - 2025-06-05
 
+### Added
+* Add support for Fireworks API
+* Add support for matching data in document to pre-defined schema or template
