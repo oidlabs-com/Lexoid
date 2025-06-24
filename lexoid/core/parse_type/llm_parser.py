@@ -72,13 +72,6 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
 
 
 def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
-    logger.debug(f"Parsing with Gemini API and model {kwargs['model']}")
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable is not set")
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{kwargs['model']}:generateContent?key={api_key}"
-
     # Check if the file is an image and convert to PDF if necessary
     mime_type, _ = mimetypes.guess_type(path)
     if mime_type and mime_type.startswith("image"):
@@ -89,6 +82,20 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
         with open(path, "rb") as file:
             file_content = file.read()
         base64_file = base64.b64encode(file_content).decode("utf-8")
+
+    return parse_image_with_gemini(
+        base64_file=base64_file, mime_type=mime_type, **kwargs
+    )
+
+
+def parse_image_with_gemini(
+    base64_file: str, mime_type: str = "image/png", **kwargs
+) -> List[Dict] | str:
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY environment variable is not set")
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{kwargs['model']}:generateContent?key={api_key}"
 
     if "system_prompt" in kwargs:
         prompt = kwargs["system_prompt"]
@@ -129,24 +136,23 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
         if "text" in part
     )
 
-    combined_text = ""
+    combined_text = raw_text
     if "<output>" in raw_text:
         combined_text = raw_text.split("<output>")[-1].strip()
-    if "</output>" in result:
-        combined_text = result.split("</output>")[0].strip()
+    if "</output>" in combined_text:
+        combined_text = combined_text.split("</output>")[0].strip()
 
     token_usage = result["usageMetadata"]
     input_tokens = token_usage.get("promptTokenCount", 0)
     output_tokens = token_usage.get("candidatesTokenCount", 0)
     total_tokens = input_tokens + output_tokens
-
     return {
         "raw": combined_text.replace("<page-break>", "\n\n"),
         "segments": [
             {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
             for page_no, page in enumerate(combined_text.split("<page-break>"), start=1)
         ],
-        "title": kwargs["title"],
+        "title": kwargs.get("title", ""),
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
@@ -236,8 +242,24 @@ def create_response(
             base_url="https://api.fireworks.ai/inference/v1",
             api_key=os.environ["FIREWORKS_API_KEY"],
         ),
+        "gemini": lambda: None,  # Gemini is handled separately
     }
     assert api in clients, f"Unsupported API: {api}"
+
+    if api == "gemini":
+        image_url = image_url.split("data:image/png;base64,")[1]
+        response = parse_image_with_gemini(
+            base64_file=image_url,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+        )
+        return {
+            "response": response["raw"],
+            "usage": response["token_usage"],
+        }
+
     client = clients[api]()
 
     # Prepare messages for the API call
