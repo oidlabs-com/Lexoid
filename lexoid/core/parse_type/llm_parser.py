@@ -80,7 +80,11 @@ def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
     model_name = kwargs.get("model", "ds4sd/SmolDocling-256M-preview")
     processor = AutoProcessor.from_pretrained(model_name)
     model = AutoModelForImageTextToText.from_pretrained(model_name)
-    image = Image.open(path)
+    images = convert_path_to_images(path)
+    pil_images = [
+        Image.open(io.BytesIO(base64.b64decode(image.split(",")[1])))
+        for _, image in images
+    ]
     messages = [
         {
             "role": "user",
@@ -97,14 +101,14 @@ def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
         },
     ]
     prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
-    inputs = processor(text=prompt, images=[image], return_tensors="pt")
+    inputs = processor(text=prompt, images=pil_images, return_tensors="pt")
     with torch.no_grad():  # Add this to save memory
         generated_ids = model.generate(
             **inputs,
             max_new_tokens=1500,  # Increased for better results
             do_sample=False,  # Deterministic generation
             num_beams=1,  # Simple beam search
-            temperature=1.0,  # No temperature scaling
+            temperature=0,
         )
 
     prompt_length = inputs.input_ids.shape[1]
