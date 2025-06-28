@@ -19,6 +19,9 @@ The similarity metric is calculated using the following steps (see `calculate_si
 2. HTML Tag Removal
    All HTML markup is stripped away, leaving only the pure textual content. This ensures the comparison focuses on the actual text rather than formatting.
 
+3. Whitespace and Punctuation Normalization
+   Extra whitespace and punctuation are removed from both the parsed and ground truth texts. Therefore, the comparison is purely based on the sequence of characters/words, ignoring any formatting differences.
+
 3. Sequence Matching
    Python's ``SequenceMatcher`` compares the extracted text sequences, calculating a similarity ratio between 0 and 1 that reflects content preservation and accuracy.
 
