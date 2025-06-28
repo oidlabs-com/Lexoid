@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pypdfium2 as pdfium
 import requests
+from anthropic import Anthropic
 from huggingface_hub import InferenceClient
 from loguru import logger
 from openai import OpenAI
@@ -68,6 +69,8 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
         return parse_with_api(path, api="openrouter", **kwargs)
     if model.startswith("accounts/fireworks"):
         return parse_with_api(path, api="fireworks", **kwargs)
+    if model.startswith("claude"):
+        return parse_with_api(path, api="anthropic", **kwargs)
     raise ValueError(f"Unsupported model: {model}")
 
 
@@ -116,7 +119,7 @@ def parse_image_with_gemini(
             }
         ],
         "generationConfig": {
-            "temperature": kwargs.get("temperature", 0.2),
+            "temperature": kwargs.get("temperature", 0),
         },
     }
 
@@ -224,7 +227,7 @@ def create_response(
     system_prompt: Optional[str] = None,
     user_prompt: Optional[str] = None,
     image_url: Optional[str] = None,
-    temperature: float = 0.2,
+    temperature: float = 0.0,
     max_tokens: int = 1024,
 ) -> Dict:
     # Initialize appropriate client
@@ -241,6 +244,9 @@ def create_response(
         "fireworks": lambda: OpenAI(
             base_url="https://api.fireworks.ai/inference/v1",
             api_key=os.environ["FIREWORKS_API_KEY"],
+        ),
+        "anthropic": lambda: Anthropic(
+            api_key=os.environ["ANTHROPIC_API_KEY"],
         ),
         "gemini": lambda: None,  # Gemini is handled separately
     }
@@ -262,6 +268,41 @@ def create_response(
 
     client = clients[api]()
 
+    if api == "anthropic":
+        image_media_type = image_url.split(";")[0].split(":")[1]
+        image_data = image_url.split(",")[1]
+        response = client.messages.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image_media_type,
+                                "data": image_data,
+                            },
+                        },
+                        {"type": "text", "text": user_prompt},
+                    ],
+                }
+            ],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        return {
+            "response": response.content[0].text,
+            "usage": {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+                "total_tokens": response.usage.input_tokens
+                + response.usage.output_tokens,
+            },
+        }
+
     # Prepare messages for the API call
     messages = get_messages(system_prompt, user_prompt, image_url)
 
@@ -282,7 +323,11 @@ def create_response(
 
     return {
         "response": page_text,
-        "usage": token_usage,
+        "usage": {
+            "input_tokens": token_usage.prompt_tokens,
+            "output_tokens": token_usage.completion_tokens,
+            "total_tokens": token_usage.total_tokens,
+        },
     }
 
 
@@ -336,7 +381,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             image_url=image_url,
-            temperature=kwargs.get("temperature", 0.2),
+            temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
         )
 
@@ -357,9 +402,9 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             (
                 page_num,
                 result,
-                token_usage.prompt_tokens,
-                token_usage.completion_tokens,
-                token_usage.total_tokens,
+                token_usage["input_tokens"],
+                token_usage["output_tokens"],
+                token_usage["total_tokens"],
             )
         )
 

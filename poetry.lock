@@ -169,6 +169,31 @@ files = [
 ]
 
 [[package]]
+name = "anthropic"
+version = "0.55.0"
+description = "The official Python library for the anthropic API"
+optional = false
+python-versions = ">=3.8"
+files = [
+    {file = "anthropic-0.55.0-py3-none-any.whl", hash = "sha256:3518433fc0372a13f2b793b4cabecc7734ec9176e063a0f28dac19aa17c57f94"},
+    {file = "anthropic-0.55.0.tar.gz", hash = "sha256:61826efa1bda0e4c7dc6f6a0d82b7d99b3fda970cd048d40ef5fca08a5eabd33"},
+]
+
+[package.dependencies]
+anyio = ">=3.5.0,<5"
+distro = ">=1.7.0,<2"
+httpx = ">=0.25.0,<1"
+jiter = ">=0.4.0,<1"
+pydantic = ">=1.9.0,<3"
+sniffio = "*"
+typing-extensions = ">=4.10,<5"
+
+[package.extras]
+aiohttp = ["aiohttp", "httpx-aiohttp (>=0.1.6)"]
+bedrock = ["boto3 (>=1.28.57)", "botocore (>=1.31.57)"]
+vertex = ["google-auth[requests] (>=2,<3)"]
+
+[[package]]
 name = "anyio"
 version = "4.8.0"
 description = "High level compatibility layer for multiple asynchronous event loop implementations"
@@ -4356,4 +4381,4 @@ propcache = ">=0.2.0"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "c26fa362be6f5122fbfd052e6fb1e2d80d2d911bfe9b25b1f13de8fa00e98f2c"
+content-hash = "892cc04132b03d61ef734fda085567884a3967cdacdc4d4f88330fa3c3ef8546"
