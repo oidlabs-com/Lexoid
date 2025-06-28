@@ -18,7 +18,7 @@ def generate_markdown_table(df):
     header = "| Rank | Model | Mean Similarity | Std. Dev. | Time (s) | Cost ($) |\n"
     sep = "| --- | --- | --- | --- | --- | --- |\n"
     rows = [
-        f"| {i+1} | {row['Model']} | {row['Mean Similarity']} | {row['Std. Dev.']} | {row['Time (s)']} | {row['Cost($)']} |"
+        f"| {i+1} | {row['Model']} | {row['Mean Similarity']:.3f} | {row['Std. Dev.']:.3f} | {row['Time (s)']:.2f} | {row['Cost($)']:.5f} |"
         for i, row in df.iterrows()
     ]
     return header + sep + "\n".join(rows)
@@ -27,7 +27,7 @@ def generate_markdown_table(df):
 def generate_rst_table(df):
     header = "\n   * - Rank\n     - Model\n     - Mean Similarity\n     - Std. Dev.\n     - Time (s)\n     - Cost ($)"
     rows = [
-        f"   * - {i+1}\n     - {row['Model']}\n     - {row['Mean Similarity']}\n     - {row['Std. Dev.']}\n     - {row['Time (s)']}\n     - {row['Cost($)']}"
+        f"   * - {i+1}\n     - {row['Model']}\n     - {row['Mean Similarity']:.3f}\n     - {row['Std. Dev.']:.3f}\n     - {row['Time (s)']:.2f}\n     - {row['Cost($)']:.5f}"
         for i, row in df.iterrows()
     ]
     return header + "\n" + "\n".join(rows)

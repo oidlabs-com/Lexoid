@@ -42,22 +42,29 @@ def retry_with_different_parser_type(func):
         try:
             if len(args) > 0:
                 kwargs["path"] = args[0]
-            if len(args) > 1 and args[1] == ParserType.AUTO:
+            if len(args) > 1:
                 router_priority = kwargs.get("router_priority", "speed")
-                parser_type = ParserType[router(kwargs["path"], router_priority)]
-                kwargs["routed"] = True
+                if args[1] == ParserType.AUTO:
+                    parser_type = ParserType[router(kwargs["path"], router_priority)]
+                    logger.debug(f"Auto-detected parser type: {parser_type}")
+                    kwargs["routed"] = True
+                else:
+                    parser_type = args[1]
                 kwargs["parser_type"] = parser_type
-                logger.debug(f"Auto-detected parser type: {parser_type}")
             return func(**kwargs)
         except Exception as e:
-            if kwargs.get("parser_type") == ParserType.LLM_PARSE:
+            if kwargs.get("parser_type") == ParserType.LLM_PARSE and kwargs.get(
+                "routed", False
+            ):
                 logger.warning(
                     f"LLM_PARSE failed with error: {e}. Retrying with STATIC_PARSE."
                 )
                 kwargs["parser_type"] = ParserType.STATIC_PARSE
                 kwargs["routed"] = False
                 return func(**kwargs)
-            elif kwargs.get("parser_type") == ParserType.STATIC_PARSE:
+            elif kwargs.get("parser_type") == ParserType.STATIC_PARSE and kwargs.get(
+                "routed", False
+            ):
                 logger.warning(
                     f"STATIC_PARSE failed with error: {e}. Retrying with LLM_PARSE."
                 )

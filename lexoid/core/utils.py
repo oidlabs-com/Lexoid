@@ -69,15 +69,45 @@ def convert_image_to_pdf(image_path: str) -> bytes:
 
 def remove_html_tags(text: str):
     html = markdown(text, extensions=["tables"])
-    return re.sub(HTML_TAG_PATTERN, "", html)
+    return re.sub(HTML_TAG_PATTERN, " ", html)
 
 
-def calculate_similarity(text1: str, text2: str, ignore_html=True) -> float:
+def clean_text(txt):
+    # Remove LaTeX commands (e.g. \command, \command[args]{args})
+    txt = re.sub(r"\\[a-zA-Z]+(\[[^\]]*\])?(\{[^}]*\})?", " ", txt)
+
+    # Replace all blocks of whitespace (including tabs and newlines) with a single space
+    txt = re.sub(r"\s+", " ", txt)
+
+    # Remove all non-alphanumeric characters except spaces
+    txt = re.sub(r"[^a-zA-Z0-9 ]", " ", txt)
+
+    return txt.strip()
+
+
+def calculate_similarity(
+    text1: str, text2: str, ignore_html: bool = True, diff_save_path: str = ""
+) -> float:
     """Calculate similarity ratio between two texts using SequenceMatcher."""
     if ignore_html:
         text1 = remove_html_tags(text1)
         text2 = remove_html_tags(text2)
-    return SequenceMatcher(None, text1, text2).ratio()
+
+    text1 = clean_text(clean_text(text1))
+    text2 = clean_text(clean_text(text2))
+
+    sm = SequenceMatcher(None, text1, text2)
+    # Save the diff and the texts for debugging
+    if diff_save_path:
+        with open(diff_save_path, "w") as f:
+            f.write(f"Text 1:\n{text1}\n\n")
+            f.write(f"Text 2:\n{text2}\n\n")
+            f.write("Differences:\n")
+            for tag, i1, i2, j1, j2 in sm.get_opcodes():
+                if tag == "equal":
+                    continue
+                f.write(f"{tag} {text1[i1:i2]} -> {text2[j1:j2]}\n")
+    return sm.ratio()
 
 
 def convert_pdf_page_to_image(
