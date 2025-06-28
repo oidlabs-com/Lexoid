@@ -79,117 +79,117 @@ Here are the detailed parsing performance results for various models:
      - Time (s)
      - Cost ($)
    * - 1
-     - gemini-2.0-flash
-     - 0.829
-     - 0.102
-     - 7.41
-     - 0.00048
-   * - 2
-     - gemini-2.0-flash-001
-     - 0.814
-     - 0.176
-     - 6.85
-     - 0.000421
-   * - 3
-     - gemini-1.5-flash
-     - 0.797
-     - 0.143
-     - 9.54
-     - 0.000238
-   * - 4
-     - gemini-2.0-pro-exp
-     - 0.764
-     - 0.227
-     - 11.95
-     - TBA
-   * - 5
      - AUTO
-     - 0.76
-     - 0.184
-     - 5.14
-     - 0.000217
-   * - 6
-     - gemini-2.0-flash-thinking-exp
-     - 0.746
-     - 0.266
-     - 10.46
-     - TBA
-   * - 7
+     - 0.906
+     - 0.112
+     - 9.56
+     - 0.00068
+   * - 2
+     - gemini-2.0-flash
+     - 0.897
+     - 0.126
+     - 9.91
+     - 0.00078
+   * - 3
+     - gemini-2.5-flash
+     - 0.895
+     - 0.148
+     - 54.10
+     - 0.01051
+   * - 4
      - gemini-1.5-pro
-     - 0.732
-     - 0.265
-     - 11.44
-     - 0.003332
-   * - 8
-     - accounts/fireworks/models/llama4-maverick-instruct-basic (via Fireworks)
-     - 0.687
-     - 0.221
-     - 8.07
-     - 0.000419
-   * - 9
-     - gpt-4o
-     - 0.687
-     - 0.247
-     - 10.16
-     - 0.004736
-   * - 10
-     - accounts/fireworks/models/llama4-scout-instruct-basic (via Fireworks)
-     - 0.675
-     - 0.184
-     - 5.98
-     - 0.000226
-   * - 11
-     - gpt-4o-mini
-     - 0.642
-     - 0.213
-     - 9.71
-     - 0.000275
-   * - 12
-     - gemma-3-27b-it (via OpenRouter)
-     - 0.628
-     - 0.299
-     - 18.79
-     - 0.000096
-   * - 13
-     - gemini-1.5-flash-8b
-     - 0.551
-     - 0.223
-     - 3.91
-     - 0.000055
-   * - 14
-     - Llama-Vision-Free (via Together AI)
-     - 0.531
-     - 0.198
-     - 6.93
-     - 0
-   * - 15
-     - Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI)
-     - 0.524
-     - 0.192
-     - 3.68
-     - 0.00006
-   * - 16
-     - qwen/qwen-2.5-vl-7b-instruct (via OpenRouter)
-     - 0.482
+     - 0.868
+     - 0.283
+     - 15.03
+     - 0.00637
+   * - 5
+     - gemini-1.5-flash
+     - 0.864
+     - 0.194
+     - 15.47
+     - 0.00044
+   * - 6
+     - claude-3-5-sonnet-20241022
+     - 0.851
      - 0.209
-     - 11.53
-     - 0.000052
+     - 15.99
+     - 0.01758
+   * - 7
+     - gemini-2.5-pro
+     - 0.849
+     - 0.298
+     - 101.95
+     - 0.01859
+   * - 8
+     - claude-sonnet-4-20250514
+     - 0.804
+     - 0.190
+     - 19.27
+     - 0.02071
+   * - 9
+     - claude-opus-4-20250514
+     - 0.772
+     - 0.238
+     - 20.03
+     - 0.09207
+   * - 10
+     - accounts/fireworks/models/llama4-maverick-instruct-basic
+     - 0.768
+     - 0.234
+     - 12.12
+     - 0.00150
+   * - 11
+     - gpt-4o
+     - 0.748
+     - 0.284
+     - 26.80
+     - 0.01478
+   * - 12
+     - gpt-4o-mini
+     - 0.733
+     - 0.231
+     - 18.18
+     - 0.00650
+   * - 13
+     - gpt-4.1-mini
+     - 0.723
+     - 0.269
+     - 20.91
+     - 0.00351
+   * - 14
+     - google/gemma-3-27b-it
+     - 0.681
+     - 0.334
+     - 19.41
+     - 0.00027
+   * - 15
+     - gpt-4.1
+     - 0.650
+     - 0.342
+     - 33.72
+     - 0.01443
+   * - 16
+     - claude-3-7-sonnet-20250219
+     - 0.633
+     - 0.369
+     - 14.24
+     - 0.01763
    * - 17
-     - Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI)
-     - 0.461
-     - 0.306
-     - 19.26
-     - 0.000426
+     - microsoft/phi-4-multimodal-instruct
+     - 0.622
+     - 0.320
+     - 13.15
+     - 0.00050
    * - 18
-     - Llama-3.2-11B-Vision-Instruct (via Hugging Face)
-     - 0.451
-     - 0.257
-     - 4.54
-     - 0
+     - qwen/qwen-2.5-vl-7b-instruct
+     - 0.559
+     - 0.348
+     - 17.71
+     - 0.00086
    * - 19
-     - microsoft/phi-4-multimodal-instruct (via OpenRouter)
-     - 0.366
-     - 0.287
-     - 10.8
-     - 0.000019
+     - meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo
+     - 0.546
+     - 0.239
+     - 29.26
+     - 0.01103
     

@@ -39,7 +39,9 @@ After horizontal line
 
 Here comes a link: [example-link](https://www.example.com).
 
-Email: <mail@example.com>
+1
+
+Email: mail@example.com
 
 Here comes Python code:
 
@@ -68,6 +70,8 @@ And a second table:
 |--------|-----------|-----------|
 | **A2** | _data 11_ | _data 12_ |
 | **A3** | _data 21_ | _data 22_ |
+
+2
 
 
 <div style="background-color: #FFFFE0; padding: 10px; font-family: 'Comic Sans MS', 'Chalkboard SE', 'Bradley Hand', cursive, sans-serif; line-height: 1.8; border: 1px solid #E0E0C1;">
