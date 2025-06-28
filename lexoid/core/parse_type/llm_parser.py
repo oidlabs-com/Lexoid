@@ -50,28 +50,38 @@ def retry_on_http_error(func):
     return wrapper
 
 
+def get_api_provider_for_model(model: str) -> str:
+    if model.startswith("gemini"):
+        return "gemini"
+    if model.startswith("gpt"):
+        return "openai"
+    if model.startswith("meta-llama"):
+        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
+            return "together"
+        return "huggingface"
+    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
+        return "openrouter"
+    if model.startswith("accounts/fireworks"):
+        return "fireworks"
+    if model.startswith("claude"):
+        return "anthropic"
+    raise ValueError(f"Unsupported model: {model}")
+
+
 @retry_on_http_error
 def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     if "api_provider" in kwargs and kwargs["api_provider"]:
         return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
-    if "model" not in kwargs:
-        kwargs["model"] = "gemini-2.0-flash"
-    model = kwargs.get("model")
-    if model.startswith("gemini"):
+
+    model = kwargs.get("model", "gemini-2.0-flash")
+    kwargs["model"] = model
+
+    api_provider = get_api_provider_for_model(model)
+
+    if api_provider == "gemini":
         return parse_with_gemini(path, **kwargs)
-    if model.startswith("gpt"):
-        return parse_with_api(path, api="openai", **kwargs)
-    if model.startswith("meta-llama"):
-        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
-            return parse_with_api(path, api="together", **kwargs)
-        return parse_with_api(path, api="huggingface", **kwargs)
-    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
-        return parse_with_api(path, api="openrouter", **kwargs)
-    if model.startswith("accounts/fireworks"):
-        return parse_with_api(path, api="fireworks", **kwargs)
-    if model.startswith("claude"):
-        return parse_with_api(path, api="anthropic", **kwargs)
-    raise ValueError(f"Unsupported model: {model}")
+    else:
+        return parse_with_api(path, api=api_provider, **kwargs)
 
 
 def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:

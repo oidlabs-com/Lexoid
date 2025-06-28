@@ -7,7 +7,7 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Union, Dict, List
+from typing import Optional, Union, Dict, List
 
 from loguru import logger
 
@@ -15,6 +15,7 @@ from lexoid.core.parse_type.llm_parser import (
     parse_llm_doc,
     create_response,
     convert_doc_to_base64_images,
+    get_api_provider_for_model,
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
@@ -341,7 +342,11 @@ def parse(
 
 
 def parse_with_schema(
-    path: str, schema: Dict, api: str = "openai", model: str = "gpt-4o-mini", **kwargs
+    path: str,
+    schema: Dict,
+    api: Optional[str] = None,
+    model: str = "gpt-4o-mini",
+    **kwargs,
 ) -> List[List[Dict]]:
     """
     Parses a PDF using an LLM to generate structured output conforming to a given JSON schema.
@@ -356,6 +361,10 @@ def parse_with_schema(
     Returns:
         List[List[Dict]]: List of dictionaries for each page, each conforming to the provided schema.
     """
+    if not api:
+        api = get_api_provider_for_model(model)
+        logger.debug(f"Using API provider: {api}")
+
     system_prompt = f"""
         The output should be formatted as a JSON instance that conforms to the JSON schema below.
 
