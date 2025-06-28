@@ -160,5 +160,15 @@
 ## [0.1.14] - 2025-06-05
 
 ### Added
-* Add support for Fireworks API
-* Add support for matching data in document to pre-defined schema or template
+* Support for Fireworks API
+* Support for matching data in document to pre-defined schema or template
+
+## [0.1.15] - 2025-06-28
+
+### Added
+* Gemini support to `parse_with_schema`
+* Support for Anthropic models
+* Fallback to different parser in AUTO mode or STATIC mode
+
+### Changed
+* Update benchmark logic and benchmark
