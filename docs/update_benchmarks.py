@@ -15,19 +15,19 @@ def update_rst(content, table_rst):
 
 
 def generate_markdown_table(df):
-    header = "| Rank | Model | Mean Similarity | Std. Dev. | Time (s) | Cost ($) |\n"
+    header = "| Rank | Model | SequenceMatcher Similarity | TFIDF Similarity | Time (s) | Cost ($) |\n"
     sep = "| --- | --- | --- | --- | --- | --- |\n"
     rows = [
-        f"| {i+1} | {row['Model']} | {row['Mean Similarity']:.3f} | {row['Std. Dev.']:.3f} | {row['Time (s)']:.2f} | {row['Cost($)']:.5f} |"
+        f"| {i+1} | {row['Model']} | {row['sequence_matcher']} | {row['cosine']} | {row['Time (s)']:.2f} | {row['Cost ($)']:.5f} |"
         for i, row in df.iterrows()
     ]
     return header + sep + "\n".join(rows)
 
 
 def generate_rst_table(df):
-    header = "\n   * - Rank\n     - Model\n     - Mean Similarity\n     - Std. Dev.\n     - Time (s)\n     - Cost ($)"
+    header = "\n   * - Rank\n     - Model\n     - SequenceMatcher Similarity\n     - TFIDF Similarity.\n     - Time (s)\n     - Cost ($)"
     rows = [
-        f"   * - {i+1}\n     - {row['Model']}\n     - {row['Mean Similarity']:.3f}\n     - {row['Std. Dev.']:.3f}\n     - {row['Time (s)']:.2f}\n     - {row['Cost($)']:.5f}"
+        f"   * - {i+1}\n     - {row['Model']}\n     - {row['sequence_matcher']}\n     - {row['cosine']}\n     - {row['Time (s)']:.2f}\n     - {row['Cost ($)']:.5f}"
         for i, row in df.iterrows()
     ]
     return header + "\n" + "\n".join(rows)
@@ -35,7 +35,7 @@ def generate_rst_table(df):
 
 def main(csv_path, md_path, rst_path):
     df = pd.read_csv(csv_path)
-    df = df.sort_values(by="Mean Similarity", ascending=False).reset_index(drop=True)
+    df = df.sort_values(by="sequence_matcher", ascending=False).reset_index(drop=True)
 
     with open(md_path, "r", encoding="utf-8") as f:
         md_content = f.read()

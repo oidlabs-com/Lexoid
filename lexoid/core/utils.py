@@ -18,6 +18,8 @@ from docx2pdf import convert
 from loguru import logger
 from markdown import markdown
 from markdownify import markdownify as md
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 from PIL import Image
 from PyQt5.QtCore import QMarginsF, QUrl
 from PyQt5.QtGui import QPageLayout, QPageSize
@@ -85,8 +87,62 @@ def clean_text(txt):
     return txt.strip()
 
 
-def calculate_similarity(
-    text1: str, text2: str, ignore_html: bool = True, diff_save_path: str = ""
+def cosine_text_similarity(text1, text2):
+    texts = [clean_text(text1), clean_text(text2)]
+    vectorizer = TfidfVectorizer().fit_transform(texts)
+    return cosine_similarity(vectorizer[0], vectorizer[1])[0][0]
+
+
+def jaccard_text_similarity(text1: str, text2: str) -> float:
+    set1 = set(clean_text(text1).split())
+    set2 = set(clean_text(text2).split())
+    intersection = len(set1.intersection(set2))
+    union = len(set1.union(set2))
+    return intersection / union if union > 0 else 0.0
+
+
+def precision_recall_f1_score(text1: str, text2: str) -> Dict[str, float]:
+    """
+    Calculate precision, recall, and F1 score between two texts.
+    Precision = TP / (TP + FP)
+    Recall = TP / (TP + FN)
+    F1 Score = 2 * (Precision * Recall) / (Precision + Recall)
+    """
+    set1 = set(clean_text(text1).split())
+    set2 = set(clean_text(text2).split())
+
+    true_positive = len(set1.intersection(set2))
+    false_positive = len(set2 - set1)
+    false_negative = len(set1 - set2)
+
+    precision = (
+        true_positive / (true_positive + false_positive)
+        if (true_positive + false_positive) > 0
+        else 0.0
+    )
+    recall = (
+        true_positive / (true_positive + false_negative)
+        if (true_positive + false_negative) > 0
+        else 0.0
+    )
+    f1_score = (
+        2 * (precision * recall) / (precision + recall)
+        if (precision + recall) > 0
+        else 0.0
+    )
+
+    return {
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1_score,
+    }
+
+
+def calculate_similarities(
+    text1: str,
+    text2: str,
+    ignore_html: bool = True,
+    diff_save_path: str = "",
 ) -> float:
     """Calculate similarity ratio between two texts using SequenceMatcher."""
     if ignore_html:
@@ -96,7 +152,10 @@ def calculate_similarity(
     text1 = clean_text(clean_text(text1))
     text2 = clean_text(clean_text(text2))
 
+    similarities = {}
+
     sm = SequenceMatcher(None, text1, text2)
+    similarities["sequence_matcher"] = sm.ratio()
     # Save the diff and the texts for debugging
     if diff_save_path:
         with open(diff_save_path, "w") as f:
@@ -107,7 +166,11 @@ def calculate_similarity(
                 if tag == "equal":
                     continue
                 f.write(f"{tag} {text1[i1:i2]} -> {text2[j1:j2]}\n")
-    return sm.ratio()
+    similarities["cosine"] = cosine_text_similarity(text1, text2)
+    similarities["jaccard"] = jaccard_text_similarity(text1, text2)
+    similarities.update(precision_recall_f1_score(text1, text2))
+
+    return similarities
 
 
 def convert_pdf_page_to_image(
@@ -370,7 +433,7 @@ def get_webpage_soup(url: str) -> BeautifulSoup:
                 await page.goto(url)
 
                 # Wait for Cloudflare check to complete
-                await page.wait_for_load_state("networkidle")
+                await page.wait_for_load_state("domcontentloaded")
 
                 # Additional wait for any dynamic content
                 try:
