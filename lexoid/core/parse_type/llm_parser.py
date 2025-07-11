@@ -119,6 +119,12 @@ def parse_image_with_gemini(
             custom_instruction = ""
         prompt = PARSER_PROMPT.format(custom_instructions=custom_instruction)
 
+    generation_config = {
+        "temperature": kwargs.get("temperature", 0),
+    }
+    if kwargs["model"] == "gemini-2.5-pro":
+        generation_config["thinkingConfig"] = {"thinkingBudget": 128}
+
     payload = {
         "contents": [
             {
@@ -128,9 +134,7 @@ def parse_image_with_gemini(
                 ]
             }
         ],
-        "generationConfig": {
-            "temperature": kwargs.get("temperature", 0),
-        },
+        "generationConfig": generation_config,
     }
 
     headers = {"Content-Type": "application/json"}
@@ -334,9 +338,9 @@ def create_response(
     return {
         "response": page_text,
         "usage": {
-            "input_tokens": token_usage.prompt_tokens,
-            "output_tokens": token_usage.completion_tokens,
-            "total_tokens": token_usage.total_tokens,
+            "input_tokens": getattr(token_usage, "prompt_tokens", 0),
+            "output_tokens": getattr(token_usage, "completion_tokens", 0),
+            "total_tokens": getattr(token_usage, "total_tokens", 0),
         },
     }
 
