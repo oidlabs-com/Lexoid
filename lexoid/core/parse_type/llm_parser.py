@@ -9,6 +9,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pypdfium2 as pdfium
 import requests
+from anthropic import Anthropic
 from huggingface_hub import InferenceClient
 from loguru import logger
 from openai import OpenAI
@@ -52,28 +53,38 @@ def retry_on_http_error(func):
     return wrapper
 
 
+def get_api_provider_for_model(model: str) -> str:
+    if model.startswith("gemini"):
+        return "gemini"
+    if model.startswith("gpt"):
+        return "openai"
+    if model.startswith("meta-llama"):
+        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
+            return "together"
+        return "huggingface"
+    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
+        return "openrouter"
+    if model.startswith("accounts/fireworks"):
+        return "fireworks"
+    if model.startswith("claude"):
+        return "anthropic"
+    raise ValueError(f"Unsupported model: {model}")
+
+
 @retry_on_http_error
 def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     if "api_provider" in kwargs and kwargs["api_provider"]:
         return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
-    if "model" not in kwargs:
-        kwargs["model"] = "gemini-2.0-flash"
-    model = kwargs.get("model")
-    if model.startswith("gemini"):
+
+    model = kwargs.get("model", "gemini-2.0-flash")
+    kwargs["model"] = model
+
+    api_provider = get_api_provider_for_model(model)
+
+    if api_provider == "gemini":
         return parse_with_gemini(path, **kwargs)
-    if model.startswith("gpt"):
-        return parse_with_api(path, api="openai", **kwargs)
-    if model.startswith("meta-llama"):
-        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
-            return parse_with_api(path, api="together", **kwargs)
-        return parse_with_api(path, api="huggingface", **kwargs)
-    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
-        return parse_with_api(path, api="openrouter", **kwargs)
-    if model.startswith("accounts/fireworks"):
-        return parse_with_api(path, api="fireworks", **kwargs)
-    if "smoldocling" in model.lower():
-        return parse_with_local_model(path, **kwargs)
-    raise ValueError(f"Unsupported model: {model}")
+    else:
+        return parse_with_api(path, api=api_provider, **kwargs)
 
 
 def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
@@ -136,13 +147,6 @@ def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
 
 
 def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
-    logger.debug(f"Parsing with Gemini API and model {kwargs['model']}")
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable is not set")
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{kwargs['model']}:generateContent?key={api_key}"
-
     # Check if the file is an image and convert to PDF if necessary
     mime_type, _ = mimetypes.guess_type(path)
     if mime_type and mime_type.startswith("image"):
@@ -154,6 +158,20 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
             file_content = file.read()
         base64_file = base64.b64encode(file_content).decode("utf-8")
 
+    return parse_image_with_gemini(
+        base64_file=base64_file, mime_type=mime_type, **kwargs
+    )
+
+
+def parse_image_with_gemini(
+    base64_file: str, mime_type: str = "image/png", **kwargs
+) -> List[Dict] | str:
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY environment variable is not set")
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{kwargs['model']}:generateContent?key={api_key}"
+
     if "system_prompt" in kwargs:
         prompt = kwargs["system_prompt"]
     else:
@@ -162,6 +180,12 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
         if kwargs["pages_per_split_"] == 1:
             custom_instruction = ""
         prompt = PARSER_PROMPT.format(custom_instructions=custom_instruction)
+
+    generation_config = {
+        "temperature": kwargs.get("temperature", 0),
+    }
+    if kwargs["model"] == "gemini-2.5-pro":
+        generation_config["thinkingConfig"] = {"thinkingBudget": 128}
 
     payload = {
         "contents": [
@@ -172,9 +196,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
                 ]
             }
         ],
-        "generationConfig": {
-            "temperature": kwargs.get("temperature", 0.2),
-        },
+        "generationConfig": generation_config,
     }
 
     headers = {"Content-Type": "application/json"}
@@ -193,24 +215,23 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
         if "text" in part
     )
 
-    combined_text = ""
+    combined_text = raw_text
     if "<output>" in raw_text:
         combined_text = raw_text.split("<output>")[-1].strip()
-    if "</output>" in result:
-        combined_text = result.split("</output>")[0].strip()
+    if "</output>" in combined_text:
+        combined_text = combined_text.split("</output>")[0].strip()
 
     token_usage = result["usageMetadata"]
     input_tokens = token_usage.get("promptTokenCount", 0)
     output_tokens = token_usage.get("candidatesTokenCount", 0)
     total_tokens = input_tokens + output_tokens
-
     return {
         "raw": combined_text.replace("<page-break>", "\n\n"),
         "segments": [
             {"metadata": {"page": kwargs.get("start", 0) + page_no}, "content": page}
             for page_no, page in enumerate(combined_text.split("<page-break>"), start=1)
         ],
-        "title": kwargs["title"],
+        "title": kwargs.get("title", ""),
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
@@ -303,7 +324,7 @@ def create_response(
     system_prompt: Optional[str] = None,
     user_prompt: Optional[str] = None,
     image_url: Optional[str] = None,
-    temperature: float = 0.2,
+    temperature: float = 0.0,
     max_tokens: int = 1024,
 ) -> Dict:
     # Initialize appropriate client
@@ -321,9 +342,63 @@ def create_response(
             base_url="https://api.fireworks.ai/inference/v1",
             api_key=os.environ["FIREWORKS_API_KEY"],
         ),
+        "anthropic": lambda: Anthropic(
+            api_key=os.environ["ANTHROPIC_API_KEY"],
+        ),
+        "gemini": lambda: None,  # Gemini is handled separately
     }
     assert api in clients, f"Unsupported API: {api}"
+
+    if api == "gemini":
+        image_url = image_url.split("data:image/png;base64,")[1]
+        response = parse_image_with_gemini(
+            base64_file=image_url,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+        )
+        return {
+            "response": response["raw"],
+            "usage": response["token_usage"],
+        }
+
     client = clients[api]()
+
+    if api == "anthropic":
+        image_media_type = image_url.split(";")[0].split(":")[1]
+        image_data = image_url.split(",")[1]
+        response = client.messages.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image_media_type,
+                                "data": image_data,
+                            },
+                        },
+                        {"type": "text", "text": user_prompt},
+                    ],
+                }
+            ],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        return {
+            "response": response.content[0].text,
+            "usage": {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+                "total_tokens": response.usage.input_tokens
+                + response.usage.output_tokens,
+            },
+        }
 
     # Prepare messages for the API call
     messages = get_messages(system_prompt, user_prompt, image_url)
@@ -345,7 +420,11 @@ def create_response(
 
     return {
         "response": page_text,
-        "usage": token_usage,
+        "usage": {
+            "input_tokens": getattr(token_usage, "prompt_tokens", 0),
+            "output_tokens": getattr(token_usage, "completion_tokens", 0),
+            "total_tokens": getattr(token_usage, "total_tokens", 0),
+        },
     }
 
 
@@ -400,7 +479,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             image_url=image_url,
-            temperature=kwargs.get("temperature", 0.2),
+            temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
         )
 
@@ -421,9 +500,9 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             (
                 page_num,
                 result,
-                token_usage.prompt_tokens,
-                token_usage.completion_tokens,
-                token_usage.total_tokens,
+                token_usage["input_tokens"],
+                token_usage["output_tokens"],
+                token_usage["total_tokens"],
             )
         )
 
