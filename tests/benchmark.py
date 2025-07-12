@@ -10,7 +10,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from lexoid.api import parse
-from lexoid.core.utils import calculate_similarities
+from benchmark_utils import calculate_similarities
 
 load_dotenv()
 
