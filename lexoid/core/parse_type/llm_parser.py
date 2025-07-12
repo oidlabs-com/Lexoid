@@ -1,3 +1,4 @@
+from PIL import Image
 import base64
 import io
 import mimetypes
@@ -14,6 +15,8 @@ from loguru import logger
 from openai import OpenAI
 from requests.exceptions import HTTPError
 from together import Together
+import torch
+from transformers import AutoProcessor, AutoModelForImageTextToText
 
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
@@ -65,13 +68,18 @@ def get_api_provider_for_model(model: str) -> str:
         return "fireworks"
     if model.startswith("claude"):
         return "anthropic"
+    if model.startswith("ds4sd/SmolDocling"):
+        return "local"
     raise ValueError(f"Unsupported model: {model}")
 
 
 @retry_on_http_error
 def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
-    if "api_provider" in kwargs and kwargs["api_provider"]:
-        return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
+    if "api_provider" in kwargs:
+        if kwargs["api_provider"] == "local":
+            return parse_with_local_model(path, **kwargs)
+        elif kwargs["api_provider"]:
+            return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
 
     model = kwargs.get("model", "gemini-2.0-flash")
     kwargs["model"] = model
@@ -80,8 +88,70 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
 
     if api_provider == "gemini":
         return parse_with_gemini(path, **kwargs)
-    else:
-        return parse_with_api(path, api=api_provider, **kwargs)
+    elif api_provider == "local":
+        return parse_with_local_model(path, **kwargs)
+    return parse_with_api(path, api=api_provider, **kwargs)
+
+
+def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
+    # Reference: https://huggingface.co/spaces/aabdullah27/SmolDocling-OCR-App/blob/main/app.py
+    model_name = kwargs.get("model", "ds4sd/SmolDocling-256M-preview")
+    if not model_name.startswith("ds4sd/SmolDocling"):
+        raise ValueError(
+            f"Local model parsing is only supported for 'ds4sd/SmolDocling*', got {model_name}"
+        )
+    processor = AutoProcessor.from_pretrained(model_name)
+    model = AutoModelForImageTextToText.from_pretrained(model_name)
+    images = convert_path_to_images(path)
+    pil_images = [
+        Image.open(io.BytesIO(base64.b64decode(image.split(",")[1])))
+        for _, image in images
+    ]
+    intruction = kwargs.get("docling_command", "Convert this page to docling.")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": intruction},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "<output>\n"},
+            ],
+        },
+    ]
+    prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+    inputs = processor(text=prompt, images=pil_images, return_tensors="pt")
+    with torch.no_grad():
+        generated_ids = model.generate(
+            **inputs, max_new_tokens=1500, do_sample=False, num_beams=1, temperature=1.0
+        )
+
+    prompt_length = inputs.input_ids.shape[1]
+    trimmed_generated_ids = generated_ids[:, prompt_length:]
+    output = (
+        processor.batch_decode(
+            trimmed_generated_ids,
+            skip_special_tokens=False,
+        )[0]
+        .strip()
+        .replace("<end_of_utterance>", "")
+    )
+    return {
+        "raw": output,
+        "segments": [
+            {
+                "metadata": {"page": kwargs.get("start", 0) + 1},
+                "content": output,
+            }
+        ],
+        "title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+    }
 
 
 def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
@@ -179,6 +249,27 @@ def parse_image_with_gemini(
             "total": total_tokens,
         },
     }
+
+
+def convert_path_to_images(path):
+    mime_type, _ = mimetypes.guess_type(path)
+    if mime_type and mime_type.startswith("image"):
+        # Single image processing
+        with open(path, "rb") as img_file:
+            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+            return [(0, f"data:{mime_type};base64,{image_base64}")]
+    elif mime_type and mime_type.startswith("application/pdf"):
+        # PDF processing
+        pdf_document = pdfium.PdfDocument(path)
+        return [
+            (
+                page_num,
+                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
+            )
+            for page_num in range(len(pdf_document))
+        ]
+    else:
+        raise ValueError(f"Unsupported file type: {mime_type}")
 
 
 def convert_pdf_page_to_base64(
@@ -376,6 +467,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             )
             for page_num in range(len(pdf_document))
         ]
+    images = convert_path_to_images(path)
 
     # Process each page/image
     all_results = []

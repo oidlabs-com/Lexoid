@@ -10,7 +10,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from lexoid.api import parse
-from lexoid.core.utils import calculate_similarities
+from benchmark_utils import calculate_similarities
 
 load_dotenv()
 
@@ -30,7 +30,7 @@ config_options = {
         # "claude-opus-4-20250514",
         # "claude-sonnet-4-20250514",
         # "claude-3-7-sonnet-20250219",
-        "claude-3-5-sonnet-20241022",
+        # "claude-3-5-sonnet-20241022",
         # # OpenAI models
         # "gpt-4.1",
         # "gpt-4.1-mini",
@@ -49,6 +49,8 @@ config_options = {
         # # # Model through fireworks
         # "accounts/fireworks/models/llama4-maverick-instruct-basic",
         # "accounts/fireworks/models/llama4-scout-instruct-basic",
+        # Local model
+        "ds4sd/SmolDocling-256M-preview",
     ],
     "framework": ["pdfminer", "pdfplumber"],
     "pages_per_split": [1, 2, 4, 8],
