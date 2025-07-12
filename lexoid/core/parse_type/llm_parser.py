@@ -12,6 +12,7 @@ import requests
 from anthropic import Anthropic
 from huggingface_hub import InferenceClient
 from loguru import logger
+from mistralai import Mistral
 from openai import OpenAI
 from requests.exceptions import HTTPError
 from together import Together
@@ -68,6 +69,8 @@ def get_api_provider_for_model(model: str) -> str:
         return "fireworks"
     if model.startswith("claude"):
         return "anthropic"
+    if model.startswith("mistral"):
+        return "mistral"
     if model.startswith("ds4sd/SmolDocling"):
         return "local"
     raise ValueError(f"Unsupported model: {model}")
@@ -350,6 +353,9 @@ def create_response(
             base_url="https://api.fireworks.ai/inference/v1",
             api_key=os.environ["FIREWORKS_API_KEY"],
         ),
+        "mistral": lambda: Mistral(
+            api_key=os.environ["MISTRAL_API_KEY"],
+        ),
         "anthropic": lambda: Anthropic(
             api_key=os.environ["ANTHROPIC_API_KEY"],
         ),
@@ -373,6 +379,32 @@ def create_response(
 
     client = clients[api]()
 
+    if api == "mistral":
+        if "ocr" not in model:
+            raise ValueError("Only OCR models are currently supported for Mistral")
+        response = client.ocr.process(
+            model=model,
+            document={
+                "type": "image_url",
+                "image_url": image_url,
+            },
+            include_image_base64=True,
+        )
+
+        class TokenUsage:
+            def __init__(self, prompt_tokens, completion_tokens, total_tokens):
+                self.prompt_tokens = prompt_tokens
+                self.completion_tokens = completion_tokens
+                self.total_tokens = total_tokens
+
+        return {
+            "response": response.pages[0].markdown,
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,  # Mistral does not provide token usage
+            },
+        }
     if api == "anthropic":
         image_media_type = image_url.split(";")[0].split(":")[1]
         image_data = image_url.split(",")[1]

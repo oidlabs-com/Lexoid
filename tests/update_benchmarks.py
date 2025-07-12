@@ -59,11 +59,11 @@ if __name__ == "__main__":
         description="Update benchmark tables in README.md and benchmark.rst from CSV"
     )
     parser.add_argument(
-        "--csv", default="outputs/results.csv", help="Path to benchmark.csv"
+        "--csv", default="tests/results.csv", help="Path to benchmark.csv"
     )
-    parser.add_argument("--md", default="../README.md", help="Path to README.md")
+    parser.add_argument("--md", default="README.md", help="Path to README.md")
     parser.add_argument(
-        "--rst", default="../docs/benchmark.rst", help="Path to benchmark.rst"
+        "--rst", default="docs/benchmark.rst", help="Path to benchmark.rst"
     )
     args = parser.parse_args()
 

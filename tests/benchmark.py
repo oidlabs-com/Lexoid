@@ -36,6 +36,8 @@ config_options = {
         # "gpt-4.1-mini",
         # "gpt-4o",
         # "gpt-4o-mini",
+        # Mistral models
+        "mistral-ocr-latest",
         # # Meta-LLAMA models through HF Hub
         # "meta-llama/Llama-3.2-11B-Vision-Instruct",
         # # # Meta-LLAMA models through Together AI
@@ -50,7 +52,7 @@ config_options = {
         # "accounts/fireworks/models/llama4-maverick-instruct-basic",
         # "accounts/fireworks/models/llama4-scout-instruct-basic",
         # Local model
-        "ds4sd/SmolDocling-256M-preview",
+        # "ds4sd/SmolDocling-256M-preview",
     ],
     "framework": ["pdfminer", "pdfplumber"],
     "pages_per_split": [1, 2, 4, 8],

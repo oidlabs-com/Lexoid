@@ -1931,6 +1931,28 @@ files = [
 ]
 
 [[package]]
+name = "mistralai"
+version = "1.9.2"
+description = "Python Client SDK for the Mistral AI API."
+optional = false
+python-versions = ">=3.9"
+files = [
+    {file = "mistralai-1.9.2-py3-none-any.whl", hash = "sha256:7c3fff00e50227d379dea82052455c2610612a8ef476fa97393191aeeb7ab15f"},
+    {file = "mistralai-1.9.2.tar.gz", hash = "sha256:c0c6d5aff18ffccbc0d22c06fbc84280d71eeaeb08fa4e1ef7326b36629cfb0b"},
+]
+
+[package.dependencies]
+eval-type-backport = ">=0.2.0"
+httpx = ">=0.28.1"
+pydantic = ">=2.10.3"
+python-dateutil = ">=2.8.2"
+typing-inspection = ">=0.4.0"
+
+[package.extras]
+agents = ["authlib (>=1.5.2,<2.0)", "griffe (>=1.7.3,<2.0)", "mcp (>=1.0,<2.0)"]
+gcp = ["google-auth (>=2.27.0)", "requests (>=2.32.3)"]
+
+[[package]]
 name = "mpmath"
 version = "1.3.0"
 description = "Python library for arbitrary-precision floating-point arithmetic"
@@ -4943,4 +4965,4 @@ propcache = ">=0.2.1"
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "541cdc1b0ab1e8956f0e2a934e71b26134a71b98cf4c6445f1efb08d5314b178"
+content-hash = "fb9d6203e53b94b8c773301c81b1520c2cfe551a229f11d308a5872372ce10a9"
