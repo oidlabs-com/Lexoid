@@ -114,7 +114,7 @@ print(parsed_md)
 
 ## Benchmark
 
-Results aggregated across 5 iterations each for 5 documents.
+Results aggregated across 11 documents.
 
 _Note:_ Benchmarks are currently done in the zero-shot setting.
 
