@@ -215,6 +215,12 @@ Here are the detailed parsing performance results for various models, sorted by 
      - 27.74
      - 0.01102
    * - 22
+     - ds4sd/SmolDocling-256M-preview
+     - 0.486 (±0.378)
+     - 0.583 (±0.355)
+     - 108.91
+     - 0.00000
+   * - 23
      - qwen/qwen-2.5-vl-7b-instruct
      - 0.469 (±0.364)
      - 0.617 (±0.441)

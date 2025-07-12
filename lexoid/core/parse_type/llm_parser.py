@@ -68,13 +68,18 @@ def get_api_provider_for_model(model: str) -> str:
         return "fireworks"
     if model.startswith("claude"):
         return "anthropic"
+    if model.startswith("ds4sd/SmolDocling"):
+        return "local"
     raise ValueError(f"Unsupported model: {model}")
 
 
 @retry_on_http_error
 def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
-    if "api_provider" in kwargs and kwargs["api_provider"]:
-        return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
+    if "api_provider" in kwargs:
+        if kwargs["api_provider"] == "local":
+            return parse_with_local_model(path, **kwargs)
+        elif kwargs["api_provider"]:
+            return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
 
     model = kwargs.get("model", "gemini-2.0-flash")
     kwargs["model"] = model
@@ -83,12 +88,18 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
 
     if api_provider == "gemini":
         return parse_with_gemini(path, **kwargs)
-    else:
-        return parse_with_api(path, api=api_provider, **kwargs)
+    elif api_provider == "local":
+        return parse_with_local_model(path, **kwargs)
+    return parse_with_api(path, api=api_provider, **kwargs)
 
 
 def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
+    # Reference: https://huggingface.co/spaces/aabdullah27/SmolDocling-OCR-App/blob/main/app.py
     model_name = kwargs.get("model", "ds4sd/SmolDocling-256M-preview")
+    if not model_name.startswith("ds4sd/SmolDocling"):
+        raise ValueError(
+            f"Local model parsing is only supported for 'ds4sd/SmolDocling*', got {model_name}"
+        )
     processor = AutoProcessor.from_pretrained(model_name)
     model = AutoModelForImageTextToText.from_pretrained(model_name)
     images = convert_path_to_images(path)
@@ -96,12 +107,13 @@ def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
         Image.open(io.BytesIO(base64.b64decode(image.split(",")[1])))
         for _, image in images
     ]
+    intruction = kwargs.get("docling_command", "Convert this page to docling.")
     messages = [
         {
             "role": "user",
             "content": [
                 {"type": "image"},
-                {"type": "text", "text": "Convert this page to docling."},
+                {"type": "text", "text": intruction},
             ],
         },
         {
@@ -113,13 +125,9 @@ def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
     ]
     prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
     inputs = processor(text=prompt, images=pil_images, return_tensors="pt")
-    with torch.no_grad():  # Add this to save memory
+    with torch.no_grad():
         generated_ids = model.generate(
-            **inputs,
-            max_new_tokens=1500,  # Increased for better results
-            do_sample=False,  # Deterministic generation
-            num_beams=1,  # Simple beam search
-            temperature=0,
+            **inputs, max_new_tokens=1500, do_sample=False, num_beams=1, temperature=1.0
         )
 
     prompt_length = inputs.input_ids.shape[1]

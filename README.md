@@ -141,4 +141,5 @@ _Note:_ Benchmarks are currently done in the zero-shot setting.
 | 19 | google/gemma-3-27b-it | 0.624 (±0.357) | 0.750 (±0.327) | 24.51 | 0.00020 |
 | 20 | gpt-4.1 | 0.622 (±0.314) | 0.782 (±0.191) | 34.66 | 0.01461 |
 | 21 | meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo | 0.559 (±0.233) | 0.822 (±0.119) | 27.74 | 0.01102 |
-| 22 | qwen/qwen-2.5-vl-7b-instruct | 0.469 (±0.364) | 0.617 (±0.441) | 13.23 | 0.00060 |
+| 22 | ds4sd/SmolDocling-256M-preview | 0.486 (±0.378) | 0.583 (±0.355) | 108.91 | 0.00000 |
+| 23 | qwen/qwen-2.5-vl-7b-instruct | 0.469 (±0.364) | 0.617 (±0.441) | 13.23 | 0.00060 |
