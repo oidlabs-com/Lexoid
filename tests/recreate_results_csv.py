@@ -5,9 +5,9 @@ import csv
 from benchmark_utils import calculate_similarities
 
 
-GROUND_TRUTH_DIR = "../examples/outputs"
-PREDICTION_PATTERN = "outputs/benchmark*/*_model=*, parser_type=*.md"
-OUTPUT_CSV = "outputs/document_results.csv"
+GROUND_TRUTH_DIR = "examples/outputs"
+PREDICTION_PATTERN = "tests/outputs/benchmark*/*_model=*, parser_type=*.md"
+OUTPUT_CSV = "tests/outputs/document_results.csv"
 
 
 def extract_metadata(pred_path):
