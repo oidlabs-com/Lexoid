@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.15"
+version = "0.1.16"
 description = ""
 authors = []
 readme = "README.md"

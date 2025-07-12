@@ -172,3 +172,15 @@
 
 ### Changed
 * Update benchmark logic and benchmark
+
+## [0.1.16]
+
+### Added
+* Support for SmolDocling
+* Support for Mistral OCR models
+
+### Changed
+* Update benchmark code and add more metrics
+
+### Fixed
+* Set thinking budget to fix gemini-2.5-pro thinking for too long
