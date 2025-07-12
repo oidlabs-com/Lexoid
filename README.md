@@ -114,28 +114,32 @@ print(parsed_md)
 
 ## Benchmark
 
-Results aggregated across 5 iterations each for 5 documents.
+Results aggregated across 11 documents.
 
 _Note:_ Benchmarks are currently done in the zero-shot setting.
 
-| Rank | Model | Mean Similarity | Std. Dev. | Time (s) | Cost ($) |
+| Rank | Model | SequenceMatcher Similarity | TFIDF Similarity | Time (s) | Cost ($) |
 | --- | --- | --- | --- | --- | --- |
-| 1 | gemini-2.0-flash | 0.829 | 0.102 | 7.41 | 0.00048 |
-| 2 | gemini-2.0-flash-001 | 0.814 | 0.176 | 6.85 | 0.000421 |
-| 3 | gemini-1.5-flash | 0.797 | 0.143 | 9.54 | 0.000238 |
-| 4 | gemini-2.0-pro-exp | 0.764 | 0.227 | 11.95 | TBA |
-| 5 | AUTO | 0.76 | 0.184 | 5.14 | 0.000217 |
-| 6 | gemini-2.0-flash-thinking-exp | 0.746 | 0.266 | 10.46 | TBA |
-| 7 | gemini-1.5-pro | 0.732 | 0.265 | 11.44 | 0.003332 |
-| 8 | accounts/fireworks/models/llama4-maverick-instruct-basic (via Fireworks) | 0.687 | 0.221 | 8.07 | 0.000419 |
-| 9 | gpt-4o | 0.687 | 0.247 | 10.16 | 0.004736 |
-| 10 | accounts/fireworks/models/llama4-scout-instruct-basic (via Fireworks) | 0.675 | 0.184 | 5.98 | 0.000226 |
-| 11 | gpt-4o-mini | 0.642 | 0.213 | 9.71 | 0.000275 |
-| 12 | gemma-3-27b-it (via OpenRouter) | 0.628 | 0.299 | 18.79 | 0.000096 |
-| 13 | gemini-1.5-flash-8b | 0.551 | 0.223 | 3.91 | 0.000055 |
-| 14 | Llama-Vision-Free (via Together AI) | 0.531 | 0.198 | 6.93 | 0 |
-| 15 | Llama-3.2-11B-Vision-Instruct-Turbo (via Together AI) | 0.524 | 0.192 | 3.68 | 0.00006 |
-| 16 | qwen/qwen-2.5-vl-7b-instruct (via OpenRouter) | 0.482 | 0.209 | 11.53 | 0.000052 |
-| 17 | Llama-3.2-90B-Vision-Instruct-Turbo (via Together AI) | 0.461 | 0.306 | 19.26 | 0.000426 |
-| 18 | Llama-3.2-11B-Vision-Instruct (via Hugging Face) | 0.451 | 0.257 | 4.54 | 0 |
-| 19 | microsoft/phi-4-multimodal-instruct (via OpenRouter) | 0.366 | 0.287 | 10.8 | 0.000019 |
+| 1 | gemini-2.5-pro | 0.907 (±0.151) | 0.973 (±0.053) | 22.23 | 0.02305 |
+| 2 | AUTO | 0.905 (±0.111) | 0.967 (±0.051) | 10.31 | 0.00068 |
+| 3 | gemini-2.5-flash | 0.902 (±0.151) | 0.984 (±0.030) | 48.67 | 0.01051 |
+| 4 | gemini-2.0-flash | 0.900 (±0.127) | 0.971 (±0.040) | 12.43 | 0.00081 |
+| 5 | claude-3-5-sonnet-20241022 | 0.873 (±0.195) | 0.937 (±0.095) | 16.86 | 0.01779 |
+| 6 | gemini-1.5-flash | 0.868 (±0.198) | 0.965 (±0.041) | 17.19 | 0.00044 |
+| 7 | claude-sonnet-4-20250514 | 0.814 (±0.197) | 0.903 (±0.150) | 21.99 | 0.02045 |
+| 8 | accounts/fireworks/models/llama4-scout-instruct-basic | 0.804 (±0.242) | 0.931 (±0.067) | 9.76 | 0.00087 |
+| 9 | claude-opus-4-20250514 | 0.798 (±0.230) | 0.878 (±0.159) | 21.01 | 0.09233 |
+| 10 | gpt-4o | 0.796 (±0.264) | 0.898 (±0.117) | 28.23 | 0.01473 |
+| 11 | accounts/fireworks/models/llama4-maverick-instruct-basic | 0.792 (±0.206) | 0.914 (±0.128) | 10.71 | 0.00149 |
+| 12 | gemini-1.5-pro | 0.782 (±0.341) | 0.833 (±0.252) | 27.13 | 0.01275 |
+| 13 | gpt-4.1-mini | 0.767 (±0.243) | 0.807 (±0.197) | 22.64 | 0.00352 |
+| 14 | gpt-4o-mini | 0.727 (±0.245) | 0.832 (±0.136) | 17.20 | 0.00650 |
+| 15 | meta-llama/Llama-Vision-Free | 0.682 (±0.223) | 0.847 (±0.135) | 12.31 | 0.00000 |
+| 16 | meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo | 0.677 (±0.226) | 0.850 (±0.134) | 7.23 | 0.00015 |
+| 17 | microsoft/phi-4-multimodal-instruct | 0.665 (±0.258) | 0.800 (±0.217) | 10.96 | 0.00049 |
+| 18 | claude-3-7-sonnet-20250219 | 0.634 (±0.395) | 0.752 (±0.298) | 70.10 | 0.01775 |
+| 19 | google/gemma-3-27b-it | 0.624 (±0.357) | 0.750 (±0.327) | 24.51 | 0.00020 |
+| 20 | gpt-4.1 | 0.622 (±0.314) | 0.782 (±0.191) | 34.66 | 0.01461 |
+| 21 | meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo | 0.559 (±0.233) | 0.822 (±0.119) | 27.74 | 0.01102 |
+| 22 | ds4sd/SmolDocling-256M-preview | 0.486 (±0.378) | 0.583 (±0.355) | 108.91 | 0.00000 |
+| 23 | qwen/qwen-2.5-vl-7b-instruct | 0.469 (±0.364) | 0.617 (±0.441) | 13.23 | 0.00060 |

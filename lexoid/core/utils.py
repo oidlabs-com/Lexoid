@@ -4,7 +4,6 @@ import mimetypes
 import os
 import re
 import sys
-from difflib import SequenceMatcher
 from hashlib import md5
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -16,7 +15,6 @@ import requests
 from bs4 import BeautifulSoup
 from docx2pdf import convert
 from loguru import logger
-from markdown import markdown
 from markdownify import markdownify as md
 from PIL import Image
 from PyQt5.QtCore import QMarginsF, QUrl
@@ -24,9 +22,6 @@ from PyQt5.QtGui import QPageLayout, QPageSize
 from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QApplication
-
-# Source: https://stackoverflow.com/a/12982689
-HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
@@ -65,48 +60,6 @@ def convert_image_to_pdf(image_path: str) -> bytes:
         pdf_buffer = io.BytesIO()
         img_rgb.save(pdf_buffer, format="PDF")
         return pdf_buffer.getvalue()
-
-
-def remove_html_tags(text: str):
-    html = markdown(text, extensions=["tables"])
-    return re.sub(HTML_TAG_PATTERN, " ", html)
-
-
-def clean_text(txt):
-    # Remove LaTeX commands (e.g. \command, \command[args]{args})
-    txt = re.sub(r"\\[a-zA-Z]+(\[[^\]]*\])?(\{[^}]*\})?", "", txt)
-
-    # Replace all blocks of whitespace (including tabs and newlines) with a single space
-    txt = re.sub(r"\s+", " ", txt)
-
-    # Remove all non-alphanumeric characters except spaces
-    txt = re.sub(r"[^a-zA-Z0-9 ]", "", txt)
-
-    return txt.strip()
-
-
-def calculate_similarity(
-    text1: str, text2: str, ignore_html: bool = True, diff_save_path: str = ""
-) -> float:
-    """Calculate similarity ratio between two texts using SequenceMatcher."""
-    if ignore_html:
-        text1 = remove_html_tags(text1)
-        text2 = remove_html_tags(text2)
-
-    text1 = clean_text(clean_text(text1))
-    text2 = clean_text(clean_text(text2))
-
-    sm = SequenceMatcher(None, text1, text2)
-    # Save the diff and the texts for debugging
-    with open(diff_save_path, "w") as f:
-        f.write(f"Text 1:\n{text1}\n\n")
-        f.write(f"Text 2:\n{text2}\n\n")
-        f.write("Differences:\n")
-        for tag, i1, i2, j1, j2 in sm.get_opcodes():
-            if tag == "equal":
-                continue
-            f.write(f"{tag} {text1[i1:i2]} -> {text2[j1:j2]}\n")
-    return sm.ratio()
 
 
 def convert_pdf_page_to_image(
@@ -369,7 +322,7 @@ def get_webpage_soup(url: str) -> BeautifulSoup:
                 await page.goto(url)
 
                 # Wait for Cloudflare check to complete
-                await page.wait_for_load_state("networkidle")
+                await page.wait_for_load_state("domcontentloaded")
 
                 # Additional wait for any dynamic content
                 try:

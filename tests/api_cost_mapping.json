@@ -1,9 +1,9 @@
 {
-    "gemini-2.5-flash-preview-04-17": {
-        "input": 0.15,
-        "output": 0.6
+    "gemini-2.5-flash": {
+        "input": 0.3,
+        "output": 2.5
     },
-    "gemini-2.5-pro-preview-03-25": {
+    "gemini-2.5-pro": {
         "input": 1.25,
         "output": 10
     },
@@ -36,6 +36,14 @@
     "gpt-4o-mini": {
         "input": 0.15,
         "output": 0.6
+    },
+    "gpt-4.1": {
+        "input": 2.0,
+        "output": 8
+    },
+    "gpt-4.1-mini": {
+        "input": 0.4,
+        "output": 1.6
     },
     "meta-llama/Llama-3.2-11B-Vision-Instruct": {
         "input": 0,
@@ -75,5 +83,26 @@
     "accounts/fireworks/models/llama4-scout-instruct-basic": {
         "input": 0.15,
         "output": 0.6
+    },
+    "mistral-ocr-latest": {
+        "input": 0,
+        "input-image": 0.001,
+        "output": 0
+    },
+    "claude-opus-4-20250514": {
+        "input": 15,
+        "output": 75
+    },
+    "claude-sonnet-4-20250514": {
+        "input": 3,
+        "output": 15
+    },
+    "claude-3-7-sonnet-20250219": {
+        "input": 3,
+        "output": 15
+    },
+    "claude-3-5-sonnet-20241022": {
+        "input": 3,
+        "output": 15
     }
 }
