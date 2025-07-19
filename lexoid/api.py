@@ -7,27 +7,27 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Optional, Union, Dict, List
+from typing import Dict, List, Optional, Union
 
 from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import (
-    parse_llm_doc,
-    create_response,
     convert_doc_to_base64_images,
+    create_response,
     get_api_provider_for_model,
+    parse_llm_doc,
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
     convert_to_pdf,
+    create_sub_pdf,
     download_file,
-    is_supported_url_file_type,
+    get_webpage_soup,
     is_supported_file_type,
+    is_supported_url_file_type,
     recursive_read_html,
     router,
     split_pdf,
-    create_sub_pdf,
-    get_webpage_soup,
 )
 
 
@@ -212,7 +212,10 @@ def parse(
             if is_supported_url_file_type(path):
                 path = download_file(path, download_dir)
             elif as_pdf:
-                kwargs["title"] = get_webpage_soup(path).title.string.strip()
+                soup = get_webpage_soup(path)
+                kwargs["title"] = (
+                    soup.title.string.strip() if soup.title else "Untitled"
+                )
                 pdf_filename = kwargs.get("save_filename", f"webpage_{int(time())}.pdf")
                 if not pdf_filename.endswith(".pdf"):
                     pdf_filename += ".pdf"
@@ -221,9 +224,9 @@ def parse(
             else:
                 return recursive_read_html(path, depth)
 
-        assert is_supported_file_type(
-            path
-        ), f"Unsupported file type {os.path.splitext(path)[1]}"
+        assert is_supported_file_type(path), (
+            f"Unsupported file type {os.path.splitext(path)[1]}"
+        )
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")

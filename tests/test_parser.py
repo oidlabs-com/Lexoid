@@ -171,6 +171,17 @@ async def test_parsing_txt_type():
 
 
 @pytest.mark.asyncio
+async def test_parsing_url_txt_type():
+    sample_url = "https://www.justice.gov/archive/enron/exhibit/02-28/BBC-0001/OCR/EXH033-00243.TXT"
+    parser_type = "AUTO"
+    results = parse(
+        sample_url, parser_type, page_nums=1, pages_per_split=1, as_pdf=True
+    )["raw"]
+    assert len([results]) == 1
+    assert "David W Delainey" in results
+
+
+@pytest.mark.asyncio
 async def test_parsing_docx_type():
     sample = "examples/inputs/sample.docx"
     parser_type = "STATIC_PARSE"
