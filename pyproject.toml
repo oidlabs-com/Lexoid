@@ -34,6 +34,7 @@ mistralai = "^1.8.2"
 anthropic = "^0.55.0"
 transformers = "^4.51.3"
 torch = "^2.7.0"
+scikit-learn = "^1.7.1"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
