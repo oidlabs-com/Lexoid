@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from loguru import logger
 
 from lexoid.api import parse
-from lexoid.core.utils import calculate_similarity
+from benchmark_utils import calculate_similarities
 
 load_dotenv()
 output_dir = "tests/outputs"
@@ -46,7 +46,7 @@ async def test_llm_parse(model):
     # save the result to a file
     with open(f"{output_dir}/input_table_{model.replace('/', '_')}.md", "w") as f:
         f.write(result)
-    score = calculate_similarity(result, expected_ouput)
+    score = calculate_similarities(result, expected_ouput)["sequence_matcher"]
     assert round(score, 3) > 0.75
 
 
@@ -65,7 +65,7 @@ async def test_jpg_parse(model):
     m_name = model.replace("/", "_")
     with open(f"{output_dir}/input_image_{m_name}.md", "w") as f:
         f.write(result)
-    score = calculate_similarity(result, expected_ouput)
+    score = calculate_similarities(result, expected_ouput)["sequence_matcher"]
     assert round(score, 3) > 0.8
 
 

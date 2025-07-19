@@ -84,7 +84,7 @@ def calculate_similarities(
     text2: str,
     ignore_html: bool = True,
     diff_save_path: str = "",
-) -> float:
+) -> dict:
     """Calculate similarity ratio between two texts using SequenceMatcher."""
     if ignore_html:
         text1 = remove_html_tags(text1)
