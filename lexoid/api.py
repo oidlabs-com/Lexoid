@@ -213,13 +213,12 @@ def parse(
                 path = download_file(path, download_dir)
             elif as_pdf:
                 soup = get_webpage_soup(path)
-                kwargs["title"] = (
-                    soup.title.string.strip() if soup.title else "Untitled"
-                )
+                kwargs["title"] = str(soup.title).strip() if soup.title else "Untitled"
                 pdf_filename = kwargs.get("save_filename", f"webpage_{int(time())}.pdf")
                 if not pdf_filename.endswith(".pdf"):
                     pdf_filename += ".pdf"
                 pdf_path = os.path.join(download_dir, pdf_filename)
+                logger.debug(f"Converting webpage to PDF: {pdf_path}")
                 path = convert_to_pdf(path, pdf_path)
             else:
                 return recursive_read_html(path, depth)
