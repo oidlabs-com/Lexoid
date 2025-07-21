@@ -79,12 +79,13 @@ def convert_pdf_page_to_image(
 
 def get_file_type(path: str) -> str:
     """Get the file type of a file based on its extension."""
-    return mimetypes.guess_type(path)[0]
+    return mimetypes.guess_type(path)[0] or ""
 
 
 def is_supported_file_type(path: str) -> bool:
     """Check if the file type is supported for parsing."""
     file_type = get_file_type(path)
+    logger.debug(f"File type: {file_type}")
     if (
         file_type == "application/pdf"
         or "wordprocessing" in file_type
@@ -136,12 +137,20 @@ def download_file(url: str, temp_dir: str) -> str:
     Returns:
         str: The path to the downloaded file.
     """
+    supported_extensions = [".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".gif"]
     response = requests.get(url)
     file_name = os.path.basename(urlparse(url).path)
-    if not file_name:
+    ext = os.path.splitext(file_name)[1].lower()
+    if ext not in supported_extensions:
+        ext = None
+
+    if not file_name or not ext:
         content_type = response.headers.get("Content-Type", "")
         ext = mimetypes.guess_extension(content_type)
-        file_name = f"downloaded_file{ext}" if ext else "downloaded_file"
+        if not file_name:
+            file_name = f"downloaded_file{ext}" if ext else "downloaded_file"
+        else:
+            file_name = f"{file_name}{ext}" if ext else file_name
 
     file_path = os.path.join(temp_dir, file_name)
     with open(file_path, "wb") as f:

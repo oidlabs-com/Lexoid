@@ -4,11 +4,11 @@
 import os
 
 import pytest
+from benchmark_utils import calculate_similarities
 from dotenv import load_dotenv
 from loguru import logger
 
 from lexoid.api import parse
-from benchmark_utils import calculate_similarities
 
 load_dotenv()
 output_dir = "tests/outputs"
@@ -174,11 +174,27 @@ async def test_parsing_txt_type():
 async def test_parsing_url_txt_type():
     sample_url = "https://www.justice.gov/archive/enron/exhibit/02-28/BBC-0001/OCR/EXH033-00243.TXT"
     parser_type = "AUTO"
-    results = parse(
+    results_1 = parse(
+        sample_url, parser_type, page_nums=1, pages_per_split=1, as_pdf=False
+    )["raw"]
+    assert len([results_1]) == 1
+    assert "David W Delainey" in results_1
+
+    results_2 = parse(
         sample_url, parser_type, page_nums=1, pages_per_split=1, as_pdf=True
     )["raw"]
-    assert len([results]) == 1
-    assert "David W Delainey" in results
+    assert len([results_2]) == 1
+    assert "David W Delainey" in results_2
+
+
+@pytest.mark.asyncio
+async def test_parsing_arxiv_url():
+    sample_url = "https://arxiv.org/pdf/2506.06576"
+    parser_type = "AUTO"
+    result = parse(sample_url, parser_type, page_nums=1, pages_per_split=1, as_pdf=True)
+    assert result is not None
+    assert "2506.06576" in result["raw"]
+    assert "Future of Work with AI Agents" in result["raw"]
 
 
 @pytest.mark.asyncio
