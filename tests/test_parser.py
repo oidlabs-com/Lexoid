@@ -174,11 +174,17 @@ async def test_parsing_txt_type():
 async def test_parsing_url_txt_type():
     sample_url = "https://www.justice.gov/archive/enron/exhibit/02-28/BBC-0001/OCR/EXH033-00243.TXT"
     parser_type = "AUTO"
-    results = parse(
+    results_1 = parse(
+        sample_url, parser_type, page_nums=1, pages_per_split=1, as_pdf=False
+    )["raw"]
+    assert len([results_1]) == 1
+    assert "David W Delainey" in results_1
+
+    results_2 = parse(
         sample_url, parser_type, page_nums=1, pages_per_split=1, as_pdf=True
     )["raw"]
-    assert len([results]) == 1
-    assert "David W Delainey" in results
+    assert len([results_2]) == 1
+    assert "David W Delainey" in results_2
 
 
 @pytest.mark.asyncio

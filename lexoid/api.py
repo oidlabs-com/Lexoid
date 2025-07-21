@@ -218,7 +218,7 @@ def parse(
                 if not pdf_filename.endswith(".pdf"):
                     pdf_filename += ".pdf"
                 pdf_path = os.path.join(download_dir, pdf_filename)
-                logger.debug(f"Converting webpage to PDF: {pdf_path}")
+                logger.debug("Converting webpage to PDF...")
                 path = convert_to_pdf(path, pdf_path)
             else:
                 return recursive_read_html(path, depth)
@@ -229,6 +229,7 @@ def parse(
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
+            logger.debug("Converting file to PDF")
             path = convert_to_pdf(path, pdf_path)
 
         if "page_nums" in kwargs and path.lower().endswith(".pdf"):
