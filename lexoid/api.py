@@ -7,8 +7,8 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Dict, List, Optional, Union
-
+from typing import Dict, List, Optional, Union, Type, Any
+import dataclasses
 from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import (
@@ -29,6 +29,9 @@ from lexoid.core.utils import (
     router,
     split_pdf,
 )
+
+from dataclasses import dataclass, fields, asdict, is_dataclass
+import json
 
 
 class ParserType(Enum):
@@ -346,7 +349,7 @@ def parse(
 
 def parse_with_schema(
     path: str,
-    schema: Dict,
+    schema: Union[Dict, Type],
     api: Optional[str] = None,
     model: str = "gpt-4o-mini",
     **kwargs,
@@ -368,6 +371,8 @@ def parse_with_schema(
         api = get_api_provider_for_model(model)
         logger.debug(f"Using API provider: {api}")
 
+    json_schema = _convert_schema_to_dict(schema)
+
     system_prompt = f"""
         The output should be formatted as a JSON instance that conforms to the JSON schema below.
 
@@ -384,7 +389,7 @@ def parse_with_schema(
         }}, the object {{"foo": ["bar", "baz"]}} is valid. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not.
 
         Here is the output schema:
-        {json.dumps(schema, indent=2)}
+        {json.dumps(json_schema, indent=2)}
 
         """
 
@@ -410,3 +415,143 @@ def parse_with_schema(
         responses.append(new_dict)
 
     return responses
+
+
+def _convert_schema_to_dict(schema: Union[Dict, Type]) -> Dict:
+    """
+    Convert a dataclass type or existing dict schema to a JSON schema dictionary.
+
+    Args:
+        schema: Either a dictionary (JSON schema) or a dataclass type
+
+    Returns:
+        Dict: JSON schema dictionary
+    """
+    if isinstance(schema, dict):
+        return schema
+
+    # Handle dataclass types
+    if hasattr(schema, "__dataclass_fields__"):
+        return _dataclass_to_json_schema(schema)
+
+    raise ValueError(f"Unsupported schema type: {type(schema)}")
+
+
+def _dataclass_to_json_schema(dataclass_type: Type) -> Dict:
+    """
+    Convert a dataclass type to a JSON schema dictionary.
+
+    Args:
+        dataclass_type: A dataclass type
+
+    Returns:
+        Dict: JSON schema representation
+    """
+    properties = {}
+    required_fields = []
+
+    for field in fields(dataclass_type):
+        field_schema = _get_field_json_schema(field)
+        properties[field.name] = field_schema
+
+        # Check if field is required (no default value)
+        # Fixed: Use dataclasses.MISSING instead of dataclass.MISSING
+        if field.default == field.default_factory == dataclasses.MISSING:
+            required_fields.append(field.name)
+
+    schema = {"type": "object", "properties": properties}
+
+    if required_fields:
+        schema["required"] = required_fields
+
+    # Add enhanced attributes if they exist
+    if hasattr(dataclass_type, "sample_values") or hasattr(
+        dataclass_type, "alternate_keys"
+    ):
+        schema["lexoid_metadata"] = {}
+
+        # Try to get sample values from class or instance
+        try:
+            temp_instance = dataclass_type()
+            if hasattr(temp_instance, "sample_values"):
+                schema["lexoid_metadata"]["sample_values"] = temp_instance.sample_values
+            if hasattr(temp_instance, "alternate_keys"):
+                schema["lexoid_metadata"]["alternate_keys"] = (
+                    temp_instance.alternate_keys
+                )
+        except:
+            # If we can't instantiate, look for class attributes
+            if hasattr(dataclass_type, "sample_values"):
+                schema["lexoid_metadata"]["sample_values"] = (
+                    dataclass_type.sample_values
+                )
+            if hasattr(dataclass_type, "alternate_keys"):
+                schema["lexoid_metadata"]["alternate_keys"] = (
+                    dataclass_type.alternate_keys
+                )
+    print(f"how schema looks like:\n {schema}")
+
+    return schema
+
+
+def _get_field_json_schema(field) -> Dict:
+    """
+    Convert a dataclass field to JSON schema property definition.
+    """
+    field_type = field.type
+
+    # Handle basic types
+    if field_type is str:
+        return {"type": "string"}
+    elif field_type is int:
+        return {"type": "integer"}
+    elif field_type is float:
+        return {"type": "number"}
+    elif field_type is bool:
+        return {"type": "boolean"}
+    elif field_type is list:
+        return {"type": "array"}
+    elif field_type is dict:
+        return {"type": "object"}
+
+    if is_dataclass(field_type):
+        return _dataclass_to_json_schema(field_type)
+
+    # Handle typing module types
+    origin = getattr(field_type, "__origin__", None)
+    args = getattr(field_type, "__args__", ())
+
+    if origin is Union:
+        if len(args) == 2 and type(None) in args:
+            non_none_type = next(arg for arg in args if arg is not type(None))
+            base_schema = _type_to_json_schema(non_none_type)
+            return base_schema
+        return {"anyOf": [_type_to_json_schema(arg) for arg in args]}
+    elif origin is list:
+        item_type = args[0] if args else str
+        return {"type": "array", "items": _type_to_json_schema(item_type)}
+    elif origin is dict:
+        return {"type": "object"}
+
+    # Fallback
+    return {"type": "string"}
+
+
+def _type_to_json_schema(python_type) -> Dict:
+    """Convert a Python type to JSON schema type definition."""
+    if python_type is str:
+        return {"type": "string"}
+    elif python_type is int:
+        return {"type": "integer"}
+    elif python_type is float:
+        return {"type": "number"}
+    elif python_type is bool:
+        return {"type": "boolean"}
+    elif python_type is list:
+        return {"type": "array"}
+    elif python_type is dict:
+        return {"type": "object"}
+    elif is_dataclass(python_type):  # Add this check
+        return _dataclass_to_json_schema(python_type)
+    else:
+        return {"type": "string"}  # Default fallback
