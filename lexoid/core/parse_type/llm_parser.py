@@ -1,3 +1,4 @@
+from PIL import Image
 import base64
 import io
 import mimetypes
@@ -8,11 +9,15 @@ from typing import Dict, List, Optional, Tuple
 
 import pypdfium2 as pdfium
 import requests
+from anthropic import Anthropic
 from huggingface_hub import InferenceClient
 from loguru import logger
+from mistralai import Mistral
 from openai import OpenAI
 from requests.exceptions import HTTPError
 from together import Together
+import torch
+from transformers import AutoProcessor, AutoModelForImageTextToText
 
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
@@ -49,26 +54,107 @@ def retry_on_http_error(func):
     return wrapper
 
 
-@retry_on_http_error
-def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
-    if "api_provider" in kwargs and kwargs["api_provider"]:
-        return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
-    if "model" not in kwargs:
-        kwargs["model"] = "gemini-2.0-flash"
-    model = kwargs.get("model")
+def get_api_provider_for_model(model: str) -> str:
     if model.startswith("gemini"):
-        return parse_with_gemini(path, **kwargs)
+        return "gemini"
     if model.startswith("gpt"):
-        return parse_with_api(path, api="openai", **kwargs)
+        return "openai"
     if model.startswith("meta-llama"):
         if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
-            return parse_with_api(path, api="together", **kwargs)
-        return parse_with_api(path, api="huggingface", **kwargs)
+            return "together"
+        return "huggingface"
     if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
-        return parse_with_api(path, api="openrouter", **kwargs)
+        return "openrouter"
     if model.startswith("accounts/fireworks"):
-        return parse_with_api(path, api="fireworks", **kwargs)
+        return "fireworks"
+    if model.startswith("claude"):
+        return "anthropic"
+    if model.startswith("mistral"):
+        return "mistral"
+    if model.startswith("ds4sd/SmolDocling"):
+        return "local"
     raise ValueError(f"Unsupported model: {model}")
+
+
+@retry_on_http_error
+def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
+    if "api_provider" in kwargs:
+        if kwargs["api_provider"] == "local":
+            return parse_with_local_model(path, **kwargs)
+        elif kwargs["api_provider"]:
+            return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
+
+    model = kwargs.get("model", "gemini-2.0-flash")
+    kwargs["model"] = model
+
+    api_provider = get_api_provider_for_model(model)
+
+    if api_provider == "gemini":
+        return parse_with_gemini(path, **kwargs)
+    elif api_provider == "local":
+        return parse_with_local_model(path, **kwargs)
+    return parse_with_api(path, api=api_provider, **kwargs)
+
+
+def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
+    # Reference: https://huggingface.co/spaces/aabdullah27/SmolDocling-OCR-App/blob/main/app.py
+    model_name = kwargs.get("model", "ds4sd/SmolDocling-256M-preview")
+    if not model_name.startswith("ds4sd/SmolDocling"):
+        raise ValueError(
+            f"Local model parsing is only supported for 'ds4sd/SmolDocling*', got {model_name}"
+        )
+    processor = AutoProcessor.from_pretrained(model_name)
+    model = AutoModelForImageTextToText.from_pretrained(model_name)
+    images = convert_path_to_images(path)
+    pil_images = [
+        Image.open(io.BytesIO(base64.b64decode(image.split(",")[1])))
+        for _, image in images
+    ]
+    intruction = kwargs.get("docling_command", "Convert this page to docling.")
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": intruction},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "<output>\n"},
+            ],
+        },
+    ]
+    prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+    inputs = processor(text=prompt, images=pil_images, return_tensors="pt")
+    with torch.no_grad():
+        generated_ids = model.generate(
+            **inputs, max_new_tokens=1500, do_sample=False, num_beams=1, temperature=1.0
+        )
+
+    prompt_length = inputs.input_ids.shape[1]
+    trimmed_generated_ids = generated_ids[:, prompt_length:]
+    output = (
+        processor.batch_decode(
+            trimmed_generated_ids,
+            skip_special_tokens=False,
+        )[0]
+        .strip()
+        .replace("<end_of_utterance>", "")
+    )
+    return {
+        "raw": output,
+        "segments": [
+            {
+                "metadata": {"page": kwargs.get("start", 0) + 1},
+                "content": output,
+            }
+        ],
+        "title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+    }
 
 
 def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
@@ -106,6 +192,12 @@ def parse_image_with_gemini(
             custom_instruction = ""
         prompt = PARSER_PROMPT.format(custom_instructions=custom_instruction)
 
+    generation_config = {
+        "temperature": kwargs.get("temperature", 0),
+    }
+    if kwargs["model"] == "gemini-2.5-pro":
+        generation_config["thinkingConfig"] = {"thinkingBudget": 128}
+
     payload = {
         "contents": [
             {
@@ -115,9 +207,7 @@ def parse_image_with_gemini(
                 ]
             }
         ],
-        "generationConfig": {
-            "temperature": kwargs.get("temperature", 0.2),
-        },
+        "generationConfig": generation_config,
     }
 
     headers = {"Content-Type": "application/json"}
@@ -162,6 +252,27 @@ def parse_image_with_gemini(
             "total": total_tokens,
         },
     }
+
+
+def convert_path_to_images(path):
+    mime_type, _ = mimetypes.guess_type(path)
+    if mime_type and mime_type.startswith("image"):
+        # Single image processing
+        with open(path, "rb") as img_file:
+            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
+            return [(0, f"data:{mime_type};base64,{image_base64}")]
+    elif mime_type and mime_type.startswith("application/pdf"):
+        # PDF processing
+        pdf_document = pdfium.PdfDocument(path)
+        return [
+            (
+                page_num,
+                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
+            )
+            for page_num in range(len(pdf_document))
+        ]
+    else:
+        raise ValueError(f"Unsupported file type: {mime_type}")
 
 
 def convert_pdf_page_to_base64(
@@ -224,7 +335,7 @@ def create_response(
     system_prompt: Optional[str] = None,
     user_prompt: Optional[str] = None,
     image_url: Optional[str] = None,
-    temperature: float = 0.2,
+    temperature: float = 0.0,
     max_tokens: int = 1024,
 ) -> Dict:
     # Initialize appropriate client
@@ -241,6 +352,12 @@ def create_response(
         "fireworks": lambda: OpenAI(
             base_url="https://api.fireworks.ai/inference/v1",
             api_key=os.environ["FIREWORKS_API_KEY"],
+        ),
+        "mistral": lambda: Mistral(
+            api_key=os.environ["MISTRAL_API_KEY"],
+        ),
+        "anthropic": lambda: Anthropic(
+            api_key=os.environ["ANTHROPIC_API_KEY"],
         ),
         "gemini": lambda: None,  # Gemini is handled separately
     }
@@ -262,6 +379,67 @@ def create_response(
 
     client = clients[api]()
 
+    if api == "mistral":
+        if "ocr" not in model:
+            raise ValueError("Only OCR models are currently supported for Mistral")
+        response = client.ocr.process(
+            model=model,
+            document={
+                "type": "image_url",
+                "image_url": image_url,
+            },
+            include_image_base64=True,
+        )
+
+        class TokenUsage:
+            def __init__(self, prompt_tokens, completion_tokens, total_tokens):
+                self.prompt_tokens = prompt_tokens
+                self.completion_tokens = completion_tokens
+                self.total_tokens = total_tokens
+
+        return {
+            "response": response.pages[0].markdown,
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,  # Mistral does not provide token usage
+            },
+        }
+    if api == "anthropic":
+        image_media_type = image_url.split(";")[0].split(":")[1]
+        image_data = image_url.split(",")[1]
+        response = client.messages.create(
+            model=model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": image_media_type,
+                                "data": image_data,
+                            },
+                        },
+                        {"type": "text", "text": user_prompt},
+                    ],
+                }
+            ],
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        return {
+            "response": response.content[0].text,
+            "usage": {
+                "input_tokens": response.usage.input_tokens,
+                "output_tokens": response.usage.output_tokens,
+                "total_tokens": response.usage.input_tokens
+                + response.usage.output_tokens,
+            },
+        }
+
     # Prepare messages for the API call
     messages = get_messages(system_prompt, user_prompt, image_url)
 
@@ -282,7 +460,11 @@ def create_response(
 
     return {
         "response": page_text,
-        "usage": token_usage,
+        "usage": {
+            "input_tokens": getattr(token_usage, "prompt_tokens", 0),
+            "output_tokens": getattr(token_usage, "completion_tokens", 0),
+            "total_tokens": getattr(token_usage, "total_tokens", 0),
+        },
     }
 
 
@@ -317,6 +499,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             )
             for page_num in range(len(pdf_document))
         ]
+    images = convert_path_to_images(path)
 
     # Process each page/image
     all_results = []
@@ -336,7 +519,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             image_url=image_url,
-            temperature=kwargs.get("temperature", 0.2),
+            temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
         )
 
@@ -357,9 +540,9 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             (
                 page_num,
                 result,
-                token_usage.prompt_tokens,
-                token_usage.completion_tokens,
-                token_usage.total_tokens,
+                token_usage["input_tokens"],
+                token_usage["output_tokens"],
+                token_usage["total_tokens"],
             )
         )
 

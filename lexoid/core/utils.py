@@ -4,7 +4,6 @@ import mimetypes
 import os
 import re
 import sys
-from difflib import SequenceMatcher
 from hashlib import md5
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -16,7 +15,6 @@ import requests
 from bs4 import BeautifulSoup
 from docx2pdf import convert
 from loguru import logger
-from markdown import markdown
 from markdownify import markdownify as md
 from PIL import Image
 from PyQt5.QtCore import QMarginsF, QUrl
@@ -24,9 +22,6 @@ from PyQt5.QtGui import QPageLayout, QPageSize
 from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QApplication
-
-# Source: https://stackoverflow.com/a/12982689
-HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
@@ -67,19 +62,6 @@ def convert_image_to_pdf(image_path: str) -> bytes:
         return pdf_buffer.getvalue()
 
 
-def remove_html_tags(text: str):
-    html = markdown(text, extensions=["tables"])
-    return re.sub(HTML_TAG_PATTERN, "", html)
-
-
-def calculate_similarity(text1: str, text2: str, ignore_html=True) -> float:
-    """Calculate similarity ratio between two texts using SequenceMatcher."""
-    if ignore_html:
-        text1 = remove_html_tags(text1)
-        text2 = remove_html_tags(text2)
-    return SequenceMatcher(None, text1, text2).ratio()
-
-
 def convert_pdf_page_to_image(
     pdf_document: pypdfium2.PdfDocument, page_number: int
 ) -> bytes:
@@ -97,12 +79,13 @@ def convert_pdf_page_to_image(
 
 def get_file_type(path: str) -> str:
     """Get the file type of a file based on its extension."""
-    return mimetypes.guess_type(path)[0]
+    return mimetypes.guess_type(path)[0] or ""
 
 
 def is_supported_file_type(path: str) -> bool:
     """Check if the file type is supported for parsing."""
     file_type = get_file_type(path)
+    logger.debug(f"File type: {file_type}")
     if (
         file_type == "application/pdf"
         or "wordprocessing" in file_type
@@ -154,12 +137,20 @@ def download_file(url: str, temp_dir: str) -> str:
     Returns:
         str: The path to the downloaded file.
     """
+    supported_extensions = [".pdf", ".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".gif"]
     response = requests.get(url)
     file_name = os.path.basename(urlparse(url).path)
-    if not file_name:
+    ext = os.path.splitext(file_name)[1].lower()
+    if ext not in supported_extensions:
+        ext = None
+
+    if not file_name or not ext:
         content_type = response.headers.get("Content-Type", "")
         ext = mimetypes.guess_extension(content_type)
-        file_name = f"downloaded_file{ext}" if ext else "downloaded_file"
+        if not file_name:
+            file_name = f"downloaded_file{ext}" if ext else "downloaded_file"
+        else:
+            file_name = f"{file_name}{ext}" if ext else file_name
 
     file_path = os.path.join(temp_dir, file_name)
     with open(file_path, "wb") as f:
@@ -340,7 +331,7 @@ def get_webpage_soup(url: str) -> BeautifulSoup:
                 await page.goto(url)
 
                 # Wait for Cloudflare check to complete
-                await page.wait_for_load_state("networkidle")
+                await page.wait_for_load_state("domcontentloaded")
 
                 # Additional wait for any dynamic content
                 try:

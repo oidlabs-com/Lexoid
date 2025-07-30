@@ -7,26 +7,27 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Union, Dict, List
+from typing import Dict, List, Optional, Union
 
 from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import (
-    parse_llm_doc,
-    create_response,
     convert_doc_to_base64_images,
+    create_response,
+    get_api_provider_for_model,
+    parse_llm_doc,
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
     convert_to_pdf,
+    create_sub_pdf,
     download_file,
-    is_supported_url_file_type,
+    get_webpage_soup,
     is_supported_file_type,
+    is_supported_url_file_type,
     recursive_read_html,
     router,
     split_pdf,
-    create_sub_pdf,
-    get_webpage_soup,
 )
 
 
@@ -42,22 +43,29 @@ def retry_with_different_parser_type(func):
         try:
             if len(args) > 0:
                 kwargs["path"] = args[0]
-            if len(args) > 1 and args[1] == ParserType.AUTO:
+            if len(args) > 1:
                 router_priority = kwargs.get("router_priority", "speed")
-                parser_type = ParserType[router(kwargs["path"], router_priority)]
-                kwargs["routed"] = True
+                if args[1] == ParserType.AUTO:
+                    parser_type = ParserType[router(kwargs["path"], router_priority)]
+                    logger.debug(f"Auto-detected parser type: {parser_type}")
+                    kwargs["routed"] = True
+                else:
+                    parser_type = args[1]
                 kwargs["parser_type"] = parser_type
-                logger.debug(f"Auto-detected parser type: {parser_type}")
             return func(**kwargs)
         except Exception as e:
-            if kwargs.get("parser_type") == ParserType.LLM_PARSE:
+            if kwargs.get("parser_type") == ParserType.LLM_PARSE and kwargs.get(
+                "routed", False
+            ):
                 logger.warning(
                     f"LLM_PARSE failed with error: {e}. Retrying with STATIC_PARSE."
                 )
                 kwargs["parser_type"] = ParserType.STATIC_PARSE
                 kwargs["routed"] = False
                 return func(**kwargs)
-            elif kwargs.get("parser_type") == ParserType.STATIC_PARSE:
+            elif kwargs.get("parser_type") == ParserType.STATIC_PARSE and kwargs.get(
+                "routed", False
+            ):
                 logger.warning(
                     f"STATIC_PARSE failed with error: {e}. Retrying with LLM_PARSE."
                 )
@@ -204,21 +212,24 @@ def parse(
             if is_supported_url_file_type(path):
                 path = download_file(path, download_dir)
             elif as_pdf:
-                kwargs["title"] = get_webpage_soup(path).title.string.strip()
+                soup = get_webpage_soup(path)
+                kwargs["title"] = str(soup.title).strip() if soup.title else "Untitled"
                 pdf_filename = kwargs.get("save_filename", f"webpage_{int(time())}.pdf")
                 if not pdf_filename.endswith(".pdf"):
                     pdf_filename += ".pdf"
                 pdf_path = os.path.join(download_dir, pdf_filename)
+                logger.debug("Converting webpage to PDF...")
                 path = convert_to_pdf(path, pdf_path)
             else:
                 return recursive_read_html(path, depth)
 
-        assert is_supported_file_type(
-            path
-        ), f"Unsupported file type {os.path.splitext(path)[1]}"
+        assert is_supported_file_type(path), (
+            f"Unsupported file type {os.path.splitext(path)[1]}"
+        )
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
+            logger.debug("Converting file to PDF")
             path = convert_to_pdf(path, pdf_path)
 
         if "page_nums" in kwargs and path.lower().endswith(".pdf"):
@@ -334,7 +345,11 @@ def parse(
 
 
 def parse_with_schema(
-    path: str, schema: Dict, api: str = "openai", model: str = "gpt-4o-mini", **kwargs
+    path: str,
+    schema: Dict,
+    api: Optional[str] = None,
+    model: str = "gpt-4o-mini",
+    **kwargs,
 ) -> List[List[Dict]]:
     """
     Parses a PDF using an LLM to generate structured output conforming to a given JSON schema.
@@ -349,6 +364,10 @@ def parse_with_schema(
     Returns:
         List[List[Dict]]: List of dictionaries for each page, each conforming to the provided schema.
     """
+    if not api:
+        api = get_api_provider_for_model(model)
+        logger.debug(f"Using API provider: {api}")
+
     system_prompt = f"""
         The output should be formatted as a JSON instance that conforms to the JSON schema below.
 
