@@ -1,11 +1,13 @@
 import asyncio
+import dataclasses
 import io
 import mimetypes
 import os
 import re
 import sys
+from dataclasses import fields, is_dataclass
 from hashlib import md5
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Type, Union
 from urllib.parse import urlparse
 
 import nest_asyncio
@@ -610,3 +612,116 @@ def get_uri_rect(path):
         list(map(float, rect_split.split("]")[0].split())) for rect_split in rect_splits
     ]
     return {uri: rect for uri, rect in zip(uris, rects)}
+
+
+def convert_schema_to_dict(schema: Union[Dict, Type]) -> Dict:
+    """
+    Convert a dataclass type or existing dict schema to a JSON schema dictionary.
+
+    Args:
+        schema: Either a dictionary (JSON schema) or a dataclass type
+
+    Returns:
+        Dict: JSON schema dictionary
+    """
+    if isinstance(schema, dict):
+        return schema
+
+    # Handle dataclass types
+    if hasattr(schema, "__dataclass_fields__"):
+        return _dataclass_to_json_schema(schema)
+
+    raise ValueError(f"Unsupported schema type: {type(schema)}")
+
+
+def _dataclass_to_json_schema(dataclass_type: Type) -> Dict:
+    """
+    Convert a dataclass type to a JSON schema dictionary.
+
+    Args:
+        dataclass_type: A dataclass type
+
+    Returns:
+        Dict: JSON schema representation
+    """
+    properties = {}
+    required_fields = []
+
+    for field in fields(dataclass_type):
+        field_schema = _get_field_json_schema(field)
+        properties[field.name] = field_schema
+
+        # Check if field is required (no default value)
+        # Fixed: Use dataclasses.MISSING instead of dataclass.MISSING
+        if field.default == field.default_factory == dataclasses.MISSING:
+            required_fields.append(field.name)
+
+    schema = {"type": "object", "properties": properties}
+
+    if required_fields:
+        schema["required"] = required_fields
+
+    return schema
+
+
+def _get_field_json_schema(field) -> Dict:
+    """
+    Convert a dataclass field to JSON schema property definition.
+    """
+    field_type = field.type
+
+    # Handle basic types
+    if field_type is str:
+        return {"type": "string"}
+    elif field_type is int:
+        return {"type": "integer"}
+    elif field_type is float:
+        return {"type": "number"}
+    elif field_type is bool:
+        return {"type": "boolean"}
+    elif field_type is list:
+        return {"type": "array"}
+    elif field_type is dict:
+        return {"type": "object"}
+
+    if is_dataclass(field_type):
+        return _dataclass_to_json_schema(field_type)
+
+    # Handle typing module types
+    origin = getattr(field_type, "__origin__", None)
+    args = getattr(field_type, "__args__", ())
+
+    if origin is Union:
+        if len(args) == 2 and type(None) in args:
+            non_none_type = next(arg for arg in args if arg is not type(None))
+            base_schema = _type_to_json_schema(non_none_type)
+            return base_schema
+        return {"anyOf": [_type_to_json_schema(arg) for arg in args]}
+    elif origin is list:
+        item_type = args[0] if args else str
+        return {"type": "array", "items": _type_to_json_schema(item_type)}
+    elif origin is dict:
+        return {"type": "object"}
+
+    # Fallback
+    return {"type": "string"}
+
+
+def _type_to_json_schema(python_type) -> Dict:
+    """Convert a Python type to JSON schema type definition."""
+    if python_type is str:
+        return {"type": "string"}
+    elif python_type is int:
+        return {"type": "integer"}
+    elif python_type is float:
+        return {"type": "number"}
+    elif python_type is bool:
+        return {"type": "boolean"}
+    elif python_type is list:
+        return {"type": "array"}
+    elif python_type is dict:
+        return {"type": "object"}
+    elif is_dataclass(python_type):  # Add this check
+        return _dataclass_to_json_schema(python_type)
+    else:
+        return {"type": "string"}  # Default fallback
