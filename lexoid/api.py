@@ -7,7 +7,8 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Dict, List, Optional, Union, Type
+from typing import Dict, List, Optional, Type, Union
+
 from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import (
@@ -18,6 +19,7 @@ from lexoid.core.parse_type.llm_parser import (
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
+    convert_schema_to_dict,
     convert_to_pdf,
     create_sub_pdf,
     download_file,
@@ -27,7 +29,6 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
-    convert_schema_to_dict,
 )
 
 
@@ -412,3 +413,92 @@ def parse_with_schema(
         responses.append(new_dict)
 
     return responses
+
+
+def parse_to_latex(
+    path: str,
+    api: Optional[str] = None,
+    model: str = "gpt-4o-mini",
+    **kwargs,
+) -> str:
+    if not api:
+        api = get_api_provider_for_model(model)
+        logger.debug(f"Using API provider: {api}")
+
+    first_page_prompt = """
+    You are an AI agent tasked with converting the **first page** of a PDF document into LaTeX format.
+
+    Begin the LaTeX document with:
+    documentclass{article}
+    usepackage{amsmath, graphicx, geometry}
+    geometry{margin=1in}  % Ensure content stays within page bounds
+    begin{document}
+
+    If the first page contains title and abstract, use:
+    title{}
+    author{}
+    date{}
+    maketitle
+    begin{abstract}...end{abstract}
+
+    Then begin converting the content with structured LaTeX formatting with the necessary tags:
+    - Use section{}, subsection{}, subsubsection{} for headings
+    - Use begin{itemize}, begin{enumerate} for lists
+    - Use textbf{}, textit{}, underline{} for text styling
+    - Use inline math ($...$) or begin{equation} for equations
+    - Use begin{tabular} and includegraphics[]{} for tables and figures
+
+    **Important:** Only include content visible on the current page. Do not include content from other pages. Keep the LaTeX output strictly limited to the information available on this page.
+
+    """
+
+    middle_page_prompt = """
+    Convert this page into valid LaTeX **content only**, assuming the document is already open.
+    Do not repeat the document preamble.
+    Continue using:
+    - section{}, subsection{}, etc. for headings
+    - textbf{}, textit{}, underline{} for formatting
+    - $...$ and begin{equation} for math
+    - begin{itemize}, begin{enumerate} for lists
+    - begin{tabular}, includegraphics[]{} for tables/figures
+    - footnote{}, bibitem{} where needed
+    Do not add begin{document} or end{document}.
+    """
+
+    last_page_prompt = """
+    This is the **final page** of the PDF.
+    Continue converting content as usual using LaTeX formatting, and then **end the document** with:
+    end{document}
+    Ensure no section is left open. If the document ends with a reference section, use begin{thebibliography}...end{thebibliography} if appropriate.
+    Add % TODO comments where structure or content is uncertain.
+    """
+
+    user_prompt = "You are an AI agent that parses documents and returns them in the Latex format. Please parse the document and return Latex for a document."
+
+    responses = []
+    images = convert_doc_to_base64_images(path)
+    total_pages = len(images)
+
+    for i, (page_num, image) in enumerate(images):
+        if i == 0:
+            system_prompt = first_page_prompt
+        elif i == total_pages - 1:
+            system_prompt = last_page_prompt
+        else:
+            system_prompt = middle_page_prompt
+
+        resp_dict = create_response(
+            api=api,
+            model=model,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            image_url=image,
+            temperature=kwargs.get("temperature", 0.0),
+            max_tokens=kwargs.get("max_tokens", 1024),
+        )
+        response = resp_dict.get("response", "").strip()
+        response = response.split("```latex")[-1].split("```")[0].strip()
+        logger.debug(f"Processing page {page_num + 1} with response:\n{response}")
+        responses.append(response)
+
+    return "\n\n".join(responses)
