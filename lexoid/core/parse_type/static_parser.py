@@ -47,10 +47,16 @@ def retry_with_different_parser(func):
                 )
                 return func(*args, **kwargs)
             else:
-                logger.error(
-                    f"Failed to parse document with both pdfplumber and pdfminer: {e}"
-                )
-                raise e
+                logger.error(f"Failed to parse document with STATIC_PARSE: {e}")
+                return {
+                    "raw": "",
+                    "segments": [],
+                    "title": kwargs["title"],
+                    "url": kwargs.get("url", ""),
+                    "parent_title": kwargs.get("parent_title", ""),
+                    "recursive_docs": [],
+                    "error": f"ValueError encountered on page {kwargs.get('start', 0)}: {e}",
+                }
 
     return wrapper
 
@@ -80,11 +86,13 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
     elif "wordprocessing" in file_type:
         return parse_with_docx(path, **kwargs)
     elif file_type == "text/html":
-        with open(path, "r") as f:
+        logger.debug(f"Parsing HTML file: {path}")
+        with open(path, "r", errors="ignore") as f:
             html_content = f.read()
             return html_to_markdown(html_content, kwargs["title"])
     elif file_type == "text/plain":
-        with open(path, "r") as f:
+        logger.debug(f"Parsing plain text file: {path}")
+        with open(path, "r", errors="ignore") as f:
             content = f.read()
             return {
                 "raw": content,
