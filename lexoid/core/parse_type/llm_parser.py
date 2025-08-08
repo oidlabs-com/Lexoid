@@ -25,14 +25,14 @@ from lexoid.core.prompt_templates import (
     OPENAI_USER_PROMPT,
     PARSER_PROMPT,
 )
-from lexoid.core.utils import get_api_provider_for_model
+from lexoid.core.utils import get_api_provider_for_model, get_file_type
 from lexoid.core.conversion_utils import (
     convert_image_to_pdf,
     convert_pdf_page_to_base64,
 )
 
 
-def retry_on_http_error(func):
+def retry_on_error(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -54,12 +54,34 @@ def retry_on_http_error(func):
                     "recursive_docs": [],
                     "error": f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}",
                 }
+        except ValueError as e:
+            logger.error(f"ValueError encountered: {e}")
+            time.sleep(10)
+            try:
+                logger.debug(f"Retry {func.__name__}")
+                return func(*args, **kwargs)
+            except ValueError as e:
+                logger.error(f"Retry failed: {e}")
+                return {
+                    "raw": "",
+                    "segments": [],
+                    "title": kwargs["title"],
+                    "url": kwargs.get("url", ""),
+                    "parent_title": kwargs.get("parent_title", ""),
+                    "recursive_docs": [],
+                    "error": f"ValueError encountered on page {kwargs.get('start', 0)}: {e}",
+                }
 
     return wrapper
 
 
-@retry_on_http_error
+@retry_on_error
 def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
+    mime_type = get_file_type(path)
+    if not ("image" in mime_type or "pdf" in mime_type):
+        raise ValueError(
+            f"Unsupported file type: {mime_type}. Only PDF and image files are supported for LLM_PARSE."
+        )
     if "api_provider" in kwargs:
         if kwargs["api_provider"] == "local":
             return parse_with_local_model(path, **kwargs)

@@ -7,8 +7,7 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Dict, List, Optional, Union
-
+from typing import Dict, List, Optional, Union, Type
 from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import (
@@ -26,6 +25,7 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
+    convert_schema_to_dict,
 )
 from lexoid.core.conversion_utils import convert_to_pdf, convert_doc_to_base64_images
 
@@ -351,7 +351,7 @@ def parse(
 
 def parse_with_schema(
     path: str,
-    schema: Dict,
+    schema: Union[Dict, Type],
     api: Optional[str] = None,
     model: str = "gpt-4o-mini",
     **kwargs,
@@ -373,6 +373,8 @@ def parse_with_schema(
         api = get_api_provider_for_model(model)
         logger.debug(f"Using API provider: {api}")
 
+    json_schema = convert_schema_to_dict(schema)
+
     system_prompt = f"""
         The output should be formatted as a JSON instance that conforms to the JSON schema below.
 
@@ -389,7 +391,7 @@ def parse_with_schema(
         }}, the object {{"foo": ["bar", "baz"]}} is valid. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not.
 
         Here is the output schema:
-        {json.dumps(schema, indent=2)}
+        {json.dumps(json_schema, indent=2)}
 
         """
 
