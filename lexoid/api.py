@@ -388,6 +388,7 @@ def parse_with_schema(
 
         Here is the output schema:
         {json.dumps(json_schema, indent=2)}
+
         """
 
     user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
