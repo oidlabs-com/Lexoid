@@ -440,6 +440,7 @@ def parse_to_latex(
     date{}
     maketitle
     begin{abstract}...end{abstract}
+    tabularx if needed
 
     Then begin converting the content with structured LaTeX formatting with the necessary tags:
     - Use section{}, subsection{}, subsubsection{} for headings
@@ -447,7 +448,7 @@ def parse_to_latex(
     - Use textbf{}, textit{}, underline{} for text styling
     - Use inline math ($...$) or begin{equation} for equations
     - Use begin{tabular} and includegraphics[]{} for tables and figures
-
+    - For tables, prefer the tabularx environment with X column types to fit within \textwidth for maintainable results. If needed, reduce font size (e.g., \small) to reclaim space, or use \resizebox{\textwidth}{!}{...} only for exceptionally wide tables—ensuring everything stays in the printable area.
     **Important:** Only include content visible on the current page. Do not include content from other pages. Keep the LaTeX output strictly limited to the information available on this page.
 
     """
@@ -462,18 +463,23 @@ def parse_to_latex(
     - begin{itemize}, begin{enumerate} for lists
     - begin{tabular}, includegraphics[]{} for tables/figures
     - footnote{}, bibitem{} where needed
+    - For tables, prefer the tabularx environment with X column types to fit within \textwidth for maintainable results. If needed, reduce font size (e.g., \small) to reclaim space, or use \resizebox{\textwidth}{!}{...} only for exceptionally wide tables—ensuring everything stays in the printable area.
+
     Do not add begin{document} or end{document}.
     """
 
     last_page_prompt = """
     This is the **final page** of the PDF.
+    For tables, prefer the tabularx environment with X column types to fit within \textwidth for maintainable results. If needed, reduce font size (e.g., \small) to reclaim space, or use \resizebox{\textwidth}{!}{...} only for exceptionally wide tables—ensuring everything stays in the printable area.
     Continue converting content as usual using LaTeX formatting, and then **end the document** with:
     end{document}
     Ensure no section is left open. If the document ends with a reference section, use begin{thebibliography}...end{thebibliography} if appropriate.
-    Add % TODO comments where structure or content is uncertain.
+    Add % TODO comments where structure or content is uncertain. 
     """
 
-    user_prompt = "You are an AI agent that parses documents and returns them in the Latex format. Please parse the document and return Latex for a document."
+    user_prompt = """You are an AI agent specialized in parsing PDF documents and converting them into clean, valid LaTeX format. 
+    Your goal is to produce LaTeX code that accurately represents the document's structure, content, and layout while ensuring everything
+      fits within standard page margins."""
 
     responses = []
     images = convert_doc_to_base64_images(path)
