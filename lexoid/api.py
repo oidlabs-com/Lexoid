@@ -19,7 +19,6 @@ from lexoid.core.parse_type.llm_parser import (
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
-    convert_schema_to_dict,
     convert_to_pdf,
     create_sub_pdf,
     download_file,
@@ -369,8 +368,6 @@ def parse_with_schema(
     if not api:
         api = get_api_provider_for_model(model)
         logger.debug(f"Using API provider: {api}")
-
-    json_schema = convert_schema_to_dict(schema)
 
     json_schema = convert_schema_to_dict(schema)
 
