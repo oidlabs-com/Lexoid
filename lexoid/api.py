@@ -29,6 +29,7 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
+    convert_schema_to_dict,
 )
 
 
@@ -371,6 +372,8 @@ def parse_with_schema(
 
     json_schema = convert_schema_to_dict(schema)
 
+    json_schema = convert_schema_to_dict(schema)
+
     system_prompt = f"""
         The output should be formatted as a JSON instance that conforms to the JSON schema below.
 
@@ -387,6 +390,7 @@ def parse_with_schema(
         }}, the object {{"foo": ["bar", "baz"]}} is valid. The object {{"properties": {{"foo": ["bar", "baz"]}}}} is not.
 
         Here is the output schema:
+        {json.dumps(json_schema, indent=2)}
         {json.dumps(json_schema, indent=2)}
 
         """

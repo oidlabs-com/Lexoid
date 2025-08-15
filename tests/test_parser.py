@@ -163,6 +163,7 @@ async def test_recursive_url_parsing_in_pdf():
 
 @pytest.mark.asyncio
 async def test_parsing_txt_type():
+    # Contains invalid unicode characters that should be ignored
     sample = "examples/inputs/sample_test.txt"
     parser_type = "AUTO"
     results = parse(sample, parser_type)["segments"]
@@ -171,20 +172,32 @@ async def test_parsing_txt_type():
 
 
 @pytest.mark.asyncio
-async def test_parsing_url_txt_type():
-    sample_url = "https://www.justice.gov/archive/enron/exhibit/02-28/BBC-0001/OCR/EXH033-00243.TXT"
+@pytest.mark.parametrize(
+    "sample_url",
+    [
+        "https://www.justice.gov/archive/enron/exhibit/02-28/BBC-0001/OCR/EXH033-00243.TXT",
+        "https://www.justice.gov/archive/enron/exhibit/03-28-p3/BBC-0001/OCR/EXH063-00292.TXT",
+    ],
+)
+async def test_parsing_url_txt_type(sample_url):
     parser_type = "AUTO"
     results_1 = parse(
         sample_url, parser_type, page_nums=1, pages_per_split=1, as_pdf=False
     )["raw"]
-    assert len([results_1]) == 1
-    assert "David W Delainey" in results_1
 
     results_2 = parse(
         sample_url, parser_type, page_nums=1, pages_per_split=1, as_pdf=True
     )["raw"]
+    assert len([results_1]) == 1
     assert len([results_2]) == 1
-    assert "David W Delainey" in results_2
+
+    if sample_url.endswith("EXH033-00243.TXT"):
+        assert "David W Delainey" in results_1
+        assert "David W Delainey" in results_2
+    if sample_url.endswith("EXH063-00292.TXT"):
+        # Contains invalid bytes that should be ignored
+        assert "Please call Sherrie Gibson" in results_1
+        assert "Please call Sherrie Gibson" in results_2
 
 
 @pytest.mark.asyncio

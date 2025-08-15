@@ -1,2 +1,62 @@
-Large language models (LLMs) have shown impressive performance on complex reasoning by leveraging chain-of-thought (CoT) prompting to generate intermediate reasoning chains as the rationale to infer the answer. However, existing CoT studies have primarily focused on the language modality. We propose Multimodal-CoT that incorporates language (text) and vision (images) modalities into a two-stage framework that separates rationale generation and answer inference. In this way, answer inference can leverage better generated rationales that are based on multimodal information. Experimental results on ScienceQA and A-OKVQA benchmark datasets show the effectiveness of our proposed approach. With Multimodal-CoT, our model under 1 billion parameters achieves state-of-the-art performance on the ScienceQA benchmark. Our analysis indicates that Multimodal-CoT offers the advantages of mitigating hallucination and enhancing convergence speed.
+=============
+Page 1 of 1
+=============
 
+
+  4y m
+0
+
+October 30, 2001
+
+Via Facsimile: 713/216-4660
+John Carr
+JP Morgan
+600 Travis Street, 7th Floor
+Houston, Texas 77002
+
+Kenneth L. Lay
+Chairman and
+Chief Executive Officer
+
+Enron Corp.
+P.O. Box 1188
+Houston, TX 77251-1188
+713-853-6773
+Fax 713-853-5313
+ken net h.lay�enron.com
+
+  (92x~~ ^
+
+Re: Account # 4004-0045040803
+
+  (D 06~ 7 10/Z-5/0 1
+Dear John: 1 y.016 . 1101210101
+  1,o,8 3 Tote. j
+  This letter is your authority to transfer 7,083 shares of Enron Corp. (dated
+4/22/94) from the JP Morgan Securities Account #ATM-416690 via DTC#0221 to
+the Enron Corp. Omnibus Acct. HS-54630EN at UBS Paine Webber today.
+
+  Please call Sherrie Gibson at 713/630-0103 should you have any
+questions.
+
+Sincerely,
+
+
+
+CC: Elaine Overturf
+Pam Butler
+Joanne Cortez
+Sherrie Gibson
+
+EC38648B0050028
+
+Endless possibilities."
+
+EXH063-00292
+
+GOVERNMENT
+EXHIBIT
+  4074
+  Crim. No. H-04-25 (S-2)
+
+
