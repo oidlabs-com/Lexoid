@@ -18,7 +18,13 @@ from lexoid.core.parse_type.llm_parser import (
     parse_llm_doc,
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
+from lexoid.core.prompt_templates import (
+    LATEX_FIRST_PAGE_PROMPT,
+    LATEX_LAST_PAGE_PROMPT,
+    LATEX_MIDDLE_PAGE_PROMPT,
+)
 from lexoid.core.utils import (
+    convert_schema_to_dict,
     convert_to_pdf,
     create_sub_pdf,
     download_file,
@@ -28,13 +34,6 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
-    convert_schema_to_dict,
-)
-
-from lexoid.core.prompt_templates import (
-    LATEX_LAST_PAGE_PROMPT,
-    LATEX_MIDDLE_PAGE_PROMPT,
-    LATEX_FIRST_PAGE_PROMPT,
 )
 
 
