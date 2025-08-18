@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.17.1"
+version = "0.1.16"
 description = ""
 authors = []
 readme = "README.md"
@@ -24,8 +24,6 @@ playwright = "^1.49.0"
 docx2pdf = "^0.1.8"
 python-docx = "^1.1.2"
 nest-asyncio ="^1.6.0"
-pyqt5 = {version = "^5.15.11", markers = "platform_system != 'debian'"}
-pyqtwebengine = {version = "^5.15.7", markers = "platform_system != 'debian'"}
 huggingface-hub = "^0.31.2"
 together = "^1.4.0"
 openpyxl = "^3.1.5"
