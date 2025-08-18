@@ -424,57 +424,77 @@ def parse_to_latex(
     if not api:
         api = get_api_provider_for_model(model)
         logger.debug(f"Using API provider: {api}")
-
-    first_page_prompt = """
-    You are an AI agent tasked with converting the **first page** of a PDF document into LaTeX format.
-
-    Begin the LaTeX document with:
-    documentclass{article}
-    usepackage{amsmath, graphicx, geometry}
-    geometry{margin=1in}  % Ensure content stays within page bounds
-    begin{document}
-
-    If the first page contains title and abstract, use:
-    title{}
-    author{}
-    date{}
-    maketitle
-    begin{abstract}...end{abstract}
-    tabularx if needed
-
-    Then begin converting the content with structured LaTeX formatting with the necessary tags:
-    - Use section{}, subsection{}, subsubsection{} for headings
-    - Use begin{itemize}, begin{enumerate} for lists
-    - Use textbf{}, textit{}, underline{} for text styling
-    - Use inline math ($...$) or begin{equation} for equations
-    - Use begin{tabular} and includegraphics[]{} for tables and figures
-    - For tables, prefer the tabularx environment with X column types to fit within \textwidth for maintainable results. If needed, reduce font size (e.g., \small) to reclaim space, or use \resizebox{\textwidth}{!}{...} only for exceptionally wide tables—ensuring everything stays in the printable area.
-    **Important:** Only include content visible on the current page. Do not include content from other pages. Keep the LaTeX output strictly limited to the information available on this page.
-
+    # Common guidance shared by all page prompts
+    common_prompt = r"""
+    You are converting ONLY the CURRENT page of a PDF into LaTeX.
+    - Include content visible on THIS page only.
+    - Do NOT infer or fabricate content from other pages.
+    - If structure is unclear, add concise % TODO comments.
+    - Use \section{}, \subsection{}, \subsubsection{} for headings based on visible hierarchy cues.
+    - Use \textbf{}, \textit{}, \underline{} only if clearly visible.
+    - Lists: \begin{itemize}/\begin{enumerate} to match bullets/numbering seen on THIS page.
+    - Math: $...$ for inline, \begin{equation}...\end{equation} for display math present on THIS page.
+    - Figures: if a filename is available, use \includegraphics[width=\linewidth]{<filename>}; otherwise add a % TODO placeholder.
+    - Tables: prefer tabularx with X columns to fit within \textwidth; if wide, first try \small; use \resizebox{\textwidth}{!}{...} only if essential. 
+    Render only rows visible on THIS page; add % TODO if it’s a continuation. Good practices is to use RaggedRight and multicolumn if necessary and present in the image given. 
+    - Footnotes: use \footnote{} only if both the marker and the footnote text are visible on THIS page.
+    - References: only if a references/bibliography section is visible on THIS page; use \begin{thebibliography}{99} ... \end{thebibliography} for entries visible here.
+    - Page boundary rule: include ONLY what is visible on THIS page; if an element continues, render only the visible portion and add a % TODO noting continuation.
     """
 
-    middle_page_prompt = """
-    Convert this page into valid LaTeX **content only**, assuming the document is already open.
-    Do not repeat the document preamble.
-    Continue using:
-    - section{}, subsection{}, etc. for headings
-    - textbf{}, textit{}, underline{} for formatting
-    - $...$ and begin{equation} for math
-    - begin{itemize}, begin{enumerate} for lists
-    - begin{tabular}, includegraphics[]{} for tables/figures
-    - footnote{}, bibitem{} where needed
-    - For tables, prefer the tabularx environment with X column types to fit within \textwidth for maintainable results. If needed, reduce font size (e.g., \small) to reclaim space, or use \resizebox{\textwidth}{!}{...} only for exceptionally wide tables—ensuring everything stays in the printable area.
+    # First page prompt: include preamble and \begin{document}. Do NOT end the document here.
+    first_page_prompt = rf"""
+    {common_prompt}
+    Output requirements for FIRST page:
+    - Begin EXACTLY with:
+    \documentclass{{article}}
+    \usepackage{{amsmath,graphicx,geometry,tabularx}}
+    \geometry{{margin=1in}}
+    \begin{{document}}
 
-    Do not add begin{document} or end{document}.
+    - If THIS page visibly contains a title/author/date/abstract, render them using:
+    \title{{...}}
+    \author{{...}}
+    \date{{...}}
+    \maketitle
+    \begin{{abstract}}... \end{{abstract}}
+    If any are missing or ambiguous on THIS page, omit them and add a % TODO note.
+
+    - Convert ONLY visible content on THIS page (follow the common rules above).
+
+    Important for parallel execution:
+    - This call is designated as the FIRST page. Produce the preamble and \begin{{document}}.
     """
 
-    last_page_prompt = """
-    This is the **final page** of the PDF.
-    For tables, prefer the tabularx environment with X column types to fit within \textwidth for maintainable results. If needed, reduce font size (e.g., \small) to reclaim space, or use \resizebox{\textwidth}{!}{...} only for exceptionally wide tables—ensuring everything stays in the printable area.
-    Continue converting content as usual using LaTeX formatting, and then **end the document** with:
-    end{document}
-    Ensure no section is left open. If the document ends with a reference section, use begin{thebibliography}...end{thebibliography} if appropriate.
-    Add % TODO comments where structure or content is uncertain. 
+    # Middle page prompt: content only, no preamble, no begin/end document.
+    middle_page_prompt = rf"""
+    {common_prompt}
+
+    Output requirements for MIDDLE page:
+    - Start a new page with \newpage.
+    - Do NOT include any preamble.
+    - Do NOT include \begin{{document}} or \end{{document}}.
+
+    - Convert ONLY visible content on THIS page (follow the common rules above).
+
+    Important for parallel execution:
+    - This call is designated as a MIDDLE page. Output LaTeX content only; no document boundaries.
+    """
+
+    # Last page prompt: content only, then close with \end{document}.
+    last_page_prompt = rf"""
+    {common_prompt}
+    
+    Output requirements for FINAL page:
+    - Start a new page with \newpage.
+    - Do NOT include any preamble.
+    - Do NOT include \begin{{document}}.
+    - Convert ONLY visible content on THIS page (follow the common rules above).
+    - After the converted content for THIS page, write \end{{document}}.
+    - Ensure all environments you opened are properly closed.
+
+    Important for parallel execution:
+    - This call is designated as the FINAL page. Append \end{{document}} after this page’s content.
     """
 
     user_prompt = """You are an AI agent specialized in parsing PDF documents and converting them into clean, valid LaTeX format. 
@@ -484,6 +504,12 @@ def parse_to_latex(
     responses = []
     images = convert_doc_to_base64_images(path)
     total_pages = len(images)
+
+    if total_pages == 1:
+        first_page_prompt += "\n\nThen write \\end{document} to close the document."
+        last_page_prompt = first_page_prompt
+    else:
+        first_page_prompt += "\n\nDo NOT write \\end{document} yet."
 
     for i, (page_num, image) in enumerate(images):
         if i == 0:
