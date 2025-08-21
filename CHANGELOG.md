@@ -184,3 +184,16 @@
 
 ### Fixed
 * Set thinking budget to fix gemini-2.5-pro thinking for too long
+
+## [0.1.17]
+
+### Added
+* Support for `dataclass` in parse_with_schema function
+
+### Changed
+* Upgrade Anthropic version
+
+### Fixed
+* Check for `title` attribute in web pages
+* Fix arxiv URL parsing
+* Handle invalid bytes when text parsing
