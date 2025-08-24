@@ -32,12 +32,14 @@ config_options = {
         # "claude-3-7-sonnet-20250219",
         # "claude-3-5-sonnet-20241022",
         # # OpenAI models
+        # "gpt-5",
+        # "gpt-5-mini",
         # "gpt-4.1",
         # "gpt-4.1-mini",
         # "gpt-4o",
         # "gpt-4o-mini",
         # Mistral models
-        "mistral-ocr-latest",
+        # "mistral-ocr-latest",
         # # Meta-LLAMA models through HF Hub
         # "meta-llama/Llama-3.2-11B-Vision-Instruct",
         # # # Meta-LLAMA models through Together AI
@@ -59,6 +61,8 @@ config_options = {
     "max_threads": [1, 2, 4, 8],
     "as_pdf": [True, False],
     "temperature": [0.0, 0.2, 0.7],
+    "autoselect_llm": [True, False],
+
 }
 
 
@@ -84,7 +88,7 @@ def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, 
         return []
 
     # Directory mode
-    input_files = sorted(glob(os.path.join(input_path, "*")))
+    input_files = sorted(glob(os.path.join(input_path, "2020*")))
     pairs = []
 
     for input_file in input_files:
@@ -276,6 +280,11 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
                     new_config = config.copy()
                     new_config[attr] = value
                     new_configs.append(new_config)
+            elif attr == "autoselect_llm":
+                for value in config_options[attr]:
+                    new_config = config.copy()
+                    new_config[attr] = value
+                    new_configs.append(new_config)
             else:
                 new_configs.append(config)
         configs = new_configs
@@ -385,8 +394,11 @@ def run_benchmarks(
         elif save_format == "csv":
             data = []
             for result in results:
+                model_name = result.config.get("model", "AUTO")
+                if model_name == "AUTO" and result.config.get("autoselect_llm", False):
+                    model_name = "AUTO (with auto-selected model)"
                 result_dict = {
-                    "Model": result.config.get("model", "AUTO"),
+                    "Model": model_name,
                 }
                 for metric, value in result.similarities[0].items():
                     mean = value
@@ -436,6 +448,7 @@ def main():
         # "max_threads",
         # "as_pdf",
         # "temperature",
+        # "autoselect_llm",
     ]
 
     # Can be either a single file or directory

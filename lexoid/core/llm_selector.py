@@ -341,7 +341,7 @@ if __name__ == "__main__":
         use_image_embeddings=True,
         device="cpu",
     )
-    query_doc = "examples/inputs/medical_invoice_sample1.png"
+    query_doc = "examples/inputs/purchase_order_invoice.png"
     ranked_docs = doc_selector.rank_models(query_doc)
     print("Ranked Documents:")
     for doc, score in ranked_docs:
