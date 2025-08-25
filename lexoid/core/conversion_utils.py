@@ -67,9 +67,14 @@ def base64_to_cv2_image(b64_string: str) -> np.ndarray:
 
 
 def cv2_to_pil(cv2_image: np.ndarray) -> Image.Image:
-    """Convert OpenCV image (BGR) to PIL (RGB)."""
-    rgb = cv2.cvtColor(cv2_image, cv2.COLOR_BGR2RGB)
-    return Image.fromarray(rgb)
+    """Convert OpenCV image (BGR or grayscale) to PIL (RGB or L)."""
+    if cv2_image.ndim == 2 or (cv2_image.ndim == 3 and cv2_image.shape[2] == 1):
+        # Grayscale image
+        return Image.fromarray(cv2_image)
+    else:
+        # Color image (BGR)
+        rgb = cv2.cvtColor(cv2_image, cv2.COLOR_BGR2RGB)
+        return Image.fromarray(rgb)
 
 
 def convert_image_to_pdf(image_path: str) -> bytes:
