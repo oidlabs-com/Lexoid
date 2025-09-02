@@ -1,10 +1,8 @@
 import asyncio
 import dataclasses
-import io
 import mimetypes
 import os
 import re
-import sys
 from dataclasses import fields, is_dataclass
 from hashlib import md5
 from typing import Dict, List, Optional, Type, Union
@@ -12,18 +10,12 @@ from urllib.parse import urlparse
 
 import nest_asyncio
 import pikepdf
-import pypdfium2
 import requests
 from bs4 import BeautifulSoup
-from docx2pdf import convert
 from loguru import logger
 from markdownify import markdownify as md
-from PIL import Image
-from PyQt5.QtCore import QMarginsF, QUrl
-from PyQt5.QtGui import QPageLayout, QPageSize
-from PyQt5.QtPrintSupport import QPrinter
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtWidgets import QApplication
+
+from lexoid.core.llm_selector import DocumentRankedLLMSelector
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
@@ -54,29 +46,6 @@ def create_sub_pdf(
             new_pdf.pages.extend([pdf.pages[i - 1] for i in indices])
             new_pdf.save(output_path)
     return output_path
-
-
-def convert_image_to_pdf(image_path: str) -> bytes:
-    with Image.open(image_path) as img:
-        img_rgb = img.convert("RGB")
-        pdf_buffer = io.BytesIO()
-        img_rgb.save(pdf_buffer, format="PDF")
-        return pdf_buffer.getvalue()
-
-
-def convert_pdf_page_to_image(
-    pdf_document: pypdfium2.PdfDocument, page_number: int
-) -> bytes:
-    """Convert a PDF page to an image."""
-    page = pdf_document[page_number]
-    # Render with 4x scaling for better quality
-    pil_image = page.render(scale=4).to_pil()
-
-    # Convert to bytes
-    img_byte_arr = io.BytesIO()
-    pil_image.save(img_byte_arr, format="PNG")
-    img_byte_arr.seek(0)
-    return img_byte_arr.getvalue()
 
 
 def get_file_type(path: str) -> str:
@@ -458,76 +427,6 @@ def recursive_read_html(url: str, depth: int, visited_urls: set = None) -> Dict:
     return content
 
 
-def save_webpage_as_pdf(url: str, output_path: str) -> str:
-    """
-    Saves a webpage as a PDF file using PyQt5.
-
-    Args:
-        url (str): The URL of the webpage.
-        output_path (str): The path to save the PDF file.
-
-    Returns:
-        str: The path to the saved PDF file.
-    """
-    if not QApplication.instance():
-        app = QApplication(sys.argv)
-    else:
-        app = QApplication.instance()
-    web = QWebEngineView()
-    web.load(QUrl(url))
-
-    def handle_print_finished(filename, status):
-        print(f"PDF saved to: {filename}")
-        app.quit()
-
-    def handle_load_finished(status):
-        if status:
-            printer = QPrinter(QPrinter.HighResolution)
-            printer.setOutputFormat(QPrinter.PdfFormat)
-            printer.setOutputFileName(output_path)
-
-            page_layout = QPageLayout(
-                QPageSize(QPageSize.A4), QPageLayout.Portrait, QMarginsF(15, 15, 15, 15)
-            )
-            printer.setPageLayout(page_layout)
-
-            web.page().printToPdf(output_path)
-            web.page().pdfPrintingFinished.connect(handle_print_finished)
-
-    web.loadFinished.connect(handle_load_finished)
-    app.exec_()
-
-    return output_path
-
-
-def convert_to_pdf(input_path: str, output_path: str) -> str:
-    """
-    Converts a file or webpage to PDF.
-
-    Args:
-        input_path (str): The path to the input file or URL.
-        output_path (str): The path to save the output PDF file.
-
-    Returns:
-        str: The path to the saved PDF file.
-    """
-    if input_path.startswith(("http://", "https://")):
-        return save_webpage_as_pdf(input_path, output_path)
-    file_type = get_file_type(input_path)
-    if file_type.startswith("image/"):
-        img_data = convert_image_to_pdf(input_path)
-        with open(output_path, "wb") as f:
-            f.write(img_data)
-    elif "word" in file_type:
-        return convert_doc_to_pdf(input_path, os.path.dirname(output_path))
-    else:
-        # Assume it's already a PDF, just copy it
-        with open(input_path, "rb") as src, open(output_path, "wb") as dst:
-            dst.write(src.read())
-
-    return output_path
-
-
 def has_image_in_pdf(path: str):
     with open(path, "rb") as fp:
         content = fp.read()
@@ -545,7 +444,51 @@ def has_hyperlink_in_pdf(path: str):
     )
 
 
-def router(path: str, priority: str = "speed") -> str:
+def get_api_provider_for_model(model: str) -> str:
+    if model.startswith("gemini"):
+        return "gemini"
+    if model.startswith("gpt"):
+        return "openai"
+    if model.startswith("meta-llama"):
+        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
+            return "together"
+        return "huggingface"
+    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
+        return "openrouter"
+    if model.startswith("accounts/fireworks"):
+        return "fireworks"
+    if model.startswith("claude"):
+        return "anthropic"
+    if model.startswith("mistral"):
+        return "mistral"
+    if model.startswith("ds4sd/SmolDocling"):
+        return "local"
+    raise ValueError(f"Unsupported model: {model}")
+
+
+def is_api_key_set(api_provider: str) -> bool:
+    if api_provider == "openai":
+        return bool(os.getenv("OPENAI_API_KEY"))
+    elif api_provider == "gemini":
+        return bool(os.getenv("GOOGLE_API_KEY"))
+    elif api_provider == "together":
+        return bool(os.getenv("TOGETHER_API_KEY"))
+    elif api_provider == "huggingface":
+        return bool(os.getenv("HUGGINGFACEHUB_API_TOKEN"))
+    elif api_provider == "openrouter":
+        return bool(os.getenv("OPENROUTER_API_KEY"))
+    elif api_provider == "fireworks":
+        return bool(os.getenv("FIREWORKS_API_KEY"))
+    elif api_provider == "anthropic":
+        return bool(os.getenv("ANTHROPIC_API_KEY"))
+    elif api_provider == "mistral":
+        return bool(os.getenv("MISTRAL_API_KEY"))
+    elif api_provider == "local":
+        return True  # Local models don't require an API key
+    return False
+
+
+def router(path: str, priority: str = "speed", autoselect_llm: bool = True) -> str:
     """
     Routes the file path to the appropriate parser based on the file type.
 
@@ -553,13 +496,30 @@ def router(path: str, priority: str = "speed") -> str:
         path (str): The file path to route.
         priority (str): The priority for routing: "accuracy" (preference to LLM_PARSE) or "speed" (preference to STATIC_PARSE).
     """
+    model_name = None
+    if autoselect_llm:
+        logger.debug("Autoselecting LLM for parsing.")
+        model_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "model_data"
+        )
+        selector = DocumentRankedLLMSelector(
+            model_dir=model_dir, use_image_embeddings=False
+        )
+        ranking = selector.rank_models(path)
+        for model, _ in ranking:
+            api_provider = get_api_provider_for_model(model)
+            if is_api_key_set(api_provider):
+                logger.debug(f"Selected model: {model}.")
+                model_name = model
+                return "LLM_PARSE", model_name
+
     file_type = get_file_type(path)
     if (
         file_type.startswith("text/")
         or "spreadsheet" in file_type
         or "presentation" in file_type
     ):
-        return "STATIC_PARSE"
+        return "STATIC_PARSE", None
 
     if priority == "accuracy":
         # If the file is a PDF without images but has hyperlinks, use STATIC_PARSE
@@ -568,38 +528,19 @@ def router(path: str, priority: str = "speed") -> str:
         has_hyperlink = has_hyperlink_in_pdf(path)
         if file_type == "application/pdf" and not has_image and has_hyperlink:
             logger.debug("Using STATIC_PARSE for PDF with hyperlinks and no images.")
-            return "STATIC_PARSE"
+            return "STATIC_PARSE", None
         logger.debug(
             f"Using LLM_PARSE because PDF has image ({has_image}) or has no hyperlink ({has_hyperlink})."
         )
-        return "LLM_PARSE"
+        return "LLM_PARSE", model_name
     else:
         # If the file is a PDF without images, use STATIC_PARSE
         # Otherwise, use LLM_PARSE
         if file_type == "application/pdf" and not has_image_in_pdf(path):
             logger.debug("Using STATIC_PARSE for PDF without images.")
-            return "STATIC_PARSE"
+            return "STATIC_PARSE", None
         logger.debug("Using LLM_PARSE because PDF has images")
-        return "LLM_PARSE"
-
-
-def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
-    temp_path = os.path.join(
-        temp_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
-    )
-
-    # Convert the document to PDF
-    # docx2pdf is not supported in linux. Use LibreOffice in linux instead.
-    # May need to install LibreOffice if not already installed.
-    if "linux" in sys.platform.lower():
-        os.system(
-            f'lowriter --headless --convert-to pdf --outdir {temp_dir} "{input_path}"'
-        )
-    else:
-        convert(input_path, temp_path)
-
-    # Return the path of the converted PDF
-    return temp_path
+        return "LLM_PARSE", model_name
 
 
 def get_uri_rect(path):
