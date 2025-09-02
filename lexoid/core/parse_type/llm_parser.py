@@ -440,7 +440,7 @@ def create_response(
         "temperature": temperature,
     }
 
-    if api == "openai":
+    if api == "openai" and model in ["gpt-5", "gpt-5-mini"]:
         # Unsupported in some models
         del completion_params["max_tokens"]
         del completion_params["temperature"]
