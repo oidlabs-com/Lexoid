@@ -38,19 +38,15 @@ config_options = {
         # "gpt-4.1-mini",
         # "gpt-4o",
         # "gpt-4o-mini",
-        # Mistral models
+        # # Mistral models
         # "mistral-ocr-latest",
         # # Meta-LLAMA models through HF Hub
         # "meta-llama/Llama-3.2-11B-Vision-Instruct",
-        # # # Meta-LLAMA models through Together AI
-        # "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
-        # "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
-        # "meta-llama/Llama-Vision-Free",
-        # # # Model through OpenRouter
+        # # Model through OpenRouter
         # "qwen/qwen-2.5-vl-7b-instruct",
         # "google/gemma-3-27b-it",
         # "microsoft/phi-4-multimodal-instruct",
-        # # # Model through fireworks
+        # # Model through fireworks
         # "accounts/fireworks/models/llama4-maverick-instruct-basic",
         # "accounts/fireworks/models/llama4-scout-instruct-basic",
         # Local model
@@ -61,7 +57,7 @@ config_options = {
     "max_threads": [1, 2, 4, 8],
     "as_pdf": [True, False],
     "temperature": [0.0, 0.2, 0.7],
-    "autoselect_llm": [True, False],
+    "autoselect_llm": [False],
 
 }
 
@@ -88,7 +84,7 @@ def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, 
         return []
 
     # Directory mode
-    input_files = sorted(glob(os.path.join(input_path, "2020*")))
+    input_files = sorted(glob(os.path.join(input_path, "*")))
     pairs = []
 
     for input_file in input_files:
@@ -457,7 +453,7 @@ def main():
 
     run_id = "_".join(
         f"{attr}={','.join(map(str, config_options[attr]))}" for attr in test_attributes
-    )
+    )[:50]
     benchmark_output_dir = f"tests/outputs/benchmark_{run_id}_{int(time.time())}/"
     os.makedirs(benchmark_output_dir, exist_ok=True)
 
