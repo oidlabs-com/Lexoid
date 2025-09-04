@@ -7,7 +7,8 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Dict, List, Optional, Union, Type
+from typing import Dict, List, Optional, Type, Union
+
 from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import (
@@ -16,7 +17,13 @@ from lexoid.core.parse_type.llm_parser import (
     get_api_provider_for_model,
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
+from lexoid.core.prompt_templates import (
+    LATEX_FIRST_PAGE_PROMPT,
+    LATEX_LAST_PAGE_PROMPT,
+    LATEX_MIDDLE_PAGE_PROMPT,
+)
 from lexoid.core.utils import (
+    convert_schema_to_dict,
     create_sub_pdf,
     download_file,
     get_webpage_soup,
@@ -25,7 +32,6 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
-    convert_schema_to_dict,
 )
 from lexoid.core.conversion_utils import convert_to_pdf, convert_doc_to_base64_images
 
@@ -228,9 +234,9 @@ def parse(
             else:
                 return recursive_read_html(path, depth)
 
-        assert is_supported_file_type(
-            path
-        ), f"Unsupported file type {os.path.splitext(path)[1]}"
+        assert is_supported_file_type(path), (
+            f"Unsupported file type {os.path.splitext(path)[1]}"
+        )
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
@@ -417,3 +423,55 @@ def parse_with_schema(
         responses.append(new_dict)
 
     return responses
+
+
+def parse_to_latex(
+    path: str,
+    api: Optional[str] = None,
+    model: str = "gpt-4o-mini",
+    **kwargs,
+) -> str:
+    if not api:
+        api = get_api_provider_for_model(model)
+        logger.debug(f"Using API provider: {api}")
+
+    first_prompt = LATEX_FIRST_PAGE_PROMPT
+    middle_prompt = LATEX_MIDDLE_PAGE_PROMPT
+    last_prompt = LATEX_LAST_PAGE_PROMPT
+
+    user_prompt = """You are an AI agent specialized in parsing PDF documents and converting them into clean, valid LaTeX format. 
+    Your goal is to produce LaTeX code that accurately represents the document's structure, content, and layout while ensuring everything
+      fits within standard page margins."""
+
+    responses = []
+    images = convert_doc_to_base64_images(path)
+    total_pages = len(images)
+
+    if total_pages == 1:
+        first_prompt += "\n\nWrite \\end{document} to close the document."
+    else:
+        first_prompt += "\n\nDo NOT write \\end{document} yet."
+
+    for i, (page_num, image) in enumerate(images):
+        if i == 0:
+            system_prompt = first_prompt
+        elif i == total_pages - 1:
+            system_prompt = middle_prompt
+        else:
+            system_prompt = last_prompt
+
+        resp_dict = create_response(
+            api=api,
+            model=model,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            image_url=image,
+            temperature=kwargs.get("temperature", 0.0),
+            max_tokens=kwargs.get("max_tokens", 1024),
+        )
+        response = resp_dict.get("response", "").strip()
+        response = response.split("```latex")[-1].split("```")[0].strip()
+        logger.debug(f"Processing page {page_num + 1} with response:\n{response}")
+        responses.append(response)
+
+    return "\n\n".join(responses)
