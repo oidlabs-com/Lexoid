@@ -5,7 +5,7 @@ import mimetypes
 import os
 import time
 from functools import wraps
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 import pypdfium2 as pdfium
 import requests
@@ -25,7 +25,11 @@ from lexoid.core.prompt_templates import (
     OPENAI_USER_PROMPT,
     PARSER_PROMPT,
 )
-from lexoid.core.utils import convert_image_to_pdf, get_file_type
+from lexoid.core.utils import get_api_provider_for_model, get_file_type
+from lexoid.core.conversion_utils import (
+    convert_image_to_pdf,
+    convert_pdf_page_to_base64,
+)
 
 
 def retry_on_error(func):
@@ -69,28 +73,6 @@ def retry_on_error(func):
                 }
 
     return wrapper
-
-
-def get_api_provider_for_model(model: str) -> str:
-    if model.startswith("gemini"):
-        return "gemini"
-    if model.startswith("gpt"):
-        return "openai"
-    if model.startswith("meta-llama"):
-        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
-            return "together"
-        return "huggingface"
-    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
-        return "openrouter"
-    if model.startswith("accounts/fireworks"):
-        return "fireworks"
-    if model.startswith("claude"):
-        return "anthropic"
-    if model.startswith("mistral"):
-        return "mistral"
-    if model.startswith("ds4sd/SmolDocling"):
-        return "local"
-    raise ValueError(f"Unsupported model: {model}")
 
 
 @retry_on_error
@@ -297,21 +279,6 @@ def convert_path_to_images(path):
         raise ValueError(f"Unsupported file type: {mime_type}")
 
 
-def convert_pdf_page_to_base64(
-    pdf_document: pdfium.PdfDocument, page_number: int
-) -> str:
-    """Convert a PDF page to a base64-encoded PNG string."""
-    page = pdf_document[page_number]
-    # Render with 4x scaling for better quality
-    pil_image = page.render(scale=4).to_pil()
-
-    # Convert to base64
-    img_byte_arr = io.BytesIO()
-    pil_image.save(img_byte_arr, format="PNG")
-    img_byte_arr.seek(0)
-    return base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
-
-
 def get_messages(
     system_prompt: Optional[str], user_prompt: Optional[str], image_url: Optional[str]
 ) -> List[Dict]:
@@ -473,6 +440,11 @@ def create_response(
         "temperature": temperature,
     }
 
+    if api == "openai" and model in ["gpt-5", "gpt-5-mini"]:
+        # Unsupported in some models
+        del completion_params["max_tokens"]
+        del completion_params["temperature"]
+
     # Get completion from selected API
     response = client.chat.completions.create(**completion_params)
     token_usage = response.usage
@@ -599,28 +571,3 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             "total": sum(total_tokens for _, _, _, _, total_tokens in all_results),
         },
     }
-
-
-def convert_doc_to_base64_images(path: str) -> List[Tuple[int, str]]:
-    """
-    Converts a document (PDF or image) to a base64 encoded string.
-
-    Args:
-        path (str): Path to the PDF file.
-
-    Returns:
-        str: Base64 encoded string of the PDF content.
-    """
-    if path.endswith(".pdf"):
-        pdf_document = pdfium.PdfDocument(path)
-        return [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-    elif mimetypes.guess_type(path)[0].startswith("image"):
-        with open(path, "rb") as img_file:
-            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
-            return [(0, f"data:image/png;base64,{image_base64}")]

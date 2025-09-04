@@ -12,10 +12,9 @@ from typing import Dict, List, Optional, Type, Union
 from loguru import logger
 
 from lexoid.core.parse_type.llm_parser import (
-    convert_doc_to_base64_images,
+    parse_llm_doc,
     create_response,
     get_api_provider_for_model,
-    parse_llm_doc,
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.prompt_templates import (
@@ -25,7 +24,6 @@ from lexoid.core.prompt_templates import (
 )
 from lexoid.core.utils import (
     convert_schema_to_dict,
-    convert_to_pdf,
     create_sub_pdf,
     download_file,
     get_webpage_soup,
@@ -35,6 +33,7 @@ from lexoid.core.utils import (
     router,
     split_pdf,
 )
+from lexoid.core.conversion_utils import convert_to_pdf, convert_doc_to_base64_images
 
 
 class ParserType(Enum):
@@ -50,9 +49,15 @@ def retry_with_different_parser_type(func):
             if len(args) > 0:
                 kwargs["path"] = args[0]
             if len(args) > 1:
-                router_priority = kwargs.get("router_priority", "speed")
                 if args[1] == ParserType.AUTO:
-                    parser_type = ParserType[router(kwargs["path"], router_priority)]
+                    router_priority = kwargs.get("router_priority", "speed")
+                    autoselect_llm = kwargs.get("autoselect_llm", True)
+                    routed_parser_type, model = router(
+                        kwargs["path"], router_priority, autoselect_llm=autoselect_llm
+                    )
+                    if model is not None:
+                        kwargs["model"] = model
+                    parser_type = ParserType[routed_parser_type]
                     logger.debug(f"Auto-detected parser type: {parser_type}")
                     kwargs["routed"] = True
                 else:
