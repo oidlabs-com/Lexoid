@@ -113,6 +113,7 @@ Render only rows visible on THIS page; add % TODO if it’s a continuation. Good
 - Footnotes: use \footnote{} only if both the marker and the footnote text are visible on THIS page.
 - References: only if a references/bibliography section is visible on THIS page; use \begin{thebibliography}{99} ... \end{thebibliography} for entries visible here.
 - Page boundary rule: include ONLY what is visible on THIS page; if an element continues, render only the visible portion and add a % TODO noting continuation.
+- For tables with grouped headers, put the spanning header and its subheaders on the same row using \multicolumn and immediately follow with the exact \cline range for the child columns. Never insert an empty multicolumn row.
 """
 
 # First page prompt: include preamble and \begin{document}. Do NOT end the document here.
