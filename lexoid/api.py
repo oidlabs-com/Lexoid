@@ -7,13 +7,19 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Dict, List, Optional, Union, Type
+from typing import Dict, List, Optional, Type, Union
+
 from loguru import logger
 
+from lexoid.core.conversion_utils import (
+    convert_doc_to_base64_images,
+    convert_schema_to_dict,
+    convert_to_pdf,
+)
 from lexoid.core.parse_type.llm_parser import (
-    parse_llm_doc,
     create_response,
     get_api_provider_for_model,
+    parse_llm_doc,
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.utils import (
@@ -25,9 +31,7 @@ from lexoid.core.utils import (
     recursive_read_html,
     router,
     split_pdf,
-    convert_schema_to_dict,
 )
-from lexoid.core.conversion_utils import convert_to_pdf, convert_doc_to_base64_images
 
 
 class ParserType(Enum):
