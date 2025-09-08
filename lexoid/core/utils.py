@@ -4,7 +4,7 @@ import os
 import re
 from collections import defaultdict, deque
 from hashlib import md5
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import nest_asyncio
@@ -600,7 +600,7 @@ def word_edit_distance(words1: List[str], words2: List[str]) -> int:
 
 
 def find_bboxes_for_substring(
-    bbox_dict,
+    bbox_dict: List[Tuple[str, Tuple[float, float, float, float]]],
     content: str,
     substring: str,
     fuzzy: bool = False,
