@@ -2,18 +2,24 @@ import asyncio
 import mimetypes
 import os
 import re
+from collections import defaultdict, deque
 from hashlib import md5
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import nest_asyncio
+import numpy as np
 import pikepdf
 import requests
 from bs4 import BeautifulSoup
 from loguru import logger
+from markdown import markdown
 from markdownify import markdownify as md
 
 from lexoid.core.llm_selector import DocumentRankedLLMSelector
+
+
+HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
@@ -551,3 +557,123 @@ def get_uri_rect(path):
         list(map(float, rect_split.split("]")[0].split())) for rect_split in rect_splits
     ]
     return {uri: rect for uri, rect in zip(uris, rects)}
+
+
+def remove_html_tags(text: str):
+    html = markdown(text, extensions=["tables"])
+    return re.sub(HTML_TAG_PATTERN, " ", html)
+
+
+def strip_markdown(text: str) -> str:
+    """
+    Remove markdown formatting for matching words with bbox mapping.
+    """
+    # Remove bold/italic/code/strike
+    text = re.sub(r"[*_`~]", "", text)
+    # Remove links but keep visible text
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # Remove HTML tags
+    text = remove_html_tags(text)
+    return text
+
+
+def word_edit_distance(words1: List[str], words2: List[str]) -> int:
+    """
+    Compute the Levenshtein distance between two lists of words.
+    """
+    m, n = len(words1), len(words2)
+    dp = np.zeros((m + 1, n + 1), dtype=int)
+
+    for i in range(m + 1):
+        dp[i][0] = i
+    for j in range(n + 1):
+        dp[0][j] = j
+
+    for i in range(1, m + 1):
+        for j in range(1, n + 1):
+            if words1[i - 1] == words2[j - 1]:
+                dp[i][j] = dp[i - 1][j - 1]
+            else:
+                dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
+
+    return dp[m][n]
+
+
+def find_bboxes_for_substring(
+    bbox_dict,
+    content: str,
+    substring: str,
+    fuzzy: bool = False,
+    all_matches: bool = False,
+):
+    """
+    Given bounding boxes for words and a substring, return bounding boxes of words in the substring.
+
+    Args:
+        bbox_dict (list): List of (word_with_markdown, bbox)
+        content (str): Full markdown content
+        substring (str): Substring to locate
+        fuzzy (bool): If True, finds the best approximate match (min word-level edit distance)
+        all_matches (bool): If True, return bounding boxes for all occurrences of the substring
+
+    Returns:
+        List of bounding boxes corresponding to matched words
+    """
+    normalized_content: List[str] = strip_markdown(content).split()
+    normalized_substring: List[str] = strip_markdown(substring).split()
+    normalized_bboxes = [(strip_markdown(w).strip(), bbox) for w, bbox in bbox_dict]
+
+    # Build mapping from word -> list of bboxes
+    bbox_lookup = defaultdict(deque)
+    for word, bbox in normalized_bboxes:
+        bbox_lookup[word].append(bbox)
+
+    # Reconstruct bounding boxes in the order of normalized_content
+    ordered_bboxes = []
+    for word in normalized_content:
+        if bbox_lookup[word]:
+            ordered_bboxes.append((word, bbox_lookup[word].popleft()))
+
+    result = []
+
+    if not fuzzy:
+        # Exact sliding window search
+        for i in range(len(normalized_content) - len(normalized_substring) + 1):
+            if (
+                normalized_content[i : i + len(normalized_substring)]
+                == normalized_substring
+            ):
+                bboxes = [
+                    bbox
+                    for (_, bbox) in ordered_bboxes[i : i + len(normalized_substring)]
+                ]
+                if all_matches:
+                    result.extend(bboxes)
+                else:
+                    return bboxes
+        return result
+    else:
+        # Fuzzy: find the substring window with minimum word-level edit distance
+        min_dist = float("inf")
+        best_start = None
+        for i in range(len(normalized_content) - len(normalized_substring) + 1):
+            window = normalized_content[i : i + len(normalized_substring)]
+            dist = word_edit_distance(window, normalized_substring)
+            if dist < min_dist:
+                min_dist = dist
+                best_start = i
+
+        if best_start is not None:
+            bboxes = [
+                bbox
+                for (_, bbox) in ordered_bboxes[
+                    best_start : best_start + len(normalized_substring)
+                ]
+            ]
+            if all_matches:
+                # For fuzzy, we only have the best match, so just extend result once
+                result.extend(bboxes)
+            else:
+                return bboxes
+
+        return result
