@@ -7,6 +7,7 @@ from hashlib import md5
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from matplotlib import pyplot as plt
 import nest_asyncio
 import numpy as np
 import pikepdf
@@ -677,3 +678,95 @@ def find_bboxes_for_substring(
                 return bboxes
 
         return result
+
+
+def merge_bboxes(bboxes, threshold: float = 0.02):
+    """
+    Merge bounding boxes based on horizontal proximity.
+
+    Args:
+        bboxes (list): List of bounding boxes (x0, top, x1, bottom), normalized [0,1]
+        threshold (float): Maximum horizontal gap (in normalized units) to merge boxes
+
+    Returns:
+        list: Merged list of bounding boxes
+    """
+    if not bboxes:
+        return []
+
+    # Sort by left (x0), then top
+    bboxes = sorted(bboxes, key=lambda b: (b[1], b[0]))
+
+    merged = []
+    current = list(bboxes[0])
+
+    for x0, top, x1, bottom in bboxes[1:]:
+        # Check vertical overlap: only merge if boxes overlap vertically
+        if not (current[3] < top or bottom < current[1]):
+            # Horizontal proximity check
+            if min(abs(x0 - current[2]), abs(x1 - current[0])) <= threshold:
+                # Merge into current box
+                current[2] = max(current[2], x1)
+                current[1] = min(current[1], top)
+                current[3] = max(current[3], bottom)
+            else:
+                merged.append(tuple(current))
+                current = [x0, top, x1, bottom]
+        else:
+            merged.append(tuple(current))
+            current = [x0, top, x1, bottom]
+
+    merged.append(tuple(current))
+    return merged
+
+
+def visualize_bounding_boxes(
+    img: np.ndarray,
+    matched_bboxes: list,
+    highlight: bool = False,
+    merge_threshold: float = 0.02,
+):
+    """
+    Visualize bounding boxes on the image, optionally merging nearby boxes.
+
+    Args:
+        img (ndarray): The image on which to draw the bounding boxes
+        matched_bboxes (list): List of bounding boxes (x0, top, x1, bottom), normalized [0,1]
+        highlight (bool): If True, highlight merged boxes with semi-transparent fill
+        merge_threshold (float): Horizontal proximity threshold for merging
+    """
+    plt.figure(figsize=(10, 12))
+    plt.imshow(img)
+    ax = plt.gca()
+    H_img, W_img = img.shape[:2]
+
+    if highlight:
+        linewidth = 0
+        edgecolor = facecolor = (1, 1, 0, 0.5)
+    else:
+        linewidth = 2
+        edgecolor = "red"
+        facecolor = "none"
+
+    # Merge bounding boxes before drawing
+    merged_bboxes = merge_bboxes(matched_bboxes, threshold=merge_threshold)
+
+    # Draw bounding boxes
+    for bbox in merged_bboxes:
+        x0, top, x1, bottom = bbox
+        x0 *= W_img
+        x1 *= W_img
+        top *= H_img
+        bottom *= H_img
+        rect = plt.Rectangle(
+            (x0, top),
+            x1 - x0,
+            bottom - top,
+            linewidth=linewidth,
+            edgecolor=edgecolor,
+            facecolor=facecolor,
+        )
+        ax.add_patch(rect)
+
+    plt.axis("off")
+    plt.show()
