@@ -11,7 +11,11 @@ from typing import Dict, List, Optional, Type, Union
 
 from loguru import logger
 
-from lexoid.core.conversion_utils import convert_doc_to_base64_images, convert_to_pdf
+from lexoid.core.conversion_utils import (
+    convert_doc_to_base64_images,
+    convert_schema_to_dict,
+    convert_to_pdf,
+)
 from lexoid.core.parse_type.llm_parser import (
     create_response,
     get_api_provider_for_model,
@@ -25,7 +29,6 @@ from lexoid.core.prompt_templates import (
     LATEX_USER_PROMPT,
 )
 from lexoid.core.utils import (
-    convert_schema_to_dict,
     create_sub_pdf,
     download_file,
     get_webpage_soup,
