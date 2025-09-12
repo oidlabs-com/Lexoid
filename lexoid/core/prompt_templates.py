@@ -171,3 +171,7 @@ Output requirements for FINAL page:
 Important for parallel execution:
 - This call is designated as the FINAL page. Append \end{{document}} after this page’s content.
 """
+
+LATEX_USER_PROMPT = """You are an AI agent specialized in parsing PDF documents and converting them into clean, valid LaTeX format. 
+Your goal is to produce LaTeX code that accurately represents the document's structure, content, and layout while ensuring everything fits within standard page margins.
+"""
