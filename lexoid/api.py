@@ -11,16 +11,18 @@ from typing import Dict, List, Optional, Type, Union
 
 from loguru import logger
 
+from lexoid.core.conversion_utils import convert_doc_to_base64_images, convert_to_pdf
 from lexoid.core.parse_type.llm_parser import (
-    parse_llm_doc,
     create_response,
     get_api_provider_for_model,
+    parse_llm_doc,
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.prompt_templates import (
     LATEX_FIRST_PAGE_PROMPT,
     LATEX_LAST_PAGE_PROMPT,
     LATEX_MIDDLE_PAGE_PROMPT,
+    LATEX_USER_PROMPT,
 )
 from lexoid.core.utils import (
     convert_schema_to_dict,
@@ -33,7 +35,6 @@ from lexoid.core.utils import (
     router,
     split_pdf,
 )
-from lexoid.core.conversion_utils import convert_to_pdf, convert_doc_to_base64_images
 
 
 class ParserType(Enum):
@@ -439,9 +440,7 @@ def parse_to_latex(
     middle_prompt = LATEX_MIDDLE_PAGE_PROMPT
     last_prompt = LATEX_LAST_PAGE_PROMPT
 
-    user_prompt = """You are an AI agent specialized in parsing PDF documents and converting them into clean, valid LaTeX format. 
-    Your goal is to produce LaTeX code that accurately represents the document's structure, content, and layout while ensuring everything
-      fits within standard page margins."""
+    user_prompt = LATEX_USER_PROMPT
 
     responses = []
     images = convert_doc_to_base64_images(path)
