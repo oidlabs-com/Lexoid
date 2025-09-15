@@ -622,7 +622,7 @@ def edit_distance(string1: str, string2: str) -> int:
 
 
 def find_bboxes_for_substring(
-    bbox_dict,
+    bbox_dict: List[Tuple[str, Tuple[float, float, float, float]]],
     content: str,
     substring: str,
     match_mode: str = "fuzzy",
