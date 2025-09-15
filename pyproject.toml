@@ -35,6 +35,7 @@ anthropic = "^0.60.0"
 transformers = "^4.51.3"
 torch = "^2.7.0"
 scikit-learn = "^1.7.1"
+easyocr = "^1.7.2"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
