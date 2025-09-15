@@ -61,9 +61,19 @@ def convert_doc_to_base64_images(path: str) -> List[Tuple[int, str]]:
             return [(0, f"data:image/png;base64,{image_base64}")]
 
 
-def base64_to_cv2_image(b64_string: str) -> np.ndarray:
+def base64_to_bytesio(b64_string: str) -> io.BytesIO:
     image_data = base64.b64decode(b64_string.split(",")[1])
-    image = Image.open(io.BytesIO(image_data)).convert("L")  # grayscale
+    return io.BytesIO(image_data)
+
+
+def base64_to_pil_image(b64_string: str) -> Image.Image:
+    return Image.open(base64_to_bytesio(b64_string))
+
+
+def base64_to_cv2_image(b64_string: str, gray_scale: bool = True) -> np.ndarray:
+    pil_image = base64_to_pil_image(b64_string)
+    if gray_scale:
+        image = pil_image.convert("L")
     return np.array(image)
 
 

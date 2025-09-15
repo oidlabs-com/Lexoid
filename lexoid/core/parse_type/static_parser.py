@@ -5,6 +5,7 @@ from functools import wraps
 from time import time
 from typing import Dict, List, Tuple
 
+import easyocr
 import pandas as pd
 import pdfplumber
 from docx import Document
@@ -14,11 +15,15 @@ from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
 from pptx2md import ConversionConfig, convert
 
-
+from lexoid.core.conversion_utils import (
+    base64_to_cv2_image,
+    convert_doc_to_base64_images,
+)
 from lexoid.core.utils import (
     get_file_type,
     get_uri_rect,
     html_to_markdown,
+    split_bbox_by_word_length,
     split_md_by_headings,
     split_pdf,
 )
@@ -30,7 +35,7 @@ def retry_with_different_parser(func):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            if "pdfplumber" in kwargs.get("framework", "pdfplumber") and not kwargs.get(
+            if "pdfminer" != kwargs.get("framework", "pdfplumber") and not kwargs.get(
                 "routed", False
             ):
                 kwargs["framework"] = "pdfminer"
@@ -38,9 +43,9 @@ def retry_with_different_parser(func):
                     f"Retrying with pdfminer due to error: {e}. Original framework: {kwargs['framework']}"
                 )
                 return func(*args, **kwargs)
-            elif "pdfminer" in kwargs.get("framework", "pdfplumber") and not kwargs.get(
-                "routed", False
-            ):
+            elif "pdfplumber" != kwargs.get(
+                "framework", "pdfplumber"
+            ) and not kwargs.get("routed", False):
                 kwargs["framework"] = "pdfplumber"
                 logger.warning(
                     f"Retrying with pdfplumber due to error: {e}. Original framework: {kwargs['framework']}"
@@ -81,8 +86,12 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
             return parse_with_pdfplumber(path, **kwargs)
         elif framework == "pdfminer":
             return parse_with_pdfminer(path, **kwargs)
+        elif framework == "easyocr":
+            return parse_with_easyocr(path, **kwargs)
         else:
             raise ValueError(f"Unsupported framework: {framework}")
+    elif "image" in file_type:
+        return parse_with_easyocr(path, **kwargs)
     elif "wordprocessing" in file_type:
         return parse_with_docx(path, **kwargs)
     elif file_type == "text/html":
@@ -718,6 +727,76 @@ def parse_with_docx(path: str, **kwargs) -> Dict:
         "raw": full_text,
         "segments": [{"metadata": {"page": kwargs["start"] + 1}, "content": full_text}],
         "title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+    }
+
+
+def parse_with_easyocr(path: str, **kwargs) -> Dict:
+    """
+    Parse document using EasyOCR and return bboxes.
+
+    Args:
+        path (str): Path to the PDF document.
+
+    Returns:
+        Dict: Dictionary containing parsed document data with segments per page.
+    """
+    reader = easyocr.Reader(["en"], gpu=False)
+
+    base64_images = convert_doc_to_base64_images(path)
+
+    segments = []
+    all_texts = []
+
+    for page_num, base64_img_str in base64_images:
+        image_np = base64_to_cv2_image(base64_img_str)
+
+        results = reader.readtext(
+            image_np, detail=1, paragraph=False, x_ths=0.1, y_ths=0.1
+        )
+
+        page_texts = []
+        page_bboxes = []
+
+        height_img, width_img = image_np.shape[:2]
+
+        for bbox, text, _ in results:
+            x_coords = [point[0].item() for point in bbox]
+            y_coords = [point[1].item() for point in bbox]
+            x_min = min(x_coords)
+            y_min = min(y_coords)
+            x_max = max(x_coords)
+            y_max = max(y_coords)
+
+            top = y_min / height_img
+            bottom = y_max / height_img
+            x0 = x_min / width_img
+            x1 = x_max / width_img
+
+            # Use the splitting function to divide multi-word bbox into words
+            split_words = split_bbox_by_word_length([x0, top, x1, bottom], text)
+
+            for word_bbox, word_text in split_words:
+                page_texts.append(word_text)
+                page_bboxes.append((word_text, word_bbox))
+
+        page_text_str = " ".join(page_texts)
+        all_texts.append(page_text_str)
+
+        segments.append(
+            {
+                "metadata": {"page": kwargs.get("start", 1) + page_num},
+                "content": page_text_str,
+                "bboxes": page_bboxes,
+            }
+        )
+
+    return {
+        "raw": "\n\n".join(all_texts),
+        "segments": segments,
+        "title": kwargs.get("title", ""),
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],

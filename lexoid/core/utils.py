@@ -493,7 +493,7 @@ def is_api_key_set(api_provider: str) -> bool:
     return False
 
 
-def router(path: str, priority: str = "speed", autoselect_llm: bool = True) -> str:
+def router(path: str, priority: str = "speed", autoselect_llm: bool = False) -> str:
     """
     Routes the file path to the appropriate parser based on the file type.
 
@@ -578,11 +578,11 @@ def strip_markdown(text: str) -> str:
     return text
 
 
-def word_edit_distance(words1: List[str], words2: List[str]) -> int:
+def edit_distance(string1: str, string2: str) -> int:
     """
-    Compute the Levenshtein distance between two lists of words.
+    Compute the Levenshtein distance between two strings.
     """
-    m, n = len(words1), len(words2)
+    m, n = len(string1), len(string2)
     dp = np.zeros((m + 1, n + 1), dtype=int)
 
     for i in range(m + 1):
@@ -592,7 +592,7 @@ def word_edit_distance(words1: List[str], words2: List[str]) -> int:
 
     for i in range(1, m + 1):
         for j in range(1, n + 1):
-            if words1[i - 1] == words2[j - 1]:
+            if string1[i - 1] == string2[j - 1]:
                 dp[i][j] = dp[i - 1][j - 1]
             else:
                 dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
@@ -601,11 +601,10 @@ def word_edit_distance(words1: List[str], words2: List[str]) -> int:
 
 
 def find_bboxes_for_substring(
-    bbox_dict: List[Tuple[str, Tuple[float, float, float, float]]],
+    bbox_dict,
     content: str,
     substring: str,
-    fuzzy: bool = False,
-    all_matches: bool = False,
+    match_mode: str = "fuzzy",
 ):
     """
     Given bounding boxes for words and a substring, return bounding boxes of words in the substring.
@@ -614,14 +613,13 @@ def find_bboxes_for_substring(
         bbox_dict (list): List of (word_with_markdown, bbox)
         content (str): Full markdown content
         substring (str): Substring to locate
-        fuzzy (bool): If True, finds the best approximate match (min word-level edit distance)
-        all_matches (bool): If True, return bounding boxes for all occurrences of the substring
+        match_mode (str): "fuzzy", "exact", or "all_matches" (default: "fuzzy"). "fuzzy" finds the best approximate match (min word-level edit distance), "exact" finds the exact match, "all_matches" returns bounding boxes for all occurrences of the substring
 
     Returns:
         List of bounding boxes corresponding to matched words
     """
-    normalized_content: List[str] = strip_markdown(content).split()
-    normalized_substring: List[str] = strip_markdown(substring).split()
+    normalized_content = strip_markdown(content).split()
+    normalized_substring = strip_markdown(substring).split()
     normalized_bboxes = [(strip_markdown(w).strip(), bbox) for w, bbox in bbox_dict]
 
     # Build mapping from word -> list of bboxes
@@ -634,10 +632,27 @@ def find_bboxes_for_substring(
     for word in normalized_content:
         if bbox_lookup[word]:
             ordered_bboxes.append((word, bbox_lookup[word].popleft()))
+        else:
+            ordered_bboxes.append((word, None))
+
+    # Greedy matching for words without a bbox using edit distance
+    if match_mode == "fuzzy":
+        for i, (word, bbox) in enumerate(ordered_bboxes):
+            if bbox is None:
+                best_word, best_bbox, best_dist = None, None, float("inf")
+                # search over *remaining* words in bbox_lookup
+                for cand_word, bboxes in bbox_lookup.items():
+                    if bboxes:  # still unused
+                        dist = edit_distance(word, cand_word)
+                        if dist < best_dist:
+                            best_word, best_bbox, best_dist = cand_word, bboxes[0], dist
+                if best_bbox is not None:
+                    # assign the bbox and consume it
+                    ordered_bboxes[i] = (word, bbox_lookup[best_word].popleft())
 
     result = []
 
-    if not fuzzy:
+    if match_mode != "fuzzy":
         # Exact sliding window search
         for i in range(len(normalized_content) - len(normalized_substring) + 1):
             if (
@@ -647,8 +662,9 @@ def find_bboxes_for_substring(
                 bboxes = [
                     bbox
                     for (_, bbox) in ordered_bboxes[i : i + len(normalized_substring)]
+                    if bbox is not None
                 ]
-                if all_matches:
+                if match_mode == "all_matches":
                     result.extend(bboxes)
                 else:
                     return bboxes
@@ -659,7 +675,7 @@ def find_bboxes_for_substring(
         best_start = None
         for i in range(len(normalized_content) - len(normalized_substring) + 1):
             window = normalized_content[i : i + len(normalized_substring)]
-            dist = word_edit_distance(window, normalized_substring)
+            dist = edit_distance(" ".join(window), " ".join(normalized_substring))
             if dist < min_dist:
                 min_dist = dist
                 best_start = i
@@ -670,12 +686,9 @@ def find_bboxes_for_substring(
                 for (_, bbox) in ordered_bboxes[
                     best_start : best_start + len(normalized_substring)
                 ]
+                if bbox is not None
             ]
-            if all_matches:
-                # For fuzzy, we only have the best match, so just extend result once
-                result.extend(bboxes)
-            else:
-                return bboxes
+            return bboxes
 
         return result
 
@@ -770,3 +783,37 @@ def visualize_bounding_boxes(
 
     plt.axis("off")
     plt.show()
+
+
+def split_bbox_by_word_length(
+    bbox: List[float], text: str
+) -> List[Tuple[List[float], str]]:
+    """
+    Approximate splitting of a bounding box into multiple bounding boxes according to word lengths.
+
+    Args:
+        bbox (List[float]): Bounding box in format [x0, top, x1, bottom], normalized.
+        text (str): The detected text within this bounding box.
+
+    Returns:
+        List[Tuple[List[float], str]]: List of tuples with bounding box and corresponding single word text.
+    """
+    words = text.split()
+    if len(words) <= 1:
+        return [(bbox, text)]
+
+    x0, top, x1, bottom = bbox
+    total_width = x1 - x0
+
+    # Calculate the proportional width of each word based on its length
+    total_chars = sum(len(word) for word in words)
+    boxes = []
+    current_x = x0
+
+    for word in words:
+        word_width = total_width * (len(word) / total_chars)
+        word_bbox = [current_x, top, current_x + word_width, bottom]
+        boxes.append((word_bbox, word))
+        current_x += word_width
+
+    return boxes
