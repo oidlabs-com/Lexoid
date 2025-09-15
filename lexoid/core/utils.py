@@ -634,7 +634,7 @@ def find_bboxes_for_substring(
         bbox_dict (list): List of (word_with_markdown, bbox)
         content (str): Full markdown content
         substring (str): Substring to locate
-        match_mode (str): "fuzzy", "exact", or "all_matches" (default: "fuzzy"). "fuzzy" finds the best approximate match (min word-level edit distance), "exact" finds the exact match, "all_matches" returns bounding boxes for all occurrences of the substring
+        match_mode (str): "fuzzy", "exact", or "all_matches" (default: "fuzzy"). "fuzzy" finds the best approximate match (min character-level edit distance), "exact" finds the exact match, "all_matches" returns bounding boxes for all occurrences of the substring
 
     Returns:
         List of bounding boxes corresponding to matched words
@@ -691,7 +691,7 @@ def find_bboxes_for_substring(
                     return bboxes
         return result
     else:
-        # Fuzzy: find the substring window with minimum word-level edit distance
+        # Fuzzy: find the substring window with minimum character-level edit distance
         min_dist = float("inf")
         best_start = None
         for i in range(len(normalized_content) - len(normalized_substring) + 1):
