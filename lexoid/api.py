@@ -21,7 +21,7 @@ from lexoid.core.parse_type.llm_parser import (
     get_api_provider_for_model,
     parse_llm_doc,
 )
-from lexoid.core.parse_type.static_parser import parse_static_doc, parse_with_easyocr
+from lexoid.core.parse_type.static_parser import parse_static_doc
 from lexoid.core.prompt_templates import (
     LATEX_FIRST_PAGE_PROMPT,
     LATEX_LAST_PAGE_PROMPT,
@@ -29,6 +29,7 @@ from lexoid.core.prompt_templates import (
     LATEX_USER_PROMPT,
 )
 from lexoid.core.utils import (
+    bbox_router,
     create_sub_pdf,
     download_file,
     get_webpage_soup,
@@ -128,6 +129,17 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
         result = parse_llm_doc(path, **kwargs)
 
     result["parser_used"] = parser_type
+
+    if kwargs.get("return_bboxes") and "bboxes" not in result["segments"][0]:
+        if kwargs.get("bbox_framework", "auto") == "auto":
+            kwargs["bbox_framework"] = bbox_router(path)
+        kwargs["parser_type"] = ParserType.STATIC_PARSE
+        kwargs["framework"] = kwargs["bbox_framework"]
+        result_static = parse_static_doc(path, **kwargs)
+        for i, segment in enumerate(result["segments"]):
+            if i < len(result_static["segments"]):
+                segment["bboxes"] = result_static["segments"][i].get("bboxes", [])
+
     return result
 
 
@@ -296,12 +308,6 @@ def parse(
                     "total": sum(r["token_usage"]["total"] for r in chunk_results),
                 },
             }
-
-        if kwargs.get("return_bboxes"):
-            result_static = parse_with_easyocr(path)
-            for i, segment in enumerate(result["segments"]):
-                if i < len(result_static["segments"]):
-                    segment["bboxes"] = result_static["segments"][i].get("bboxes", [])
 
         if "api_cost_mapping" in kwargs and "token_usage" in result:
             api_cost_mapping = kwargs["api_cost_mapping"]

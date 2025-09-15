@@ -548,6 +548,27 @@ def router(path: str, priority: str = "speed", autoselect_llm: bool = False) -> 
         return "LLM_PARSE", model_name
 
 
+def bbox_router(path: str) -> str:
+    """
+    Routes the file path to the appropriate bounding box extraction method based on the file type.
+
+    Args:
+        path (str): The file path to route.
+
+    Returns:
+        str: The parser to use for bounding box extraction (e.g., "easyocr" or "pdfplumber")
+    """
+    file_type = get_file_type(path)
+    if file_type.startswith("image/"):
+        return "easyocr"
+    elif file_type == "application/pdf":
+        if has_image_in_pdf(path):
+            return "easyocr"
+        else:
+            return "pdfplumber"
+    raise ValueError(f"No suitable bbox extraction method for file type: {file_type}")
+
+
 def get_uri_rect(path):
     with open(path, "rb") as fp:
         byte_str = str(fp.read())
