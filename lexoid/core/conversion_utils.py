@@ -74,7 +74,9 @@ def base64_to_cv2_image(b64_string: str, gray_scale: bool = True) -> np.ndarray:
     pil_image = base64_to_pil_image(b64_string)
     if gray_scale:
         image = pil_image.convert("L")
-    return np.array(image)
+        return np.array(image)
+    else:
+        return np.array(pil_image)
 
 
 def cv2_to_pil(cv2_image: np.ndarray) -> Image.Image:
