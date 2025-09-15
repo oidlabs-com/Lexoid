@@ -21,7 +21,7 @@ from lexoid.core.parse_type.llm_parser import (
     get_api_provider_for_model,
     parse_llm_doc,
 )
-from lexoid.core.parse_type.static_parser import parse_static_doc
+from lexoid.core.parse_type.static_parser import parse_static_doc, parse_with_easyocr
 from lexoid.core.prompt_templates import (
     LATEX_FIRST_PAGE_PROMPT,
     LATEX_LAST_PAGE_PROMPT,
@@ -55,7 +55,7 @@ def retry_with_different_parser_type(func):
             if len(args) > 1:
                 if args[1] == ParserType.AUTO:
                     router_priority = kwargs.get("router_priority", "speed")
-                    autoselect_llm = kwargs.get("autoselect_llm", True)
+                    autoselect_llm = kwargs.get("autoselect_llm", False)
                     routed_parser_type, model = router(
                         kwargs["path"], router_priority, autoselect_llm=autoselect_llm
                     )
@@ -296,6 +296,12 @@ def parse(
                     "total": sum(r["token_usage"]["total"] for r in chunk_results),
                 },
             }
+
+        if kwargs.get("return_bboxes"):
+            result_static = parse_with_easyocr(path)
+            for i, segment in enumerate(result["segments"]):
+                if i < len(result_static["segments"]):
+                    segment["bboxes"] = result_static["segments"][i].get("bboxes", [])
 
         if "api_cost_mapping" in kwargs and "token_usage" in result:
             api_cost_mapping = kwargs["api_cost_mapping"]
