@@ -130,7 +130,11 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
 
     result["parser_used"] = parser_type
 
-    if kwargs.get("return_bboxes") and "bboxes" not in result["segments"][0]:
+    return_bboxes = kwargs.get("return_bboxes", False)
+    has_bboxes = bool(result["segments"][0].get("bboxes"))
+    bbox_framework_different = kwargs.get("bbox_framework") != kwargs.get("framework")
+    if return_bboxes and (not has_bboxes or bbox_framework_different):
+        logger.debug("Extracting bounding boxes...")
         if kwargs.get("bbox_framework", "auto") == "auto":
             kwargs["bbox_framework"] = bbox_router(path)
         kwargs["parser_type"] = ParserType.STATIC_PARSE

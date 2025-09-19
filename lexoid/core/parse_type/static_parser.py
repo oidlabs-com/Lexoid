@@ -5,11 +5,11 @@ from functools import wraps
 from time import time
 from typing import Dict, List, Tuple
 
-import easyocr
 import pandas as pd
 import pdfplumber
 from docx import Document
 from loguru import logger
+from paddleocr import PaddleOCR
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
@@ -86,12 +86,12 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
             return parse_with_pdfplumber(path, **kwargs)
         elif framework == "pdfminer":
             return parse_with_pdfminer(path, **kwargs)
-        elif framework == "easyocr":
-            return parse_with_easyocr(path, **kwargs)
+        elif framework == "paddleocr":
+            return parse_with_paddleocr(path, **kwargs)
         else:
             raise ValueError(f"Unsupported framework: {framework}")
     elif "image" in file_type:
-        return parse_with_easyocr(path, **kwargs)
+        return parse_with_paddleocr(path, **kwargs)
     elif "wordprocessing" in file_type:
         return parse_with_docx(path, **kwargs)
     elif file_type == "text/html":
@@ -733,9 +733,9 @@ def parse_with_docx(path: str, **kwargs) -> Dict:
     }
 
 
-def parse_with_easyocr(path: str, **kwargs) -> Dict:
+def parse_with_paddleocr(path: str, **kwargs) -> Dict:
     """
-    Parse document using EasyOCR and return bboxes.
+    Parse document using PaddleOCR and return bboxes.
 
     Args:
         path (str): Path to the PDF document.
@@ -743,7 +743,7 @@ def parse_with_easyocr(path: str, **kwargs) -> Dict:
     Returns:
         Dict: Dictionary containing parsed document data with segments per page.
     """
-    reader = easyocr.Reader(["en"], gpu=False)
+    ocr = PaddleOCR(use_angle_cls=False, lang="en")
 
     base64_images = convert_doc_to_base64_images(path)
 
@@ -751,31 +751,28 @@ def parse_with_easyocr(path: str, **kwargs) -> Dict:
     all_texts = []
 
     for page_num, base64_img_str in base64_images:
-        image_np = base64_to_cv2_image(base64_img_str)
+        image_np = base64_to_cv2_image(base64_img_str, gray_scale=False)
 
-        results = reader.readtext(
-            image_np, detail=1, paragraph=False, x_ths=0.1, y_ths=0.1
-        )
+        results = ocr.predict(image_np, use_doc_unwarping=False)
 
         page_texts = []
         page_bboxes = []
 
         height_img, width_img = image_np.shape[:2]
 
-        for bbox, text, _ in results:
-            x_coords = [point[0].item() for point in bbox]
-            y_coords = [point[1].item() for point in bbox]
-            x_min = min(x_coords)
-            y_min = min(y_coords)
-            x_max = max(x_coords)
-            y_max = max(y_coords)
+        for text, bbox in zip(results[0]["rec_texts"], results[0]["rec_polys"]):
+            x_coords = bbox[:, 0]
+            y_coords = bbox[:, 1]
+            x_min = x_coords.min().item()
+            y_min = y_coords.min().item()
+            x_max = x_coords.max().item()
+            y_max = y_coords.max().item()
 
             top = y_min / height_img
             bottom = y_max / height_img
             x0 = x_min / width_img
             x1 = x_max / width_img
 
-            # Use the splitting function to divide multi-word bbox into words
             split_words = split_bbox_by_word_length([x0, top, x1, bottom], text)
 
             for word_bbox, word_text in split_words:

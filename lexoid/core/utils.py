@@ -556,15 +556,18 @@ def bbox_router(path: str) -> str:
         path (str): The file path to route.
 
     Returns:
-        str: The parser to use for bounding box extraction (e.g., "easyocr" or "pdfplumber")
+        str: The parser to use for bounding box extraction (e.g., "paddleocr" or "pdfplumber")
     """
     file_type = get_file_type(path)
     if file_type.startswith("image/"):
-        return "easyocr"
+        logger.debug("Using PaddleOCR for image file.")
+        return "paddleocr"
     elif file_type == "application/pdf":
         if has_image_in_pdf(path):
-            return "easyocr"
+            logger.debug("Using PaddleOCR for PDF with images.")
+            return "paddleocr"
         else:
+            logger.debug("Using PDFPlumber for PDF without images.")
             return "pdfplumber"
     raise ValueError(f"No suitable bbox extraction method for file type: {file_type}")
 
@@ -626,6 +629,7 @@ def find_bboxes_for_substring(
     content: str,
     substring: str,
     match_mode: str = "fuzzy",
+    max_edit_distance: int = 3,
 ):
     """
     Given bounding boxes for words and a substring, return bounding boxes of words in the substring.
@@ -660,13 +664,14 @@ def find_bboxes_for_substring(
     if match_mode == "fuzzy":
         for i, (word, bbox) in enumerate(ordered_bboxes):
             if bbox is None:
-                best_word, best_bbox, best_dist = None, None, float("inf")
+                best_word, best_bbox, best_dist = None, None, max_edit_distance
                 # search over *remaining* words in bbox_lookup
                 for cand_word, bboxes in bbox_lookup.items():
-                    if bboxes:  # still unused
+                    if bboxes:
                         dist = edit_distance(word, cand_word)
                         if dist < best_dist:
                             best_word, best_bbox, best_dist = cand_word, bboxes[0], dist
+                            print(dist, best_dist, best_word, best_bbox)
                 if best_bbox is not None:
                     # assign the bbox and consume it
                     ordered_bboxes[i] = (word, bbox_lookup[best_word].popleft())
@@ -692,7 +697,7 @@ def find_bboxes_for_substring(
         return result
     else:
         # Fuzzy: find the substring window with minimum character-level edit distance
-        min_dist = float("inf")
+        min_dist = max_edit_distance
         best_start = None
         for i in range(len(normalized_content) - len(normalized_substring) + 1):
             window = normalized_content[i : i + len(normalized_substring)]
