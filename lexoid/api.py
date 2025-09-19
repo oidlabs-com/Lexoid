@@ -29,6 +29,7 @@ from lexoid.core.prompt_templates import (
     LATEX_USER_PROMPT,
 )
 from lexoid.core.utils import (
+    bbox_router,
     create_sub_pdf,
     download_file,
     get_webpage_soup,
@@ -55,7 +56,7 @@ def retry_with_different_parser_type(func):
             if len(args) > 1:
                 if args[1] == ParserType.AUTO:
                     router_priority = kwargs.get("router_priority", "speed")
-                    autoselect_llm = kwargs.get("autoselect_llm", True)
+                    autoselect_llm = kwargs.get("autoselect_llm", False)
                     routed_parser_type, model = router(
                         kwargs["path"], router_priority, autoselect_llm=autoselect_llm
                     )
@@ -128,6 +129,21 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
         result = parse_llm_doc(path, **kwargs)
 
     result["parser_used"] = parser_type
+
+    return_bboxes = kwargs.get("return_bboxes", False)
+    has_bboxes = bool(result["segments"][0].get("bboxes"))
+    bbox_framework_different = kwargs.get("bbox_framework") != kwargs.get("framework")
+    if return_bboxes and (not has_bboxes or bbox_framework_different):
+        logger.debug("Extracting bounding boxes...")
+        if kwargs.get("bbox_framework", "auto") == "auto":
+            kwargs["bbox_framework"] = bbox_router(path)
+        kwargs["parser_type"] = ParserType.STATIC_PARSE
+        kwargs["framework"] = kwargs["bbox_framework"]
+        result_static = parse_static_doc(path, **kwargs)
+        for i, segment in enumerate(result["segments"]):
+            if i < len(result_static["segments"]):
+                segment["bboxes"] = result_static["segments"][i].get("bboxes", [])
+
     return result
 
 
