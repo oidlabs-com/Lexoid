@@ -70,18 +70,16 @@ def retry_with_different_parser_type(func):
                 kwargs["parser_type"] = parser_type
             return func(**kwargs)
         except Exception as e:
-            if kwargs.get("parser_type") == ParserType.LLM_PARSE and kwargs.get(
-                "routed", False
-            ):
+            parse_type = kwargs.get("parser_type")
+            routed = kwargs.get("routed", False)
+            if parse_type == ParserType.LLM_PARSE and routed:
                 logger.warning(
                     f"LLM_PARSE failed with error: {e}. Retrying with STATIC_PARSE."
                 )
                 kwargs["parser_type"] = ParserType.STATIC_PARSE
                 kwargs["routed"] = False
                 return func(**kwargs)
-            elif kwargs.get("parser_type") == ParserType.STATIC_PARSE and kwargs.get(
-                "routed", False
-            ):
+            elif parse_type == ParserType.STATIC_PARSE and routed:
                 logger.warning(
                     f"STATIC_PARSE failed with error: {e}. Retrying with LLM_PARSE."
                 )

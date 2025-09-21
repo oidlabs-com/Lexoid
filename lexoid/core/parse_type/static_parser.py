@@ -35,20 +35,18 @@ def retry_with_different_parser(func):
         try:
             return func(*args, **kwargs)
         except Exception as e:
-            if "pdfminer" != kwargs.get("framework", "pdfplumber") and not kwargs.get(
-                "routed", False
-            ):
-                kwargs["framework"] = "pdfminer"
-                logger.warning(
-                    f"Retrying with pdfminer due to error: {e}. Original framework: {kwargs['framework']}"
-                )
-                return func(*args, **kwargs)
-            elif "pdfplumber" != kwargs.get(
-                "framework", "pdfplumber"
-            ) and not kwargs.get("routed", False):
+            framework = kwargs.get("framework", "pdfplumber")
+            routed = kwargs.get("routed", False)
+            if framework != "pdfplumber" and not routed:
                 kwargs["framework"] = "pdfplumber"
                 logger.warning(
-                    f"Retrying with pdfplumber due to error: {e}. Original framework: {kwargs['framework']}"
+                    f"Retrying with pdfplumber due to error: {e}. Original framework: {framework}"
+                )
+                return func(*args, **kwargs)
+            elif framework != "pdfminer" and not routed:
+                kwargs["framework"] = "pdfminer"
+                logger.warning(
+                    f"Retrying with pdfminer due to error: {e}. Original framework: {framework}"
                 )
                 return func(*args, **kwargs)
             else:
