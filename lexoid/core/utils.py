@@ -7,18 +7,18 @@ from hashlib import md5
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
-from matplotlib import pyplot as plt
 import nest_asyncio
 import numpy as np
 import pikepdf
 import requests
 from bs4 import BeautifulSoup
+from Levenshtein import distance
 from loguru import logger
 from markdown import markdown
 from markdownify import markdownify as md
+from matplotlib import pyplot as plt
 
 from lexoid.core.llm_selector import DocumentRankedLLMSelector
-
 
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 
@@ -602,28 +602,6 @@ def strip_markdown(text: str) -> str:
     return text
 
 
-def edit_distance(string1: str, string2: str) -> int:
-    """
-    Compute the Levenshtein distance between two strings.
-    """
-    m, n = len(string1), len(string2)
-    dp = np.zeros((m + 1, n + 1), dtype=int)
-
-    for i in range(m + 1):
-        dp[i][0] = i
-    for j in range(n + 1):
-        dp[0][j] = j
-
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            if string1[i - 1] == string2[j - 1]:
-                dp[i][j] = dp[i - 1][j - 1]
-            else:
-                dp[i][j] = 1 + min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1])
-
-    return dp[m][n]
-
-
 def find_bboxes_for_substring(
     bbox_dict: List[Tuple[str, Tuple[float, float, float, float]]],
     content: str,
@@ -668,7 +646,7 @@ def find_bboxes_for_substring(
                 # search over *remaining* words in bbox_lookup
                 for cand_word, bboxes in bbox_lookup.items():
                     if bboxes:
-                        dist = edit_distance(word, cand_word)
+                        dist = distance(word, cand_word)
                         if dist < best_dist:
                             best_word, best_bbox, best_dist = cand_word, bboxes[0], dist
                 if best_bbox is not None:
@@ -700,7 +678,7 @@ def find_bboxes_for_substring(
         best_start = None
         for i in range(len(normalized_content) - len(normalized_substring) + 1):
             window = normalized_content[i : i + len(normalized_substring)]
-            dist = edit_distance(" ".join(window), " ".join(normalized_substring))
+            dist = distance(" ".join(window), " ".join(normalized_substring))
             if dist < min_dist:
                 min_dist = dist
                 best_start = i
