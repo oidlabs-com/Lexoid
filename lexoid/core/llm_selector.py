@@ -16,9 +16,9 @@ from tqdm import tqdm
 from transformers import CLIPModel, CLIPProcessor
 
 from lexoid.core.conversion_utils import (
+    base64_to_np_array,
     convert_doc_to_base64_images,
     cv2_to_pil,
-    base64_to_cv2_image,
 )
 
 # ====================== Image Feature Extraction ======================
@@ -118,7 +118,7 @@ def extract_page_features(img: np.ndarray) -> List[float]:
 
 def extract_doc_features(doc_path: str) -> List[float]:
     page_data = convert_doc_to_base64_images(doc_path)
-    features = [extract_page_features(base64_to_cv2_image(b64)) for _, b64 in page_data]
+    features = [extract_page_features(base64_to_np_array(b64)) for _, b64 in page_data]
     features = np.array(features)
     return features.mean(axis=0)
 
@@ -141,7 +141,7 @@ def extract_image_embedding(
     embeddings = []
 
     for _, b64 in page_data:
-        cv2_img = base64_to_cv2_image(b64)
+        cv2_img = base64_to_np_array(b64)
         pil_img = cv2_to_pil(cv2_img)
         inputs = processor(images=pil_img, return_tensors="pt").to(device)
 

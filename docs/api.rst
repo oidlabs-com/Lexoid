@@ -34,6 +34,7 @@ parse
      the cost details. Sample file available at ``tests/api_cost_mapping.json``
    * ``router_priority`` (str): What the routing strategy should prioritize. Options are ``"speed"`` and ``"accuracy"``. The router directs a file to either ``"STATIC_PARSE"`` or ``"LLM_PARSE"`` based on its type and the selected priority. If priority is "accuracy", it prefers LLM_PARSE unless the PDF has no images but contains embedded/hidden hyperlinks, in which case it uses ``STATIC_PARSE`` (because LLMs currently fail to parse hidden hyperlinks). If priority is "speed", it uses ``STATIC_PARSE`` for documents without images and ``LLM_PARSE`` for documents with images.
    * ``api_provider`` (str): The API provider to use for LLM parsing. Options are ``gemini``, ``openai``, ``claude``, ``huggingface``, ``together``, ``openrouter``, and ``fireworks``. This parameter is only relevant when using LLM parsing.
+   * ``return_bboxes`` (bool): Whether to return bounding box information for each text segment. Default is ``False``.
 
    Return value format:
    A dictionary containing a subset or all of the following keys:
