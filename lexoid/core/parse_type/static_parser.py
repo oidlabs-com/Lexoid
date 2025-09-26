@@ -16,7 +16,7 @@ from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
 from pptx2md import ConversionConfig, convert
 
 from lexoid.core.conversion_utils import (
-    base64_to_cv2_image,
+    base64_to_np_array,
     convert_doc_to_base64_images,
 )
 from lexoid.core.utils import (
@@ -740,7 +740,7 @@ def parse_with_paddleocr(path: str, **kwargs) -> Dict:
     Returns:
         Dict: Dictionary containing parsed document data with segments per page.
     """
-    ocr = PaddleOCR(use_angle_cls=False, lang="en")
+    ocr = PaddleOCR(use_textline_orientation=False, lang="en")
 
     base64_images = convert_doc_to_base64_images(path)
 
@@ -748,7 +748,7 @@ def parse_with_paddleocr(path: str, **kwargs) -> Dict:
     all_texts = []
 
     for page_num, base64_img_str in base64_images:
-        image_np = base64_to_cv2_image(base64_img_str, gray_scale=False)
+        image_np = base64_to_np_array(base64_img_str, gray_scale=False)
 
         results = ocr.predict(image_np, use_doc_unwarping=False)
 
@@ -756,8 +756,7 @@ def parse_with_paddleocr(path: str, **kwargs) -> Dict:
         page_bboxes = []
 
         height_img, width_img = image_np.shape[:2]
-
-        for text, bbox in zip(results[0]["rec_texts"], results[0]["rec_polys"]):
+        for text, bbox in zip(results[0]["rec_texts"], results[0]["dt_polys"]):
             x_coords = bbox[:, 0]
             y_coords = bbox[:, 1]
             x_min = x_coords.min().item()
