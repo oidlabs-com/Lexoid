@@ -79,10 +79,13 @@ Here's a quick example to parse documents using Lexoid:
 from lexoid.api import parse
 from lexoid.api import ParserType
 
-parsed_md = parse("https://www.justice.gov/eoir/immigration-law-advisor", parser_type="LLM_PARSE")["raw"]
+parsed_md = parse("https://www.justice.gov/eoir/immigration-law-advisor", parser_type="AUTO")["raw"]
 # or
 pdf_path = "path/to/immigration-law-advisor.pdf"
 parsed_md = parse(pdf_path, parser_type="LLM_PARSE")["raw"]
+# or
+pdf_path = "path/to/immigration-law-advisor.pdf"
+parsed_md = parse(pdf_path, parser_type="STATIC_PARSE")["raw"]
 
 print(parsed_md)
 ```
@@ -135,3 +138,6 @@ _Note:_ Benchmarks are currently done in the zero-shot setting.
 | 22 | microsoft/phi-4-multimodal-instruct | 0.589 (±0.273) | 0.820 (±0.197) | 14.00 | 0.00045 |
 | 23 | qwen/qwen-2.5-vl-7b-instruct | 0.498 (±0.378) | 0.630 (±0.445) | 14.73 | 0.00056 |
 | 24 | ds4sd/SmolDocling-256M-preview | 0.482 (±0.365) | 0.572 (±0.351) | 106.19 | 0.00000 |
+
+## Citation
+If you use Lexoid in production or publications, please cite accordingly and acknowledge usage. We appreciate the support 🙏
