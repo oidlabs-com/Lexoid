@@ -35,6 +35,11 @@ anthropic = "^0.60.0"
 transformers = "^4.51.3"
 torch = "^2.7.0"
 scikit-learn = "^1.7.1"
+scikit-image = "^0.25.2"
+paddleocr = "^3.2.0"
+matplotlib = "^3.10.6"
+paddlepaddle = "^3.2.0"
+levenshtein = "^0.27.1"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"

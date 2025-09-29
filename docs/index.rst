@@ -24,6 +24,7 @@ Key Features
 * Multi-format support
 * Parallel processing support
 * Permissive license
+* Reference highlighting and bounding box extraction
 
 Supported API Providers
 -----------------------
