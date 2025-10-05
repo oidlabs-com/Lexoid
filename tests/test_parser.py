@@ -416,3 +416,14 @@ async def test_strikethrough_words():
     parser_type = "STATIC_PARSE"
     results = parse(sample, parser_type, framework="pdfplumber")["raw"]
     assert "~~" in results, "Markdown strikethrough text not found"
+
+@pytest.mark.asyncio
+async def test_docx_path_injection():
+    sample = "test$(mkdir -p lexoid_poc_success).docx"
+    parser_type = "STATIC_PARSE"
+    try:
+        parse(sample, parser_type)["raw"]
+    except Exception as e:
+        print(f"Parsing failed: {e}")
+    finally:
+        assert not os.path.exists("lexoid_poc_success"), "Path injection detected"
