@@ -419,11 +419,15 @@ async def test_strikethrough_words():
 
 @pytest.mark.asyncio
 async def test_docx_path_injection():
-    sample = "test$(mkdir -p lexoid_poc_success).docx"
+    # Attempt to inject a directory creation command via the filename
+    dir_name = "path_injection_success"
+    sample = f"test$(mkdir -p {dir_name}).docx"
     parser_type = "STATIC_PARSE"
     try:
         parse(sample, parser_type)["raw"]
     except Exception as e:
         print(f"Parsing failed: {e}")
     finally:
-        assert not os.path.exists("lexoid_poc_success"), "Path injection detected"
+        if os.path.exists(dir_name):
+            os.rmdir(dir_name)
+            assert False, "Path injection detected"
