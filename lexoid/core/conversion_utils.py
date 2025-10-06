@@ -3,6 +3,7 @@ import dataclasses
 import io
 import mimetypes
 import os
+import subprocess
 import sys
 from typing import Dict, List, Tuple, Type, Union
 
@@ -149,8 +150,17 @@ def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     # docx2pdf is not supported in linux. Use LibreOffice in linux instead.
     # May need to install LibreOffice if not already installed.
     if "linux" in sys.platform.lower():
-        os.system(
-            f'lowriter --headless --convert-to pdf --outdir {temp_dir} "{input_path}"'
+        subprocess.run(
+            [
+                "lowriter",
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                temp_dir,
+                input_path,
+            ],
+            check=True,
         )
     else:
         docx2pdf.convert(input_path, temp_path)
