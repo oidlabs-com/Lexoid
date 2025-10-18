@@ -43,6 +43,10 @@ playwright install --with-deps --only-shell chromium
 
 ### Building `.whl` from source
 
+>[!NOTE]
+>Installing the package from within the virtual environment could cause unexpected behavior, 
+>as Lexoid creates and activates its own environment in order to build the wheel.
+
 ```
 make build
 ```
