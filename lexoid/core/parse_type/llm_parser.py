@@ -1,24 +1,30 @@
-from PIL import Image
+import ast
 import base64
 import io
 import mimetypes
 import os
+import re
 import time
 from functools import wraps
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import pypdfium2 as pdfium
 import requests
+import torch
 from anthropic import Anthropic
 from huggingface_hub import InferenceClient
 from loguru import logger
 from mistralai import Mistral
 from openai import OpenAI
+from PIL import Image
 from requests.exceptions import HTTPError
 from together import Together
-import torch
-from transformers import AutoProcessor, AutoModelForImageTextToText
+from transformers import AutoModelForVision2Seq, AutoProcessor
 
+from lexoid.core.conversion_utils import (
+    convert_image_to_pdf,
+    convert_pdf_page_to_base64,
+)
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
     LLAMA_PARSER_PROMPT,
@@ -26,10 +32,6 @@ from lexoid.core.prompt_templates import (
     PARSER_PROMPT,
 )
 from lexoid.core.utils import get_api_provider_for_model, get_file_type
-from lexoid.core.conversion_utils import (
-    convert_image_to_pdf,
-    convert_pdf_page_to_base64,
-)
 
 
 def retry_on_error(func):
@@ -100,64 +102,283 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     return parse_with_api(path, api=api_provider, **kwargs)
 
 
-def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
-    # Reference: https://huggingface.co/spaces/aabdullah27/SmolDocling-OCR-App/blob/main/app.py
+def doctags_to_markdown_and_bboxes(
+    doctags: str,
+) -> Tuple[str, List[Tuple[str, List[float]]]]:
+    """
+    # Source: https://huggingface.co/ibm-granite/granite-docling-258M
+
+    Parse a subset of DocTags/OTSL:
+      - <section_header_level_N>Title</section_header_level_N> -> Markdown #... heading
+      - <text>Paragraph</text> -> Markdown paragraph
+      - <otsl> with <ched>, <fcel>, <nl> -> Markdown table
+    Bboxes: when 4 successive <loc_*> appear before a textual atom, assign that bbox
+    normalized to [0,1] via 500-scale reported by the model.
+    """
+    # Tokenize into tags and text
+    tokens = re.split(r"(<[^>]+>)", doctags)
+    md_lines: List[str] = []
+    bboxes: List[Tuple[str, List[float]]] = []
+
+    # State for capturing bounding boxes
+    loc_buffer: List[int] = []
+    pending_bbox: List[float] = None
+
+    def update_bbox_from_tag(tag: str):
+        nonlocal loc_buffer, pending_bbox
+        m = re.fullmatch(r"<loc_(\d+)>", tag)
+        if m:
+            loc_buffer.append(int(m.group(1)))
+            if len(loc_buffer) >= 4:
+                vals = loc_buffer[-4:]
+                pending_bbox = [
+                    vals[0] / 500,
+                    vals[1] / 500,
+                    vals[2] / 500,
+                    vals[3] / 500,
+                ]
+
+    def take_bbox_for(text_value: str):
+        nonlocal pending_bbox
+        if text_value and pending_bbox is not None:
+            bboxes.append((text_value, pending_bbox))
+            pending_bbox = None  # consume per atom
+
+    def finalize_text(s: str) -> str:
+        # Collapse spaces and non-breaking spaces left by tag splits
+        return re.sub(r"\s+", " ", s).strip()
+
+    i = 0
+    L = len(tokens)
+    while i < L:
+        tok = tokens[i]
+
+        # Track loc tags regardless of context
+        if tok.startswith("<loc_"):
+            update_bbox_from_tag(tok)
+            i += 1
+            continue
+
+        # Section headers
+        m_hdr_open = re.fullmatch(r"<section_header_level_(\d+)>", tok)
+        if m_hdr_open:
+            level = max(1, min(6, int(m_hdr_open.group(1))))
+            # accumulate inner text until closing tag
+            j = i + 1
+            inner = []
+            while j < L:
+                if tokens[j].startswith("</section_header_level_"):
+                    break
+                if tokens[j].startswith("<"):
+                    # allow loc tags inside
+                    if tokens[j].startswith("<loc_"):
+                        update_bbox_from_tag(tokens[j])
+                else:
+                    inner.append(tokens[j])
+                j += 1
+            title = finalize_text("".join(inner))
+            if title:
+                md_lines.append(("#" * level) + " " + title)
+                take_bbox_for(title)
+            i = j + 1
+            continue
+
+        # Paragraph text
+        if tok == "<text>":
+            j = i + 1
+            inner = []
+            while j < L and tokens[j] != "</text>":
+                if tokens[j].startswith("<"):
+                    if tokens[j].startswith("<loc_"):
+                        update_bbox_from_tag(tokens[j])
+                    # ignore other tags inside <text> block
+                else:
+                    inner.append(tokens[j])
+                j += 1
+            paragraph = finalize_text("".join(inner))
+            if paragraph:
+                md_lines.append(paragraph)
+                take_bbox_for(paragraph)
+            i = j + 1
+            continue
+
+        # OTSL table
+        if tok == "<otsl>":
+            j = i + 1
+            headers: List[str] = []
+            rows: List[List[str]] = []
+            current_row: List[str] = []
+
+            def flush_row():
+                nonlocal current_row, rows
+                if any(cell.strip() for cell in current_row):
+                    rows.append(current_row)
+                current_row = []
+
+            while j < L and tokens[j] != "</otsl>":
+                t = tokens[j]
+
+                if t.startswith("<loc_"):
+                    update_bbox_from_tag(t)
+                    j += 1
+                    continue
+
+                if t == "<ched>":
+                    # header cell up to next tag
+                    k = j + 1
+                    cell = []
+                    while k < L and not tokens[k].startswith("<"):
+                        cell.append(tokens[k])
+                        k += 1
+                    text_cell = finalize_text("".join(cell))
+                    if text_cell:
+                        headers.append(text_cell)
+                        take_bbox_for(text_cell)
+                    j = k
+                    continue
+
+                if t == "<fcel>":
+                    k = j + 1
+                    cell = []
+                    while k < L and not tokens[k].startswith("<"):
+                        cell.append(tokens[k])
+                        k += 1
+                    text_cell = finalize_text("".join(cell))
+                    if text_cell:
+                        current_row.append(text_cell)
+                        take_bbox_for(text_cell)
+                    j = k
+                    continue
+
+                if t == "<nl>":
+                    flush_row()
+                    j += 1
+                    continue
+
+                # skip other tags (including formatting)
+                j += 1
+
+            # flush any trailing row
+            if current_row:
+                flush_row()
+
+            md_lines.append("")  # blank line before table
+
+            # Render Markdown table
+            if headers:
+                md_lines.append("| " + " | ".join(headers) + " |")
+                md_lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+            for i, r in enumerate(rows):
+                if i == 1 and not headers:
+                    # if no headers, add a separator after first row
+                    md_lines.append("| " + " | ".join(["---"] * len(r)) + " |")
+                if r:
+                    md_lines.append("| " + " | ".join(r) + " |")
+
+            i = j + 1
+            continue
+
+        # Ignore other tags and plain text outside known blocks
+        i += 1
+
+    markdown = "\n".join([ln for ln in md_lines])
+    return markdown, bboxes
+
+
+def parse_with_local_model(path: str, **kwargs) -> Dict:
+    # Source: https://huggingface.co/ibm-granite/granite-docling-258M
     model_name = kwargs.get("model", "ds4sd/SmolDocling-256M-preview")
-    if not model_name.startswith("ds4sd/SmolDocling"):
-        raise ValueError(
-            f"Local model parsing is only supported for 'ds4sd/SmolDocling*', got {model_name}"
-        )
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     processor = AutoProcessor.from_pretrained(model_name)
-    model = AutoModelForImageTextToText.from_pretrained(model_name)
+    model = AutoModelForVision2Seq.from_pretrained(
+        model_name,
+        torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+    ).to(device)
+
     images = convert_path_to_images(path)
-    pil_images = [
-        Image.open(io.BytesIO(base64.b64decode(image.split(",")[1])))
-        for _, image in images
+    proc_images = [
+        Image.open(io.BytesIO(base64.b64decode(image_b64.split(",")[1]))).convert("RGB")
+        for _, image_b64 in images
     ]
-    intruction = kwargs.get("docling_command", "Convert this page to docling.")
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image"},
-                {"type": "text", "text": intruction},
-            ],
-        },
-        {
-            "role": "assistant",
-            "content": [
-                {"type": "text", "text": "<output>\n"},
-            ],
-        },
-    ]
-    prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
-    inputs = processor(text=prompt, images=pil_images, return_tensors="pt")
-    with torch.no_grad():
-        generated_ids = model.generate(
-            **inputs, max_new_tokens=1500, do_sample=False, num_beams=1, temperature=1.0
+
+    instruction = kwargs.get("docling_command", "Convert this page to docling.")
+
+    # Normalize bbox prompts for certain instruction types (parity)
+    if (
+        ("OCR at text at" in instruction)
+        or ("Identify element" in instruction)
+        or ("formula" in instruction)
+    ):
+
+        def normalize_list(values):
+            max_value = max(values) if values else 1
+            return [round((v / max_value) * 500) for v in values]
+
+        def process_match(match):
+            num_list = ast.literal_eval(match.group(0))
+            normalized = normalize_list(num_list)
+            return "".join([f"<loc_{num}>" for num in normalized])
+
+        pattern = r"\[([\d\.\s,]+)\]"
+        instruction = re.sub(pattern, process_match, instruction)
+
+    segments = []
+    all_md_pages: List[str] = []
+
+    start_page = kwargs.get("start", 0)
+
+    # Run per page for clean segments
+    for idx, img in enumerate(proc_images):
+        # Build messages and prompt mirroring the Space
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "image"}, {"type": "text", "text": instruction}],
+            }
+        ]
+        prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+        inputs = processor(text=prompt, images=[[img]], return_tensors="pt").to(device)
+        with torch.no_grad():
+            generated_ids = model.generate(
+                **inputs,
+                max_new_tokens=8192,
+                do_sample=False,
+                num_beams=1,
+                temperature=1.0,
+            )
+        prompt_len = inputs.input_ids.shape[1]
+        trimmed = generated_ids[:, prompt_len:]
+        doctag_output = processor.batch_decode(trimmed, skip_special_tokens=False)[0]
+        doctag_output = doctag_output.replace("<end_of_utterance>", "").strip()
+
+        # DocTags cleanup and chart remapping
+        if "<chart>" in doctag_output:
+            doctag_output = doctag_output.replace("<chart>", "<otsl>").replace(
+                "</chart>", "</otsl>"
+            )
+            doctag_output = re.sub(
+                r"(<loc_500>)(?!.*<loc_500>)<[^>]+>", r"\1", doctag_output
+            )
+
+        markdown, bboxes = doctags_to_markdown_and_bboxes(doctag_output)
+
+        all_md_pages.append(markdown)
+        segments.append(
+            {
+                "metadata": {"page": start_page + idx + 1},
+                "content": markdown,
+                "bboxes": bboxes,  # list of (text, [x0, top, x1, bottom]) normalized to 0–1
+            }
         )
 
-    prompt_length = inputs.input_ids.shape[1]
-    trimmed_generated_ids = generated_ids[:, prompt_length:]
-    output = (
-        processor.batch_decode(
-            trimmed_generated_ids,
-            skip_special_tokens=False,
-        )[0]
-        .strip()
-        .replace("<end_of_utterance>", "")
-    )
     return {
-        "raw": output,
-        "segments": [
-            {
-                "metadata": {"page": kwargs.get("start", 0) + 1},
-                "content": output,
-            }
-        ],
-        "title": kwargs["title"],
+        "raw": "\n\n---\n\n".join(all_md_pages),  # full Markdown for the document
+        "segments": segments,
+        "title": kwargs.get("title", ""),
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
     }
 
 
