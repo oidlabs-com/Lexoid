@@ -106,7 +106,7 @@ def doctags_to_markdown_and_bboxes(
     doctags: str,
 ) -> Tuple[str, List[Tuple[str, List[float]]]]:
     """
-    # Source: https://huggingface.co/ibm-granite/granite-docling-258M
+    # Reference: https://huggingface.co/ibm-granite/granite-docling-258M
 
     Parse a subset of DocTags/OTSL:
       - <section_header_level_N>Title</section_header_level_N> -> Markdown #... heading
