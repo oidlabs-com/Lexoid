@@ -306,7 +306,7 @@ def parse_with_local_model(path: str, **kwargs) -> Dict:
 
     # Normalize bbox prompts for certain instruction types (parity)
     if (
-        ("OCR at text at" in instruction)
+        ("OCR text at" in instruction)
         or ("Identify element" in instruction)
         or ("formula" in instruction)
     ):
