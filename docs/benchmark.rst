@@ -215,21 +215,21 @@ Here are the detailed parsing performance results for various models, sorted by 
      - 23.16
      - 0.00020
    * - 22
+     - ds4sd/SmolDocling-256M-preview
+     - 0.603 (±0.292)
+     - 0.705 (±0.262)
+     - 507.74
+     - 0.00000
+   * - 23
      - microsoft/phi-4-multimodal-instruct
      - 0.589 (±0.273)
      - 0.820 (±0.197)
      - 14.00
      - 0.00045
-   * - 23
+   * - 24
      - qwen/qwen-2.5-vl-7b-instruct
      - 0.498 (±0.378)
      - 0.630 (±0.445)
      - 14.73
      - 0.00056
-   * - 24
-     - ds4sd/SmolDocling-256M-preview
-     - 0.482 (±0.365)
-     - 0.572 (±0.351)
-     - 106.19
-     - 0.00000
     

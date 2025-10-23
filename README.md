@@ -139,9 +139,9 @@ _Note:_ Benchmarks are currently done in the zero-shot setting.
 | 19 | claude-3-7-sonnet-20250219 | 0.646 (±0.397) | 0.758 (±0.297) | 57.96 | 0.01730 |
 | 20 | gpt-4.1 | 0.637 (±0.301) | 0.787 (±0.185) | 35.37 | 0.01498 |
 | 21 | google/gemma-3-27b-it | 0.604 (±0.342) | 0.788 (±0.297) | 23.16 | 0.00020 |
-| 22 | microsoft/phi-4-multimodal-instruct | 0.589 (±0.273) | 0.820 (±0.197) | 14.00 | 0.00045 |
-| 23 | qwen/qwen-2.5-vl-7b-instruct | 0.498 (±0.378) | 0.630 (±0.445) | 14.73 | 0.00056 |
-| 24 | ds4sd/SmolDocling-256M-preview | 0.482 (±0.365) | 0.572 (±0.351) | 106.19 | 0.00000 |
+| 22 | ds4sd/SmolDocling-256M-preview | 0.603 (±0.292) | 0.705 (±0.262) | 507.74 | 0.00000 |
+| 23 | microsoft/phi-4-multimodal-instruct | 0.589 (±0.273) | 0.820 (±0.197) | 14.00 | 0.00045 |
+| 24 | qwen/qwen-2.5-vl-7b-instruct | 0.498 (±0.378) | 0.630 (±0.445) | 14.73 | 0.00056 |
 
 ## Citation
 If you use Lexoid in production or publications, please cite accordingly and acknowledge usage. We appreciate the support 🙏

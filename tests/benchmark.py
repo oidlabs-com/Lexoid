@@ -51,6 +51,7 @@ config_options = {
         # "accounts/fireworks/models/llama4-scout-instruct-basic",
         # Local model
         # "ds4sd/SmolDocling-256M-preview",
+        # "ibm-granite/granite-docling-258M",
     ],
     "framework": ["pdfminer", "pdfplumber"],
     "pages_per_split": [1, 2, 4, 8],
@@ -58,7 +59,6 @@ config_options = {
     "as_pdf": [True, False],
     "temperature": [0.0, 0.2, 0.7],
     "autoselect_llm": [False],
-
 }
 
 
@@ -471,7 +471,7 @@ def main():
     print("\nTop 3 Configurations:")
     for i, result in enumerate(top_results, 1):
         print(
-            f"{i}. Similarity: {result.mean_similarity["sequence_matcher"]:.3f} (±{result.std_similarity["sequence_matcher"]:.3f}), Time: {result.execution_time[0]:.2f}s"
+            f"{i}. Similarity: {result.mean_similarity['sequence_matcher']:.3f} (±{result.std_similarity['sequence_matcher']:.3f}), Time: {result.execution_time[0]:.2f}s"
         )
         print(f"   Config: {result.config}")
 
