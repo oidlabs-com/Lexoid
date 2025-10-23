@@ -40,6 +40,7 @@ paddleocr = "^3.2.0"
 matplotlib = "^3.10.6"
 paddlepaddle = "^3.2.0"
 levenshtein = "^0.27.1"
+accelerate = "^1.10.1"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"

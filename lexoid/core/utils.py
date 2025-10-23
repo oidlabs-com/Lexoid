@@ -466,7 +466,7 @@ def get_api_provider_for_model(model: str) -> str:
         return "anthropic"
     if model.startswith("mistral"):
         return "mistral"
-    if model.startswith("ds4sd/SmolDocling"):
+    if "docling" in model.lower():
         return "local"
     raise ValueError(f"Unsupported model: {model}")
 
