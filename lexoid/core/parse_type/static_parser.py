@@ -35,6 +35,8 @@ def retry_with_different_parser(func):
         try:
             return func(*args, **kwargs)
         except Exception as e:
+            if kwargs.get("retry_on_fail", True) is False:
+                raise e
             framework = kwargs.get("framework", "pdfplumber")
             if framework != "pdfplumber":
                 kwargs["framework"] = "pdfplumber"
@@ -192,36 +194,49 @@ def embed_links_in_text(page, text, links):
         str: The text with hyperlinks embedded inline.
     """
     words = page.extract_words(x_tolerance=1)
-
     words_with_positions = []
     cur_position = 0
     for word in words:
         try:
-            word_pos = text[cur_position:].index(word["text"])
+            word_pos = text[cur_position:].index(word["text"]) + cur_position
         except ValueError:
             continue
         words_with_positions.append(
             (word["text"], word["x0"], page.mediabox[-1] - word["top"], word_pos)
         )
-        cur_position = cur_position + word_pos + len(word["text"])
+        cur_position = word_pos + len(word["text"])
 
+    offset = 0
     for rect, uri in links:
         rect_left, rect_top, rect_right, rect_bottom = rect
         text_span = []
-        start_pos = None
+        start_pos = end_pos = 0
 
         for word, x0, word_top, word_pos in words_with_positions:
-            if rect_left <= x0 <= rect_right and rect_top <= word_top <= rect_bottom:
+            if (
+                rect_left - 1 <= x0 <= rect_right + 1
+                and rect_top - 1 <= word_top <= rect_bottom + 1
+            ):
                 if not start_pos:
-                    start_pos = word_pos
+                    start_pos = word_pos + offset
+                end_pos = word_pos + len(word) + offset
                 text_span.append(word)
 
+        # Set start_pos to previous space.
+        if start_pos > 0 and text[start_pos - 1] != " ":
+            start_pos = start_pos - len(text[:start_pos].split(" ")[-1])
+        if end_pos < len(text) and text[end_pos : end_pos + 1] != " ":
+            end_pos = end_pos + len(text[end_pos:].split(" ")[0])
         if text_span:
-            original_text = " ".join(text_span)
-            text = text[:start_pos] + text[start_pos:].replace(
-                original_text, f"[{original_text}]({uri})"
+            text = (
+                text[:start_pos]
+                + f"[{text[start_pos:end_pos]}]({uri})"
+                + text[end_pos:]
             )
-
+            offset += len(uri) + 4  # Adjust offset for added link syntax
+        else:
+            logger.warning(f"No matching text found for link: {uri}")
+    logger.debug(f"Embedded {len(links)} links into text: {text}.")
     return text
 
 
@@ -637,6 +652,8 @@ def process_pdf_page_with_pdfplumber(
             uri = annot.get("uri")
             if uri and uri_rects.get(uri):
                 links.append((uri_rects[uri], uri))
+
+        logger.debug(f"Found {len(links)} links on page.")
 
         if links:
             content = embed_links_in_text(page, content, links)
