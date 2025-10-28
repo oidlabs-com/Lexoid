@@ -18,6 +18,8 @@ from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QApplication
 
+from loguru import logger
+
 
 def convert_pdf_page_to_base64(
     pdf_document: pdfium.PdfDocument, page_number: int
@@ -110,6 +112,7 @@ def save_webpage_as_pdf(url: str, output_path: str) -> str:
     Returns:
         str: The path to the saved PDF file.
     """
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
     if not QApplication.instance():
         app = QApplication(sys.argv)
     else:
@@ -181,6 +184,7 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
         str: The path to the saved PDF file.
     """
     if input_path.startswith(("http://", "https://")):
+        logger.debug(f"Converting webpage {input_path} to PDF...")
         return save_webpage_as_pdf(input_path, output_path)
     file_type = mimetypes.guess_type(input_path)[0]
     if file_type.startswith("image/"):

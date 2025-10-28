@@ -70,6 +70,11 @@ def retry_with_different_parser_type(func):
                 kwargs["parser_type"] = parser_type
             return func(**kwargs)
         except Exception as e:
+            if kwargs.get("retry_on_fail", True) is False:
+                logger.error(
+                    f"Parsing failed with error: {e}. No fallback parser available."
+                )
+                raise e
             parse_type = kwargs.get("parser_type")
             routed = kwargs.get("routed", False)
             if parse_type == ParserType.LLM_PARSE and routed:

