@@ -210,7 +210,7 @@ def embed_links_in_text(page, text, links):
     for rect, uri in links:
         rect_left, rect_top, rect_right, rect_bottom = rect
         text_span = []
-        start_pos = end_pos = 0
+        start_pos = end_pos = None
 
         for word, x0, word_top, word_pos in words_with_positions:
             if (
@@ -221,6 +221,10 @@ def embed_links_in_text(page, text, links):
                     start_pos = word_pos + offset
                 end_pos = word_pos + len(word) + offset
                 text_span.append(word)
+
+        if start_pos is None:
+            logger.warning(f"No matching words found for link: {uri}")
+            continue
 
         # Set start_pos to previous space.
         if start_pos > 0 and text[start_pos - 1] != " ":
