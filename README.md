@@ -35,6 +35,19 @@ OPENAI_API_KEY=""
 GOOGLE_API_KEY=""
 ```
 
+For enhanced data privacy and compliance (e.g., legal, healthcare), you can use **Google Vertex AI** instead of the public Gemini API:
+
+```
+GCP_PROJECT="your-gcp-project-id"
+GCP_REGION="us-west1"  # Optional, defaults to us-west1
+```
+
+Authentication is handled automatically via Application Default Credentials:
+- **Locally**: Run `gcloud auth application-default login`
+- **Cloud Run**: Service account is attached automatically
+
+See [Vertex AI Setup Guide](docs/vertex_ai_setup.md) for detailed configuration instructions.
+
 Optionally, to use `Playwright` for retrieving web content (instead of the `requests` library):
 
 ```

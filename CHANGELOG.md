@@ -208,3 +208,17 @@
 
 ### Fixed
 * Switch from `os.system()` to `subprocess.run()` to avoid injection via doc path
+
+## [0.1.19] - Unreleased
+
+### Added
+* **Google Vertex AI support** - Enhanced data privacy and compliance for sensitive applications
+  * Configure via `GCP_PROJECT` and `GCP_REGION` environment variables
+  * Uses OAuth2 authentication with Google Cloud credentials
+  * Maintains full backward compatibility with standard Gemini API
+  * See [Vertex AI Setup Guide](docs/vertex_ai_setup.md) for configuration details
+* Unit tests for Vertex AI integration and backward compatibility
+* Example script demonstrating Vertex AI usage
+
+### Changed
+* Updated `parse_image_with_gemini` to support both standard Gemini API and Vertex AI endpoints

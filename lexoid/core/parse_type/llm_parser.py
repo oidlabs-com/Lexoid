@@ -402,12 +402,12 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
 def parse_image_with_gemini(
     base64_file: str, mime_type: str = "image/png", **kwargs
 ) -> List[Dict] | str:
-    api_key = os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        raise ValueError("GOOGLE_API_KEY environment variable is not set")
+    # Check if using Vertex AI or standard Gemini API
+    gcp_project = os.environ.get("GCP_PROJECT")
+    gcp_region = os.environ.get("GCP_REGION", "us-west1")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{kwargs['model']}:generateContent?key={api_key}"
-
+    use_vertex_ai = gcp_project is not None
+    
     if "system_prompt" in kwargs:
         prompt = kwargs["system_prompt"]
     else:
@@ -435,12 +435,61 @@ def parse_image_with_gemini(
         "generationConfig": generation_config,
     }
 
-    headers = {"Content-Type": "application/json"}
+    if use_vertex_ai:
+        # Use Vertex AI endpoint with OAuth2 authentication
+        logger.debug(f"Using Vertex AI endpoint: {gcp_project} in {gcp_region}")
+        try:
+            from google.auth.transport.requests import Request
+            import google.auth
+        except ImportError:
+            raise ImportError(
+                "google-cloud-aiplatform is required for Vertex AI. "
+                "Install it with: pip install google-cloud-aiplatform"
+            )
+        
+        # Get credentials using Application Default Credentials
+        # Works automatically in Cloud Run (uses attached service account)
+        # and locally (uses gcloud auth application-default login)
+        credentials, _ = google.auth.default(
+            scopes=["https://www.googleapis.com/auth/cloud-platform"]
+        )
+        
+        # Refresh token if needed
+        if not credentials.valid:
+            credentials.refresh(Request())
+        
+        # Construct Vertex AI endpoint
+        model_name = kwargs["model"]
+        url = (
+            f"https://{gcp_region}-aiplatform.googleapis.com/v1/"
+            f"projects/{gcp_project}/locations/{gcp_region}/"
+            f"publishers/google/models/{model_name}:generateContent"
+        )
+        
+        headers = {
+            "Authorization": f"Bearer {credentials.token}",
+            "Content-Type": "application/json",
+        }
+    else:
+        # Use standard Gemini API with API key
+        api_key = os.environ.get("GOOGLE_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "Either GOOGLE_API_KEY (for Gemini API) or GCP_PROJECT "
+                "(for Vertex AI) environment variable must be set"
+            )
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{kwargs['model']}:generateContent?key={api_key}"
+        headers = {"Content-Type": "application/json"}
+
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=120)
         response.raise_for_status()
     except requests.Timeout as e:
         raise HTTPError(f"Timeout error occurred: {e}")
+    except requests.HTTPError as e:
+        logger.error(f"HTTP error: {e.response.status_code} - {e.response.text}")
+        raise
 
     result = response.json()
 
