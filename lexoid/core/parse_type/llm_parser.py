@@ -8,7 +8,6 @@ import time
 from functools import wraps
 from typing import Dict, List, Optional, Tuple
 
-import pypdfium2 as pdfium
 import requests
 import torch
 from anthropic import Anthropic
@@ -23,7 +22,7 @@ from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from lexoid.core.conversion_utils import (
     convert_image_to_pdf,
-    convert_pdf_page_to_base64,
+    convert_doc_to_base64_images,
 )
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
@@ -311,7 +310,8 @@ def parse_with_local_model(path: str, **kwargs) -> Dict:
         torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
     ).to(device)
 
-    images = convert_path_to_images(path)
+    max_dimension = kwargs.get("max_image_dimension", 1500)
+    images = convert_doc_to_base64_images(path, max_dimension=max_dimension)
     proc_images = [
         Image.open(io.BytesIO(base64.b64decode(image_b64.split(",")[1]))).convert("RGB")
         for _, image_b64 in images
@@ -492,27 +492,6 @@ def parse_image_with_gemini(
             "total": total_tokens,
         },
     }
-
-
-def convert_path_to_images(path):
-    mime_type, _ = mimetypes.guess_type(path)
-    if mime_type and mime_type.startswith("image"):
-        # Single image processing
-        with open(path, "rb") as img_file:
-            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
-            return [(0, f"data:{mime_type};base64,{image_base64}")]
-    elif mime_type and mime_type.startswith("application/pdf"):
-        # PDF processing
-        pdf_document = pdfium.PdfDocument(path)
-        return [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-    else:
-        raise ValueError(f"Unsupported file type: {mime_type}")
 
 
 def get_messages(
@@ -711,25 +690,8 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
         Dict: Dictionary containing parsed document data
     """
     logger.debug(f"Parsing with {api} API and model {kwargs['model']}")
-
-    # Handle different input types
-    mime_type, _ = mimetypes.guess_type(path)
-    if mime_type and mime_type.startswith("image"):
-        # Single image processing
-        with open(path, "rb") as img_file:
-            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
-            images = [(0, f"data:{mime_type};base64,{image_base64}")]
-    else:
-        # PDF processing
-        pdf_document = pdfium.PdfDocument(path)
-        images = [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-    images = convert_path_to_images(path)
+    max_dimension = kwargs.get("max_image_dimension", 1500)
+    images = convert_doc_to_base64_images(path, max_dimension=max_dimension)
 
     # Process each page/image
     all_results = []

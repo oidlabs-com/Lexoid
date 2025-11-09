@@ -47,7 +47,9 @@ def convert_pdf_page_to_base64(
     return base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
 
-def convert_doc_to_base64_images(path: str) -> List[Tuple[int, str]]:
+def convert_doc_to_base64_images(
+    path: str, max_dimension: int = 1500
+) -> List[Tuple[int, str]]:
     """
     Converts a document (PDF or image) to a base64 encoded string.
 
@@ -63,7 +65,7 @@ def convert_doc_to_base64_images(path: str) -> List[Tuple[int, str]]:
         images = [
             (
                 page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
+                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num, max_dimension)}",
             )
             for page_num in range(len(pdf_document))
         ]

@@ -61,6 +61,27 @@ def get_file_type(path: str) -> str:
     return mimetypes.guess_type(path)[0] or ""
 
 
+def resize_image_if_needed(path: str, max_dimension: int = 1500) -> str:
+    """Resize image if its dimensions exceed max_dimension."""
+    from PIL import Image
+
+    with Image.open(path) as img:
+        width, height = img.size
+        if max(width, height) > max_dimension:
+            logger.debug(
+                f"Resizing image to fit within max dimensions of {max_dimension}."
+            )
+            scaling_factor = max_dimension / float(max(width, height))
+            new_size = (int(width * scaling_factor), int(height * scaling_factor))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+            resized_path = os.path.join(
+                os.path.dirname(path), f"resized_{os.path.basename(path)}"
+            )
+            img.save(resized_path)
+            return resized_path
+    return path
+
+
 def is_supported_file_type(path: str) -> bool:
     """Check if the file type is supported for parsing."""
     file_type = get_file_type(path)

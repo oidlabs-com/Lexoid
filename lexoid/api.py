@@ -34,10 +34,12 @@ from lexoid.core.utils import (
     bbox_router,
     create_sub_pdf,
     download_file,
+    get_file_type,
     get_webpage_soup,
     is_supported_file_type,
     is_supported_url_file_type,
     recursive_read_html,
+    resize_image_if_needed,
     router,
     split_pdf,
 )
@@ -240,6 +242,10 @@ def parse(
     if path.lower().endswith(".pptx") and parser_type == ParserType.LLM_PARSE:
         logger.warning("LLM_PARSE does not support .pptx files. Using STATIC_PARSE.")
         parser_type = ParserType.STATIC_PARSE
+    if "image" in get_file_type(path):
+        # Resize image if too large
+        max_dimension = kwargs.get("max_image_dimension", 1500)
+        path = resize_image_if_needed(path, max_dimension=max_dimension)
 
     with tempfile.TemporaryDirectory() as temp_dir:
         kwargs["temp_dir"] = temp_dir
