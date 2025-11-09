@@ -21,6 +21,9 @@ from matplotlib import pyplot as plt
 from lexoid.core.llm_selector import DocumentRankedLLMSelector
 
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
+DEFAULT_LLM = "gemini-2.0-flash"
+DEFAULT_LOCAL_LM = "ds4sd/SmolDocling-256M-preview"
+DEFAULT_STATIC_FRAMEWORK = "pdfplumber"
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):

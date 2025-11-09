@@ -31,7 +31,12 @@ from lexoid.core.prompt_templates import (
     OPENAI_USER_PROMPT,
     PARSER_PROMPT,
 )
-from lexoid.core.utils import get_api_provider_for_model, get_file_type
+from lexoid.core.utils import (
+    DEFAULT_LLM,
+    DEFAULT_LOCAL_LM,
+    get_api_provider_for_model,
+    get_file_type,
+)
 
 
 def retry_on_error(func):
@@ -59,6 +64,16 @@ def retry_on_error(func):
         except ValueError as e:
             logger.error(f"ValueError encountered: {e}")
             time.sleep(10)
+            if not kwargs.get("retry_on_fail", True):
+                return {
+                    "raw": "",
+                    "segments": [],
+                    "title": kwargs["title"],
+                    "url": kwargs.get("url", ""),
+                    "parent_title": kwargs.get("parent_title", ""),
+                    "recursive_docs": [],
+                    "error": f"ValueError encountered on page {kwargs.get('start', 0)}: {e}",
+                }
             try:
                 logger.debug(f"Retry {func.__name__}")
                 return func(*args, **kwargs)
@@ -90,7 +105,7 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
         elif kwargs["api_provider"]:
             return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
 
-    model = kwargs.get("model", "gemini-2.0-flash")
+    model = kwargs.get("model", DEFAULT_LLM)
     kwargs["model"] = model
 
     api_provider = get_api_provider_for_model(model)
@@ -287,7 +302,7 @@ def doctags_to_markdown_and_bboxes(
 
 def parse_with_local_model(path: str, **kwargs) -> Dict:
     # Source: https://huggingface.co/ibm-granite/granite-docling-258M
-    model_name = kwargs.get("model", "ds4sd/SmolDocling-256M-preview")
+    model_name = kwargs.get("model", DEFAULT_LOCAL_LM)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     processor = AutoProcessor.from_pretrained(model_name)
