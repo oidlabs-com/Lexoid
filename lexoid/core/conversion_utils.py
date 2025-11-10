@@ -55,6 +55,7 @@ def convert_doc_to_base64_images(
 
     Args:
         path (str): Path to the document.
+        max_dimension (int): Maximum dimension (width or height) for the output images. Default is 1500.
 
     Returns:
         List[Tuple[int, str]]: A list of tuples where each tuple contains the page number
