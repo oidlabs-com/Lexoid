@@ -41,52 +41,50 @@ from lexoid.core.utils import (
 def retry_on_error(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
+        return_dict = {
+            "raw": "",
+            "segments": [],
+            "title": kwargs["title"],
+            "url": kwargs.get("url", ""),
+            "parent_title": kwargs.get("parent_title", ""),
+            "recursive_docs": [],
+        }
         try:
             return func(*args, **kwargs)
         except HTTPError as e:
             logger.error(f"HTTPError encountered: {e}. Retrying in 10 seconds...")
+            if not kwargs.get("retry_on_fail", True):
+                return_dict["error"] = (
+                    f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
             time.sleep(10)
             try:
                 logger.debug(f"Retry {func.__name__}")
                 return func(*args, **kwargs)
             except HTTPError as e:
                 logger.error(f"Retry failed: {e}")
-                return {
-                    "raw": "",
-                    "segments": [],
-                    "title": kwargs["title"],
-                    "url": kwargs.get("url", ""),
-                    "parent_title": kwargs.get("parent_title", ""),
-                    "recursive_docs": [],
-                    "error": f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}",
-                }
+                return_dict["error"] = (
+                    f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
         except ValueError as e:
             logger.error(f"ValueError encountered: {e}")
-            time.sleep(10)
             if not kwargs.get("retry_on_fail", True):
-                return {
-                    "raw": "",
-                    "segments": [],
-                    "title": kwargs["title"],
-                    "url": kwargs.get("url", ""),
-                    "parent_title": kwargs.get("parent_title", ""),
-                    "recursive_docs": [],
-                    "error": f"ValueError encountered on page {kwargs.get('start', 0)}: {e}",
-                }
+                return_dict["error"] = (
+                    f"ValueError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
+            time.sleep(10)
             try:
                 logger.debug(f"Retry {func.__name__}")
                 return func(*args, **kwargs)
             except ValueError as e:
                 logger.error(f"Retry failed: {e}")
-                return {
-                    "raw": "",
-                    "segments": [],
-                    "title": kwargs["title"],
-                    "url": kwargs.get("url", ""),
-                    "parent_title": kwargs.get("parent_title", ""),
-                    "recursive_docs": [],
-                    "error": f"ValueError encountered on page {kwargs.get('start', 0)}: {e}",
-                }
+                return_dict["error"] = (
+                    f"ValueError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
 
     return wrapper
 
