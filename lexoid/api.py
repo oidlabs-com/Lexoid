@@ -270,7 +270,9 @@ def parse(
         if "image" in get_file_type(path):
             # Resize image if too large
             max_dimension = kwargs.get("max_image_dimension", 1500)
-            path = resize_image_if_needed(path, max_dimension=max_dimension)
+            path = resize_image_if_needed(
+                path, max_dimension=max_dimension, tmpdir=temp_dir
+            )
 
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")

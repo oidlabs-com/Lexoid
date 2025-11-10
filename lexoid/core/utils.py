@@ -61,7 +61,9 @@ def get_file_type(path: str) -> str:
     return mimetypes.guess_type(path)[0] or ""
 
 
-def resize_image_if_needed(path: str, max_dimension: int = 1500) -> str:
+def resize_image_if_needed(
+    path: str, max_dimension: int = 1500, tmpdir: Optional[str] = None
+) -> str:
     """Resize image if its dimensions exceed max_dimension."""
     from PIL import Image
 
@@ -74,9 +76,11 @@ def resize_image_if_needed(path: str, max_dimension: int = 1500) -> str:
             scaling_factor = max_dimension / float(max(width, height))
             new_size = (int(width * scaling_factor), int(height * scaling_factor))
             img = img.resize(new_size, Image.Resampling.LANCZOS)
-            resized_path = os.path.join(
-                os.path.dirname(path), f"resized_{os.path.basename(path)}"
-            )
+            if tmpdir:
+                folder = tmpdir
+            else:
+                folder = os.path.dirname(path)
+            resized_path = os.path.join(folder, f"resized_{os.path.basename(path)}")
             img.save(resized_path)
             return resized_path
     return path
