@@ -22,12 +22,23 @@ from loguru import logger
 
 
 def convert_pdf_page_to_base64(
-    pdf_document: pdfium.PdfDocument, page_number: int
+    pdf_document: pdfium.PdfDocument, page_number: int, max_dimension: int = 1500
 ) -> str:
     """Convert a PDF page to a base64-encoded PNG string."""
     page = pdf_document[page_number]
-    # Render with 4x scaling for better quality
-    pil_image = page.render(scale=4).to_pil()
+    pil_image = page.render(scale=1).to_pil()
+
+    # Resize image if too large
+    if pil_image.width > max_dimension or pil_image.height > max_dimension:
+        scaling_factor = min(
+            max_dimension / pil_image.width, max_dimension / pil_image.height
+        )
+        new_size = (
+            int(pil_image.width * scaling_factor),
+            int(pil_image.height * scaling_factor),
+        )
+        pil_image = pil_image.resize(new_size, Image.Resampling.LANCZOS)
+        logger.debug(f"Resized page {page_number} to {new_size} for base64 conversion.")
 
     # Convert to base64
     img_byte_arr = io.BytesIO()
@@ -36,12 +47,15 @@ def convert_pdf_page_to_base64(
     return base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
 
-def convert_doc_to_base64_images(path: str) -> List[Tuple[int, str]]:
+def convert_doc_to_base64_images(
+    path: str, max_dimension: int = 1500
+) -> List[Tuple[int, str]]:
     """
     Converts a document (PDF or image) to a base64 encoded string.
 
     Args:
         path (str): Path to the document.
+        max_dimension (int): Maximum dimension (width or height) for the output images. Default is 1500.
 
     Returns:
         List[Tuple[int, str]]: A list of tuples where each tuple contains the page number
@@ -52,7 +66,7 @@ def convert_doc_to_base64_images(path: str) -> List[Tuple[int, str]]:
         images = [
             (
                 page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
+                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num, max_dimension)}",
             )
             for page_num in range(len(pdf_document))
         ]

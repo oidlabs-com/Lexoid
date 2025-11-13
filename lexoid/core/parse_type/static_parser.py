@@ -15,10 +15,6 @@ from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
 from pptx2md import ConversionConfig, convert
 
-from lexoid.core.conversion_utils import (
-    base64_to_np_array,
-    convert_doc_to_base64_images,
-)
 from lexoid.core.utils import (
     get_file_type,
     get_uri_rect,
@@ -240,7 +236,6 @@ def embed_links_in_text(page, text, links):
             offset += len(uri) + 4  # Adjust offset for added link syntax
         else:
             logger.warning(f"No matching text found for link: {uri}")
-    logger.debug(f"Embedded {len(links)} links into text: {text}.")
     return text
 
 
@@ -761,23 +756,23 @@ def parse_with_paddleocr(path: str, **kwargs) -> Dict:
     Returns:
         Dict: Dictionary containing parsed document data with segments per page.
     """
-    ocr = PaddleOCR(use_textline_orientation=False, lang="en")
-
-    base64_images = convert_doc_to_base64_images(path)
+    ocr = PaddleOCR(
+        use_doc_orientation_classify=False,
+        use_doc_unwarping=False,
+        use_textline_orientation=False,
+    )
 
     segments = []
     all_texts = []
 
-    for page_num, base64_img_str in base64_images:
-        image_np = base64_to_np_array(base64_img_str, gray_scale=False)
-
-        results = ocr.predict(image_np, use_doc_unwarping=False)
-
+    results = ocr.predict(path)
+    for result in results:
         page_texts = []
         page_bboxes = []
 
-        height_img, width_img = image_np.shape[:2]
-        for text, bbox in zip(results[0]["rec_texts"], results[0]["dt_polys"]):
+        page_num = result["page_index"]
+        height_img, width_img, _ = result["doc_preprocessor_res"]["output_img"].shape
+        for text, bbox in zip(result["rec_texts"], result["dt_polys"]):
             x_coords = bbox[:, 0]
             y_coords = bbox[:, 1]
             x_min = x_coords.min().item()

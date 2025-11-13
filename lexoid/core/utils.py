@@ -21,6 +21,9 @@ from matplotlib import pyplot as plt
 from lexoid.core.llm_selector import DocumentRankedLLMSelector
 
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
+DEFAULT_LLM = "gemini-2.0-flash"
+DEFAULT_LOCAL_LM = "ds4sd/SmolDocling-256M-preview"
+DEFAULT_STATIC_FRAMEWORK = "pdfplumber"
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
@@ -56,6 +59,31 @@ def create_sub_pdf(
 def get_file_type(path: str) -> str:
     """Get the file type of a file based on its extension."""
     return mimetypes.guess_type(path)[0] or ""
+
+
+def resize_image_if_needed(
+    path: str, max_dimension: int = 1500, tmpdir: Optional[str] = None
+) -> str:
+    """Resize image if its dimensions exceed max_dimension."""
+    from PIL import Image
+
+    with Image.open(path) as img:
+        width, height = img.size
+        if max(width, height) > max_dimension:
+            logger.debug(
+                f"Resizing image to fit within max dimensions of {max_dimension}."
+            )
+            scaling_factor = max_dimension / float(max(width, height))
+            new_size = (int(width * scaling_factor), int(height * scaling_factor))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+            if tmpdir:
+                folder = tmpdir
+            else:
+                folder = os.path.dirname(path)
+            resized_path = os.path.join(folder, f"resized_{os.path.basename(path)}")
+            img.save(resized_path)
+            return resized_path
+    return path
 
 
 def is_supported_file_type(path: str) -> bool:

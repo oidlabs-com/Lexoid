@@ -8,7 +8,6 @@ import time
 from functools import wraps
 from typing import Dict, List, Optional, Tuple
 
-import pypdfium2 as pdfium
 import requests
 import torch
 from anthropic import Anthropic
@@ -23,7 +22,7 @@ from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from lexoid.core.conversion_utils import (
     convert_image_to_pdf,
-    convert_pdf_page_to_base64,
+    convert_doc_to_base64_images,
 )
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
@@ -31,48 +30,61 @@ from lexoid.core.prompt_templates import (
     OPENAI_USER_PROMPT,
     PARSER_PROMPT,
 )
-from lexoid.core.utils import get_api_provider_for_model, get_file_type
+from lexoid.core.utils import (
+    DEFAULT_LLM,
+    DEFAULT_LOCAL_LM,
+    get_api_provider_for_model,
+    get_file_type,
+)
 
 
 def retry_on_error(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
+        return_dict = {
+            "raw": "",
+            "segments": [],
+            "title": kwargs["title"],
+            "url": kwargs.get("url", ""),
+            "parent_title": kwargs.get("parent_title", ""),
+            "recursive_docs": [],
+        }
         try:
             return func(*args, **kwargs)
         except HTTPError as e:
             logger.error(f"HTTPError encountered: {e}. Retrying in 10 seconds...")
+            if not kwargs.get("retry_on_fail", True):
+                return_dict["error"] = (
+                    f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
             time.sleep(10)
             try:
                 logger.debug(f"Retry {func.__name__}")
                 return func(*args, **kwargs)
             except HTTPError as e:
                 logger.error(f"Retry failed: {e}")
-                return {
-                    "raw": "",
-                    "segments": [],
-                    "title": kwargs["title"],
-                    "url": kwargs.get("url", ""),
-                    "parent_title": kwargs.get("parent_title", ""),
-                    "recursive_docs": [],
-                    "error": f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}",
-                }
+                return_dict["error"] = (
+                    f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
         except ValueError as e:
             logger.error(f"ValueError encountered: {e}")
+            if not kwargs.get("retry_on_fail", True):
+                return_dict["error"] = (
+                    f"ValueError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
             time.sleep(10)
             try:
                 logger.debug(f"Retry {func.__name__}")
                 return func(*args, **kwargs)
             except ValueError as e:
                 logger.error(f"Retry failed: {e}")
-                return {
-                    "raw": "",
-                    "segments": [],
-                    "title": kwargs["title"],
-                    "url": kwargs.get("url", ""),
-                    "parent_title": kwargs.get("parent_title", ""),
-                    "recursive_docs": [],
-                    "error": f"ValueError encountered on page {kwargs.get('start', 0)}: {e}",
-                }
+                return_dict["error"] = (
+                    f"ValueError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
 
     return wrapper
 
@@ -90,7 +102,7 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
         elif kwargs["api_provider"]:
             return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
 
-    model = kwargs.get("model", "gemini-2.0-flash")
+    model = kwargs.get("model", DEFAULT_LLM)
     kwargs["model"] = model
 
     api_provider = get_api_provider_for_model(model)
@@ -287,7 +299,7 @@ def doctags_to_markdown_and_bboxes(
 
 def parse_with_local_model(path: str, **kwargs) -> Dict:
     # Source: https://huggingface.co/ibm-granite/granite-docling-258M
-    model_name = kwargs.get("model", "ds4sd/SmolDocling-256M-preview")
+    model_name = kwargs.get("model", DEFAULT_LOCAL_LM)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     processor = AutoProcessor.from_pretrained(model_name)
@@ -296,7 +308,8 @@ def parse_with_local_model(path: str, **kwargs) -> Dict:
         torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
     ).to(device)
 
-    images = convert_path_to_images(path)
+    max_dimension = kwargs.get("max_image_dimension", 1500)
+    images = convert_doc_to_base64_images(path, max_dimension=max_dimension)
     proc_images = [
         Image.open(io.BytesIO(base64.b64decode(image_b64.split(",")[1]))).convert("RGB")
         for _, image_b64 in images
@@ -477,27 +490,6 @@ def parse_image_with_gemini(
             "total": total_tokens,
         },
     }
-
-
-def convert_path_to_images(path):
-    mime_type, _ = mimetypes.guess_type(path)
-    if mime_type and mime_type.startswith("image"):
-        # Single image processing
-        with open(path, "rb") as img_file:
-            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
-            return [(0, f"data:{mime_type};base64,{image_base64}")]
-    elif mime_type and mime_type.startswith("application/pdf"):
-        # PDF processing
-        pdf_document = pdfium.PdfDocument(path)
-        return [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-    else:
-        raise ValueError(f"Unsupported file type: {mime_type}")
 
 
 def get_messages(
@@ -696,25 +688,8 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
         Dict: Dictionary containing parsed document data
     """
     logger.debug(f"Parsing with {api} API and model {kwargs['model']}")
-
-    # Handle different input types
-    mime_type, _ = mimetypes.guess_type(path)
-    if mime_type and mime_type.startswith("image"):
-        # Single image processing
-        with open(path, "rb") as img_file:
-            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
-            images = [(0, f"data:{mime_type};base64,{image_base64}")]
-    else:
-        # PDF processing
-        pdf_document = pdfium.PdfDocument(path)
-        images = [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-    images = convert_path_to_images(path)
+    max_dimension = kwargs.get("max_image_dimension", 1500)
+    images = convert_doc_to_base64_images(path, max_dimension=max_dimension)
 
     # Process each page/image
     all_results = []

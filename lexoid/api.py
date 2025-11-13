@@ -29,13 +29,17 @@ from lexoid.core.prompt_templates import (
     LATEX_USER_PROMPT,
 )
 from lexoid.core.utils import (
+    DEFAULT_LLM,
+    DEFAULT_STATIC_FRAMEWORK,
     bbox_router,
     create_sub_pdf,
     download_file,
+    get_file_type,
     get_webpage_soup,
     is_supported_file_type,
     is_supported_url_file_type,
     recursive_read_html,
+    resize_image_if_needed,
     router,
     split_pdf,
 )
@@ -136,7 +140,7 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
     return_bboxes = kwargs.get("return_bboxes", False)
     has_bboxes = bool(result["segments"][0].get("bboxes"))
     bbox_framework = kwargs.get("bbox_framework", None)
-    framework = kwargs.get("framework", None)
+    framework = kwargs.get("framework", DEFAULT_STATIC_FRAMEWORK)
     bbox_framework_different = bbox_framework and bbox_framework != framework
     if return_bboxes and (not has_bboxes or bbox_framework_different):
         logger.debug("Extracting bounding boxes...")
@@ -263,6 +267,13 @@ def parse(
             f"Unsupported file type {os.path.splitext(path)[1]}"
         )
 
+        if "image" in get_file_type(path):
+            # Resize image if too large
+            max_dimension = kwargs.get("max_image_dimension", 1500)
+            path = resize_image_if_needed(
+                path, max_dimension=max_dimension, tmpdir=temp_dir
+            )
+
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
             logger.debug("Converting file to PDF")
@@ -328,9 +339,7 @@ def parse(
             else:
                 raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
 
-            api_cost = api_cost_mapping.get(
-                kwargs.get("model", "gemini-2.0-flash"), None
-            )
+            api_cost = api_cost_mapping.get(kwargs.get("model", DEFAULT_LLM), None)
             if api_cost:
                 token_usage = result["token_usage"]
                 token_cost = {
