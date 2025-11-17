@@ -1,96 +1,92 @@
-from PIL import Image
+import ast
 import base64
 import io
 import mimetypes
 import os
+import re
 import time
 from functools import wraps
 from typing import Dict, List, Optional, Tuple
 
-import pypdfium2 as pdfium
 import requests
+import torch
 from anthropic import Anthropic
 from huggingface_hub import InferenceClient
 from loguru import logger
 from mistralai import Mistral
 from openai import OpenAI
+from PIL import Image
 from requests.exceptions import HTTPError
 from together import Together
-import torch
-from transformers import AutoProcessor, AutoModelForImageTextToText
+from transformers import AutoModelForVision2Seq, AutoProcessor
 
+from lexoid.core.conversion_utils import (
+    convert_image_to_pdf,
+    convert_doc_to_base64_images,
+)
 from lexoid.core.prompt_templates import (
     INSTRUCTIONS_ADD_PG_BREAK,
     LLAMA_PARSER_PROMPT,
     OPENAI_USER_PROMPT,
     PARSER_PROMPT,
 )
-from lexoid.core.utils import convert_image_to_pdf, get_file_type
+from lexoid.core.utils import (
+    DEFAULT_LLM,
+    DEFAULT_LOCAL_LM,
+    get_api_provider_for_model,
+    get_file_type,
+)
 
 
 def retry_on_error(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
+        return_dict = {
+            "raw": "",
+            "segments": [],
+            "title": kwargs["title"],
+            "url": kwargs.get("url", ""),
+            "parent_title": kwargs.get("parent_title", ""),
+            "recursive_docs": [],
+        }
         try:
             return func(*args, **kwargs)
         except HTTPError as e:
             logger.error(f"HTTPError encountered: {e}. Retrying in 10 seconds...")
+            if not kwargs.get("retry_on_fail", True):
+                return_dict["error"] = (
+                    f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
             time.sleep(10)
             try:
                 logger.debug(f"Retry {func.__name__}")
                 return func(*args, **kwargs)
             except HTTPError as e:
                 logger.error(f"Retry failed: {e}")
-                return {
-                    "raw": "",
-                    "segments": [],
-                    "title": kwargs["title"],
-                    "url": kwargs.get("url", ""),
-                    "parent_title": kwargs.get("parent_title", ""),
-                    "recursive_docs": [],
-                    "error": f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}",
-                }
+                return_dict["error"] = (
+                    f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
         except ValueError as e:
             logger.error(f"ValueError encountered: {e}")
+            if not kwargs.get("retry_on_fail", True):
+                return_dict["error"] = (
+                    f"ValueError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
             time.sleep(10)
             try:
                 logger.debug(f"Retry {func.__name__}")
                 return func(*args, **kwargs)
             except ValueError as e:
                 logger.error(f"Retry failed: {e}")
-                return {
-                    "raw": "",
-                    "segments": [],
-                    "title": kwargs["title"],
-                    "url": kwargs.get("url", ""),
-                    "parent_title": kwargs.get("parent_title", ""),
-                    "recursive_docs": [],
-                    "error": f"ValueError encountered on page {kwargs.get('start', 0)}: {e}",
-                }
+                return_dict["error"] = (
+                    f"ValueError encountered on page {kwargs.get('start', 0)}: {e}"
+                )
+                return return_dict
 
     return wrapper
-
-
-def get_api_provider_for_model(model: str) -> str:
-    if model.startswith("gemini"):
-        return "gemini"
-    if model.startswith("gpt"):
-        return "openai"
-    if model.startswith("meta-llama"):
-        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
-            return "together"
-        return "huggingface"
-    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
-        return "openrouter"
-    if model.startswith("accounts/fireworks"):
-        return "fireworks"
-    if model.startswith("claude"):
-        return "anthropic"
-    if model.startswith("mistral"):
-        return "mistral"
-    if model.startswith("ds4sd/SmolDocling"):
-        return "local"
-    raise ValueError(f"Unsupported model: {model}")
 
 
 @retry_on_error
@@ -106,7 +102,7 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
         elif kwargs["api_provider"]:
             return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
 
-    model = kwargs.get("model", "gemini-2.0-flash")
+    model = kwargs.get("model", DEFAULT_LLM)
     kwargs["model"] = model
 
     api_provider = get_api_provider_for_model(model)
@@ -118,64 +114,284 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     return parse_with_api(path, api=api_provider, **kwargs)
 
 
-def parse_with_local_model(path: str, **kwargs) -> List[Dict] | str:
-    # Reference: https://huggingface.co/spaces/aabdullah27/SmolDocling-OCR-App/blob/main/app.py
-    model_name = kwargs.get("model", "ds4sd/SmolDocling-256M-preview")
-    if not model_name.startswith("ds4sd/SmolDocling"):
-        raise ValueError(
-            f"Local model parsing is only supported for 'ds4sd/SmolDocling*', got {model_name}"
-        )
+def doctags_to_markdown_and_bboxes(
+    doctags: str,
+) -> Tuple[str, List[Tuple[str, List[float]]]]:
+    """
+    # Reference: https://huggingface.co/ibm-granite/granite-docling-258M
+
+    Parse a subset of DocTags/OTSL:
+      - <section_header_level_N>Title</section_header_level_N> -> Markdown #... heading
+      - <text>Paragraph</text> -> Markdown paragraph
+      - <otsl> with <ched>, <fcel>, <nl> -> Markdown table
+    Bboxes: when 4 successive <loc_*> appear before a textual atom, assign that bbox
+    normalized to [0,1] via 500-scale reported by the model.
+    """
+    # Tokenize into tags and text
+    tokens = re.split(r"(<[^>]+>)", doctags)
+    md_lines: List[str] = []
+    bboxes: List[Tuple[str, List[float]]] = []
+
+    # State for capturing bounding boxes
+    loc_buffer: List[int] = []
+    pending_bbox: List[float] = None
+
+    def update_bbox_from_tag(tag: str):
+        nonlocal loc_buffer, pending_bbox
+        m = re.fullmatch(r"<loc_(\d+)>", tag)
+        if m:
+            loc_buffer.append(int(m.group(1)))
+            if len(loc_buffer) >= 4:
+                vals = loc_buffer[-4:]
+                pending_bbox = [
+                    vals[0] / 500,
+                    vals[1] / 500,
+                    vals[2] / 500,
+                    vals[3] / 500,
+                ]
+
+    def take_bbox_for(text_value: str):
+        nonlocal pending_bbox
+        if text_value and pending_bbox is not None:
+            bboxes.append((text_value, pending_bbox))
+            pending_bbox = None  # consume per atom
+
+    def finalize_text(s: str) -> str:
+        # Collapse spaces and non-breaking spaces left by tag splits
+        return re.sub(r"\s+", " ", s).strip()
+
+    i = 0
+    L = len(tokens)
+    while i < L:
+        tok = tokens[i]
+
+        # Track loc tags regardless of context
+        if tok.startswith("<loc_"):
+            update_bbox_from_tag(tok)
+            i += 1
+            continue
+
+        # Section headers
+        m_hdr_open = re.fullmatch(r"<section_header_level_(\d+)>", tok)
+        if m_hdr_open:
+            level = max(1, min(6, int(m_hdr_open.group(1))))
+            # accumulate inner text until closing tag
+            j = i + 1
+            inner = []
+            while j < L:
+                if tokens[j].startswith("</section_header_level_"):
+                    break
+                if tokens[j].startswith("<"):
+                    # allow loc tags inside
+                    if tokens[j].startswith("<loc_"):
+                        update_bbox_from_tag(tokens[j])
+                else:
+                    inner.append(tokens[j])
+                j += 1
+            title = finalize_text("".join(inner))
+            if title:
+                md_lines.append(("#" * level) + " " + title)
+                take_bbox_for(title)
+            i = j + 1
+            continue
+
+        # Paragraph text
+        if tok == "<text>":
+            j = i + 1
+            inner = []
+            while j < L and tokens[j] != "</text>":
+                if tokens[j].startswith("<"):
+                    if tokens[j].startswith("<loc_"):
+                        update_bbox_from_tag(tokens[j])
+                    # ignore other tags inside <text> block
+                else:
+                    inner.append(tokens[j])
+                j += 1
+            paragraph = finalize_text("".join(inner))
+            if paragraph:
+                md_lines.append(paragraph)
+                take_bbox_for(paragraph)
+            i = j + 1
+            continue
+
+        # OTSL table
+        if tok == "<otsl>":
+            j = i + 1
+            headers: List[str] = []
+            rows: List[List[str]] = []
+            current_row: List[str] = []
+
+            def flush_row():
+                nonlocal current_row, rows
+                if any(cell.strip() for cell in current_row):
+                    rows.append(current_row)
+                current_row = []
+
+            while j < L and tokens[j] != "</otsl>":
+                t = tokens[j]
+
+                if t.startswith("<loc_"):
+                    update_bbox_from_tag(t)
+                    j += 1
+                    continue
+
+                if t == "<ched>":
+                    # header cell up to next tag
+                    k = j + 1
+                    cell = []
+                    while k < L and not tokens[k].startswith("<"):
+                        cell.append(tokens[k])
+                        k += 1
+                    text_cell = finalize_text("".join(cell))
+                    if text_cell:
+                        headers.append(text_cell)
+                        take_bbox_for(text_cell)
+                    j = k
+                    continue
+
+                if t == "<fcel>":
+                    k = j + 1
+                    cell = []
+                    while k < L and not tokens[k].startswith("<"):
+                        cell.append(tokens[k])
+                        k += 1
+                    text_cell = finalize_text("".join(cell))
+                    if text_cell:
+                        current_row.append(text_cell)
+                        take_bbox_for(text_cell)
+                    j = k
+                    continue
+
+                if t == "<nl>":
+                    flush_row()
+                    j += 1
+                    continue
+
+                # skip other tags (including formatting)
+                j += 1
+
+            # flush any trailing row
+            if current_row:
+                flush_row()
+
+            md_lines.append("")  # blank line before table
+
+            # Render Markdown table
+            if headers:
+                md_lines.append("| " + " | ".join(headers) + " |")
+                md_lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
+            for i, r in enumerate(rows):
+                if i == 1 and not headers:
+                    # if no headers, add a separator after first row
+                    md_lines.append("| " + " | ".join(["---"] * len(r)) + " |")
+                if r:
+                    md_lines.append("| " + " | ".join(r) + " |")
+
+            i = j + 1
+            continue
+
+        # Ignore other tags and plain text outside known blocks
+        i += 1
+
+    markdown = "\n".join([ln for ln in md_lines])
+    return markdown, bboxes
+
+
+def parse_with_local_model(path: str, **kwargs) -> Dict:
+    # Source: https://huggingface.co/ibm-granite/granite-docling-258M
+    model_name = kwargs.get("model", DEFAULT_LOCAL_LM)
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     processor = AutoProcessor.from_pretrained(model_name)
-    model = AutoModelForImageTextToText.from_pretrained(model_name)
-    images = convert_path_to_images(path)
-    pil_images = [
-        Image.open(io.BytesIO(base64.b64decode(image.split(",")[1])))
-        for _, image in images
+    model = AutoModelForVision2Seq.from_pretrained(
+        model_name,
+        torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
+    ).to(device)
+
+    max_dimension = kwargs.get("max_image_dimension", 1500)
+    images = convert_doc_to_base64_images(path, max_dimension=max_dimension)
+    proc_images = [
+        Image.open(io.BytesIO(base64.b64decode(image_b64.split(",")[1]))).convert("RGB")
+        for _, image_b64 in images
     ]
-    intruction = kwargs.get("docling_command", "Convert this page to docling.")
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image"},
-                {"type": "text", "text": intruction},
-            ],
-        },
-        {
-            "role": "assistant",
-            "content": [
-                {"type": "text", "text": "<output>\n"},
-            ],
-        },
-    ]
-    prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
-    inputs = processor(text=prompt, images=pil_images, return_tensors="pt")
-    with torch.no_grad():
-        generated_ids = model.generate(
-            **inputs, max_new_tokens=1500, do_sample=False, num_beams=1, temperature=1.0
+
+    instruction = kwargs.get("docling_command", "Convert this page to docling.")
+
+    # Normalize bbox prompts for certain instruction types (parity)
+    if (
+        ("OCR text at" in instruction)
+        or ("Identify element" in instruction)
+        or ("formula" in instruction)
+    ):
+
+        def normalize_list(values):
+            max_value = max(values) if values else 1
+            return [round((v / max_value) * 500) for v in values]
+
+        def process_match(match):
+            num_list = ast.literal_eval(match.group(0))
+            normalized = normalize_list(num_list)
+            return "".join([f"<loc_{num}>" for num in normalized])
+
+        pattern = r"\[([\d\.\s,]+)\]"
+        instruction = re.sub(pattern, process_match, instruction)
+
+    segments = []
+    all_md_pages: List[str] = []
+
+    start_page = kwargs.get("start", 0)
+
+    # Run per page for clean segments
+    for idx, img in enumerate(proc_images):
+        # Build messages and prompt mirroring the Space
+        messages = [
+            {
+                "role": "user",
+                "content": [{"type": "image"}, {"type": "text", "text": instruction}],
+            }
+        ]
+        prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
+        inputs = processor(text=prompt, images=[[img]], return_tensors="pt").to(device)
+        with torch.no_grad():
+            generated_ids = model.generate(
+                **inputs,
+                max_new_tokens=8192,
+                do_sample=False,
+                num_beams=1,
+                temperature=1.0,
+            )
+        prompt_len = inputs.input_ids.shape[1]
+        trimmed = generated_ids[:, prompt_len:]
+        doctag_output = processor.batch_decode(trimmed, skip_special_tokens=False)[0]
+        doctag_output = doctag_output.replace("<end_of_utterance>", "").strip()
+
+        # DocTags cleanup and chart remapping
+        if "<chart>" in doctag_output:
+            doctag_output = doctag_output.replace("<chart>", "<otsl>").replace(
+                "</chart>", "</otsl>"
+            )
+            doctag_output = re.sub(
+                r"(<loc_500>)(?!.*<loc_500>)<[^>]+>", r"\1", doctag_output
+            )
+
+        markdown, bboxes = doctags_to_markdown_and_bboxes(doctag_output)
+
+        all_md_pages.append(markdown)
+        segments.append(
+            {
+                "metadata": {"page": start_page + idx + 1},
+                "content": markdown,
+                "bboxes": bboxes,  # list of (text, [x0, top, x1, bottom]) normalized to 0–1
+            }
         )
 
-    prompt_length = inputs.input_ids.shape[1]
-    trimmed_generated_ids = generated_ids[:, prompt_length:]
-    output = (
-        processor.batch_decode(
-            trimmed_generated_ids,
-            skip_special_tokens=False,
-        )[0]
-        .strip()
-        .replace("<end_of_utterance>", "")
-    )
     return {
-        "raw": output,
-        "segments": [
-            {
-                "metadata": {"page": kwargs.get("start", 0) + 1},
-                "content": output,
-            }
-        ],
-        "title": kwargs["title"],
+        "raw": "\n\n---\n\n".join(all_md_pages),  # full Markdown for the document
+        "segments": segments,
+        "title": kwargs.get("title", ""),
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
     }
 
 
@@ -274,42 +490,6 @@ def parse_image_with_gemini(
             "total": total_tokens,
         },
     }
-
-
-def convert_path_to_images(path):
-    mime_type, _ = mimetypes.guess_type(path)
-    if mime_type and mime_type.startswith("image"):
-        # Single image processing
-        with open(path, "rb") as img_file:
-            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
-            return [(0, f"data:{mime_type};base64,{image_base64}")]
-    elif mime_type and mime_type.startswith("application/pdf"):
-        # PDF processing
-        pdf_document = pdfium.PdfDocument(path)
-        return [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-    else:
-        raise ValueError(f"Unsupported file type: {mime_type}")
-
-
-def convert_pdf_page_to_base64(
-    pdf_document: pdfium.PdfDocument, page_number: int
-) -> str:
-    """Convert a PDF page to a base64-encoded PNG string."""
-    page = pdf_document[page_number]
-    # Render with 4x scaling for better quality
-    pil_image = page.render(scale=4).to_pil()
-
-    # Convert to base64
-    img_byte_arr = io.BytesIO()
-    pil_image.save(img_byte_arr, format="PNG")
-    img_byte_arr.seek(0)
-    return base64.b64encode(img_byte_arr.getvalue()).decode("utf-8")
 
 
 def get_messages(
@@ -473,6 +653,11 @@ def create_response(
         "temperature": temperature,
     }
 
+    if api == "openai" and model in ["gpt-5", "gpt-5-mini"]:
+        # Unsupported in some models
+        del completion_params["max_tokens"]
+        del completion_params["temperature"]
+
     # Get completion from selected API
     response = client.chat.completions.create(**completion_params)
     token_usage = response.usage
@@ -503,25 +688,8 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
         Dict: Dictionary containing parsed document data
     """
     logger.debug(f"Parsing with {api} API and model {kwargs['model']}")
-
-    # Handle different input types
-    mime_type, _ = mimetypes.guess_type(path)
-    if mime_type and mime_type.startswith("image"):
-        # Single image processing
-        with open(path, "rb") as img_file:
-            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
-            images = [(0, f"data:{mime_type};base64,{image_base64}")]
-    else:
-        # PDF processing
-        pdf_document = pdfium.PdfDocument(path)
-        images = [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-    images = convert_path_to_images(path)
+    max_dimension = kwargs.get("max_image_dimension", 1500)
+    images = convert_doc_to_base64_images(path, max_dimension=max_dimension)
 
     # Process each page/image
     all_results = []
@@ -599,28 +767,3 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             "total": sum(total_tokens for _, _, _, _, total_tokens in all_results),
         },
     }
-
-
-def convert_doc_to_base64_images(path: str) -> List[Tuple[int, str]]:
-    """
-    Converts a document (PDF or image) to a base64 encoded string.
-
-    Args:
-        path (str): Path to the PDF file.
-
-    Returns:
-        str: Base64 encoded string of the PDF content.
-    """
-    if path.endswith(".pdf"):
-        pdf_document = pdfium.PdfDocument(path)
-        return [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-    elif mimetypes.guess_type(path)[0].startswith("image"):
-        with open(path, "rb") as img_file:
-            image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
-            return [(0, f"data:image/png;base64,{image_base64}")]

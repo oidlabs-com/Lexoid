@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.16"
+version = "0.1.18"
 description = ""
 authors = []
 readme = "README.md"
@@ -31,10 +31,16 @@ together = "^1.4.0"
 openpyxl = "^3.1.5"
 pptx2md = "^2.0.6"
 mistralai = "^1.8.2"
-anthropic = "^0.55.0"
+anthropic = "^0.60.0"
 transformers = "^4.51.3"
 torch = "^2.7.0"
 scikit-learn = "^1.7.1"
+scikit-image = "^0.25.2"
+paddleocr = "^3.2.0"
+matplotlib = "^3.10.6"
+paddlepaddle = "^3.2.0"
+levenshtein = "^0.27.1"
+accelerate = "^1.10.1"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"

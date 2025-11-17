@@ -7,27 +7,41 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Dict, List, Optional, Union, Type
+from typing import Dict, List, Optional, Type, Union
+
 from loguru import logger
 
-from lexoid.core.parse_type.llm_parser import (
+from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
+    convert_schema_to_dict,
+    convert_to_pdf,
+)
+from lexoid.core.parse_type.llm_parser import (
     create_response,
     get_api_provider_for_model,
     parse_llm_doc,
 )
 from lexoid.core.parse_type.static_parser import parse_static_doc
+from lexoid.core.prompt_templates import (
+    LATEX_FIRST_PAGE_PROMPT,
+    LATEX_LAST_PAGE_PROMPT,
+    LATEX_MIDDLE_PAGE_PROMPT,
+    LATEX_USER_PROMPT,
+)
 from lexoid.core.utils import (
-    convert_to_pdf,
+    DEFAULT_LLM,
+    DEFAULT_STATIC_FRAMEWORK,
+    bbox_router,
     create_sub_pdf,
     download_file,
+    get_file_type,
     get_webpage_soup,
     is_supported_file_type,
     is_supported_url_file_type,
     recursive_read_html,
+    resize_image_if_needed,
     router,
     split_pdf,
-    convert_schema_to_dict,
 )
 
 
@@ -44,9 +58,15 @@ def retry_with_different_parser_type(func):
             if len(args) > 0:
                 kwargs["path"] = args[0]
             if len(args) > 1:
-                router_priority = kwargs.get("router_priority", "speed")
                 if args[1] == ParserType.AUTO:
-                    parser_type = ParserType[router(kwargs["path"], router_priority)]
+                    router_priority = kwargs.get("router_priority", "speed")
+                    autoselect_llm = kwargs.get("autoselect_llm", False)
+                    routed_parser_type, model = router(
+                        kwargs["path"], router_priority, autoselect_llm=autoselect_llm
+                    )
+                    if model is not None:
+                        kwargs["model"] = model
+                    parser_type = ParserType[routed_parser_type]
                     logger.debug(f"Auto-detected parser type: {parser_type}")
                     kwargs["routed"] = True
                 else:
@@ -54,18 +74,21 @@ def retry_with_different_parser_type(func):
                 kwargs["parser_type"] = parser_type
             return func(**kwargs)
         except Exception as e:
-            if kwargs.get("parser_type") == ParserType.LLM_PARSE and kwargs.get(
-                "routed", False
-            ):
+            if kwargs.get("retry_on_fail", True) is False:
+                logger.error(
+                    f"Parsing failed with error: {e}. No fallback parser available."
+                )
+                raise e
+            parse_type = kwargs.get("parser_type")
+            routed = kwargs.get("routed", False)
+            if parse_type == ParserType.LLM_PARSE and routed:
                 logger.warning(
                     f"LLM_PARSE failed with error: {e}. Retrying with STATIC_PARSE."
                 )
                 kwargs["parser_type"] = ParserType.STATIC_PARSE
                 kwargs["routed"] = False
                 return func(**kwargs)
-            elif kwargs.get("parser_type") == ParserType.STATIC_PARSE and kwargs.get(
-                "routed", False
-            ):
+            elif parse_type == ParserType.STATIC_PARSE and routed:
                 logger.warning(
                     f"STATIC_PARSE failed with error: {e}. Retrying with LLM_PARSE."
                 )
@@ -113,6 +136,23 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
         result = parse_llm_doc(path, **kwargs)
 
     result["parser_used"] = parser_type
+
+    return_bboxes = kwargs.get("return_bboxes", False)
+    has_bboxes = bool(result["segments"][0].get("bboxes"))
+    bbox_framework = kwargs.get("bbox_framework", None)
+    framework = kwargs.get("framework", DEFAULT_STATIC_FRAMEWORK)
+    bbox_framework_different = bbox_framework and bbox_framework != framework
+    if return_bboxes and (not has_bboxes or bbox_framework_different):
+        logger.debug("Extracting bounding boxes...")
+        if kwargs.get("bbox_framework", "auto") == "auto":
+            kwargs["bbox_framework"] = bbox_router(path)
+        kwargs["parser_type"] = ParserType.STATIC_PARSE
+        kwargs["framework"] = kwargs["bbox_framework"]
+        result_static = parse_static_doc(path, **kwargs)
+        for i, segment in enumerate(result["segments"]):
+            if i < len(result_static["segments"]):
+                segment["bboxes"] = result_static["segments"][i].get("bboxes", [])
+
     return result
 
 
@@ -227,6 +267,13 @@ def parse(
             f"Unsupported file type {os.path.splitext(path)[1]}"
         )
 
+        if "image" in get_file_type(path):
+            # Resize image if too large
+            max_dimension = kwargs.get("max_image_dimension", 1500)
+            path = resize_image_if_needed(
+                path, max_dimension=max_dimension, tmpdir=temp_dir
+            )
+
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
             logger.debug("Converting file to PDF")
@@ -292,9 +339,7 @@ def parse(
             else:
                 raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
 
-            api_cost = api_cost_mapping.get(
-                kwargs.get("model", "gemini-2.0-flash"), None
-            )
+            api_cost = api_cost_mapping.get(kwargs.get("model", DEFAULT_LLM), None)
             if api_cost:
                 token_usage = result["token_usage"]
                 token_cost = {
@@ -412,3 +457,53 @@ def parse_with_schema(
         responses.append(new_dict)
 
     return responses
+
+
+def parse_to_latex(
+    path: str,
+    api: Optional[str] = None,
+    model: str = "gpt-4o-mini",
+    **kwargs,
+) -> str:
+    if not api:
+        api = get_api_provider_for_model(model)
+        logger.debug(f"Using API provider: {api}")
+
+    first_prompt = LATEX_FIRST_PAGE_PROMPT
+    middle_prompt = LATEX_MIDDLE_PAGE_PROMPT
+    last_prompt = LATEX_LAST_PAGE_PROMPT
+
+    user_prompt = LATEX_USER_PROMPT
+
+    responses = []
+    images = convert_doc_to_base64_images(path)
+    total_pages = len(images)
+
+    if total_pages == 1:
+        first_prompt += "\n\nWrite \\end{document} to close the document."
+    else:
+        first_prompt += "\n\nDo NOT write \\end{document} yet."
+
+    for i, (page_num, image) in enumerate(images):
+        if i == 0:
+            system_prompt = first_prompt
+        elif i == total_pages - 1:
+            system_prompt = middle_prompt
+        else:
+            system_prompt = last_prompt
+
+        resp_dict = create_response(
+            api=api,
+            model=model,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            image_url=image,
+            temperature=kwargs.get("temperature", 0.0),
+            max_tokens=kwargs.get("max_tokens", 1024),
+        )
+        response = resp_dict.get("response", "").strip()
+        response = response.split("```latex")[-1].split("```")[0].strip()
+        logger.debug(f"Processing page {page_num + 1} with response:\n{response}")
+        responses.append(response)
+
+    return "\n\n".join(responses)

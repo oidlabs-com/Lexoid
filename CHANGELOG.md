@@ -184,3 +184,27 @@
 
 ### Fixed
 * Set thinking budget to fix gemini-2.5-pro thinking for too long
+
+## [0.1.17]
+
+### Added
+* Support for `dataclass` in parse_with_schema function
+
+### Changed
+* Upgrade Anthropic version
+
+### Fixed
+* Check for `title` attribute in web pages
+* Fix arxiv URL parsing
+* Handle invalid bytes when text parsing
+
+## [0.1.18]
+
+### Added
+* Option for autoselecting the LLM based on clustering against benchmark documents (`autoselect_llm`)
+* Support for returning bboxes and reference highlighting in `STATIC_PARSE`
+* Function to parse documents into Latex
+* Support for OCR via PaddleOCR and extraction of bboxes in `LLM_PARSE`
+
+### Fixed
+* Switch from `os.system()` to `subprocess.run()` to avoid injection via doc path

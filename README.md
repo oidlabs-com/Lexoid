@@ -1,15 +1,6 @@
 <div align="center">
   
-```
- ___      _______  __   __  _______  ___   ______  
-|   |    |       ||  |_|  ||       ||   | |      | 
-|   |    |    ___||       ||   _   ||   | |  _    |
-|   |    |   |___ |       ||  | |  ||   | | | |   |
-|   |___ |    ___| |     | |  |_|  ||   | | |_|   |
-|       ||   |___ |   _   ||       ||   | |       |
-|_______||_______||__| |__||_______||___| |______| 
-                                                                                                    
-```
+<img src="assets/logo.png">
   
 </div>
 
@@ -52,6 +43,10 @@ playwright install --with-deps --only-shell chromium
 
 ### Building `.whl` from source
 
+>[!NOTE]
+>Installing the package from within the virtual environment could cause unexpected behavior, 
+>as Lexoid creates and activates its own environment in order to build the wheel.
+
 ```
 make build
 ```
@@ -88,10 +83,13 @@ Here's a quick example to parse documents using Lexoid:
 from lexoid.api import parse
 from lexoid.api import ParserType
 
-parsed_md = parse("https://www.justice.gov/eoir/immigration-law-advisor", parser_type="LLM_PARSE")["raw"]
+parsed_md = parse("https://www.justice.gov/eoir/immigration-law-advisor", parser_type="AUTO")["raw"]
 # or
 pdf_path = "path/to/immigration-law-advisor.pdf"
 parsed_md = parse(pdf_path, parser_type="LLM_PARSE")["raw"]
+# or
+pdf_path = "path/to/immigration-law-advisor.pdf"
+parsed_md = parse(pdf_path, parser_type="STATIC_PARSE")["raw"]
 
 print(parsed_md)
 ```
@@ -114,33 +112,36 @@ print(parsed_md)
 
 ## Benchmark
 
-Results aggregated across 11 documents.
+Results aggregated across 14 documents.
 
 _Note:_ Benchmarks are currently done in the zero-shot setting.
 
 | Rank | Model | SequenceMatcher Similarity | TFIDF Similarity | Time (s) | Cost ($) |
 | --- | --- | --- | --- | --- | --- |
-| 1 | gemini-2.5-pro | 0.907 (±0.151) | 0.973 (±0.053) | 22.23 | 0.02305 |
-| 2 | AUTO | 0.905 (±0.111) | 0.967 (±0.051) | 10.31 | 0.00068 |
-| 3 | gemini-2.5-flash | 0.902 (±0.151) | 0.984 (±0.030) | 48.67 | 0.01051 |
-| 4 | gemini-2.0-flash | 0.900 (±0.127) | 0.971 (±0.040) | 12.43 | 0.00081 |
-| 5 | mistral-ocr-latest | 0.890 (±0.097) | 0.930 (±0.095) | 5.69 | 0.00127 |
-| 6 | claude-3-5-sonnet-20241022 | 0.873 (±0.195) | 0.937 (±0.095) | 16.86 | 0.01779 |
-| 7 | gemini-1.5-flash | 0.868 (±0.198) | 0.965 (±0.041) | 17.19 | 0.00044 |
-| 8 | claude-sonnet-4-20250514 | 0.814 (±0.197) | 0.903 (±0.150) | 21.99 | 0.02045 |
-| 9 | accounts/fireworks/models/llama4-scout-instruct-basic | 0.804 (±0.242) | 0.931 (±0.067) | 9.76 | 0.00087 |
-| 10 | claude-opus-4-20250514 | 0.798 (±0.230) | 0.878 (±0.159) | 21.01 | 0.09233 |
-| 11 | gpt-4o | 0.796 (±0.264) | 0.898 (±0.117) | 28.23 | 0.01473 |
-| 12 | accounts/fireworks/models/llama4-maverick-instruct-basic | 0.792 (±0.206) | 0.914 (±0.128) | 10.71 | 0.00149 |
-| 13 | gemini-1.5-pro | 0.782 (±0.341) | 0.833 (±0.252) | 27.13 | 0.01275 |
-| 14 | gpt-4.1-mini | 0.767 (±0.243) | 0.807 (±0.197) | 22.64 | 0.00352 |
-| 15 | gpt-4o-mini | 0.727 (±0.245) | 0.832 (±0.136) | 17.20 | 0.00650 |
-| 16 | meta-llama/Llama-Vision-Free | 0.682 (±0.223) | 0.847 (±0.135) | 12.31 | 0.00000 |
-| 17 | meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo | 0.677 (±0.226) | 0.850 (±0.134) | 7.23 | 0.00015 |
-| 18 | microsoft/phi-4-multimodal-instruct | 0.665 (±0.258) | 0.800 (±0.217) | 10.96 | 0.00049 |
-| 19 | claude-3-7-sonnet-20250219 | 0.634 (±0.395) | 0.752 (±0.298) | 70.10 | 0.01775 |
-| 20 | google/gemma-3-27b-it | 0.624 (±0.357) | 0.750 (±0.327) | 24.51 | 0.00020 |
-| 21 | gpt-4.1 | 0.622 (±0.314) | 0.782 (±0.191) | 34.66 | 0.01461 |
-| 22 | meta-llama/Llama-3.2-90B-Vision-Instruct-Turbo | 0.559 (±0.233) | 0.822 (±0.119) | 27.74 | 0.01102 |
-| 23 | ds4sd/SmolDocling-256M-preview | 0.486 (±0.378) | 0.583 (±0.355) | 108.91 | 0.00000 |
-| 24 | qwen/qwen-2.5-vl-7b-instruct | 0.469 (±0.364) | 0.617 (±0.441) | 13.23 | 0.00060 |
+| 1 | AUTO (with auto-selected model) | 0.899 (±0.131) | 0.960 (±0.066) | 21.17 | 0.00066 |
+| 2 | AUTO | 0.895 (±0.112) | 0.973 (±0.046) | 9.29 | 0.00063 |
+| 3 | gemini-2.5-flash | 0.886 (±0.164) | 0.986 (±0.027) | 52.55 | 0.01226 |
+| 4 | mistral-ocr-latest | 0.882 (±0.106) | 0.932 (±0.091) | 5.75 | 0.00121 |
+| 5 | gemini-2.5-pro | 0.876 (±0.195) | 0.976 (±0.049) | 22.65 | 0.02408 |
+| 6 | gemini-2.0-flash | 0.875 (±0.148) | 0.977 (±0.037) | 11.96 | 0.00079 |
+| 7 | claude-3-5-sonnet-20241022 | 0.858 (±0.184) | 0.930 (±0.098) | 17.32 | 0.01804 |
+| 8 | gemini-1.5-flash | 0.842 (±0.214) | 0.969 (±0.037) | 15.58 | 0.00043 |
+| 9 | gpt-5-mini | 0.819 (±0.201) | 0.917 (±0.104) | 52.84 | 0.00811 |
+| 10 | gpt-5 | 0.807 (±0.215) | 0.919 (±0.088) | 98.12 | 0.05505 |
+| 11 | claude-sonnet-4-20250514 | 0.801 (±0.188) | 0.905 (±0.136) | 22.02 | 0.02056 |
+| 12 | claude-opus-4-20250514 | 0.789 (±0.220) | 0.886 (±0.148) | 29.55 | 0.09513 |
+| 13 | accounts/fireworks/models/llama4-maverick-instruct-basic | 0.772 (±0.203) | 0.930 (±0.117) | 16.02 | 0.00147 |
+| 14 | gemini-1.5-pro | 0.767 (±0.309) | 0.865 (±0.230) | 24.77 | 0.01139 |
+| 15 | gpt-4.1-mini | 0.754 (±0.249) | 0.803 (±0.193) | 23.28 | 0.00347 |
+| 16 | accounts/fireworks/models/llama4-scout-instruct-basic | 0.754 (±0.243) | 0.942 (±0.063) | 13.36 | 0.00087 |
+| 17 | gpt-4o | 0.752 (±0.269) | 0.896 (±0.123) | 28.87 | 0.01469 |
+| 18 | gpt-4o-mini | 0.728 (±0.241) | 0.850 (±0.128) | 18.96 | 0.00609 |
+| 19 | claude-3-7-sonnet-20250219 | 0.646 (±0.397) | 0.758 (±0.297) | 57.96 | 0.01730 |
+| 20 | gpt-4.1 | 0.637 (±0.301) | 0.787 (±0.185) | 35.37 | 0.01498 |
+| 21 | google/gemma-3-27b-it | 0.604 (±0.342) | 0.788 (±0.297) | 23.16 | 0.00020 |
+| 22 | ds4sd/SmolDocling-256M-preview | 0.603 (±0.292) | 0.705 (±0.262) | 507.74 | 0.00000 |
+| 23 | microsoft/phi-4-multimodal-instruct | 0.589 (±0.273) | 0.820 (±0.197) | 14.00 | 0.00045 |
+| 24 | qwen/qwen-2.5-vl-7b-instruct | 0.498 (±0.378) | 0.630 (±0.445) | 14.73 | 0.00056 |
+
+## Citation
+If you use Lexoid in production or publications, please cite accordingly and acknowledge usage. We appreciate the support 🙏

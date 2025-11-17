@@ -96,3 +96,82 @@ Instructions:
 
 Output the converted content directly in Markdown and HTML without any additional explanations, descriptions, or notes.
 """
+
+# Common guidance shared by all page prompts
+LATEX_COMMON_PROMPT = r"""
+You are converting ONLY the CURRENT page of a PDF into LaTeX.
+- Include content visible on THIS page only.
+- Do NOT infer or fabricate content from other pages.
+- If structure is unclear, add concise % TODO comments.
+- Use \section{}, \subsection{}, \subsubsection{} for headings based on visible hierarchy cues.
+- Use \textbf{}, \textit{}, \underline{} only if clearly visible.
+- Lists: \begin{itemize}/\begin{enumerate} to match bullets/numbering seen on THIS page.
+- Math: $...$ for inline, \begin{equation}...\end{equation} for display math present on THIS page.
+- Figures: if a filename is available, use \includegraphics[width=\linewidth]{<filename>}; otherwise add a % TODO placeholder.
+- Tables: prefer tabularx with X columns to fit within \textwidth; if wide, first try \small; use \resizebox{\textwidth}{!}{...} only if essential. 
+Render only rows visible on THIS page; add % TODO if it’s a continuation. Good practices is to use RaggedRight and multicolumn if necessary and present in the image given. 
+- Footnotes: use \footnote{} only if both the marker and the footnote text are visible on THIS page.
+- References: only if a references/bibliography section is visible on THIS page; use \begin{thebibliography}{99} ... \end{thebibliography} for entries visible here.
+- Page boundary rule: include ONLY what is visible on THIS page; if an element continues, render only the visible portion and add a % TODO noting continuation.
+- For tables with grouped headers, put the spanning header and its subheaders on the same row using \multicolumn and immediately follow with the exact \cline range for the child columns. Never insert an empty multicolumn row.
+"""
+
+# First page prompt: include preamble and \begin{document}. Do NOT end the document here.
+LATEX_FIRST_PAGE_PROMPT = rf"""
+{LATEX_COMMON_PROMPT}
+
+Output requirements for FIRST page:
+- Begin EXACTLY with:
+\documentclass{{article}}
+\usepackage{{amsmath,graphicx,geometry,tabularx}}
+\geometry{{margin=1in}}
+\begin{{document}}
+
+- If THIS page visibly contains a title/author/date/abstract, render them using:
+\title{{...}}
+\author{{...}}
+\date{{...}}
+\maketitle
+\begin{{abstract}}... \end{{abstract}}
+If any are missing or ambiguous on THIS page, omit them and add a % TODO note.
+
+- Convert ONLY visible content on THIS page (follow the common rules above).
+
+Important for parallel execution:
+- This call is designated as the FIRST page. Produce the preamble and \begin{{document}}.
+"""
+
+# Middle page prompt: content only, no preamble, no begin/end document.
+LATEX_MIDDLE_PAGE_PROMPT = rf"""
+{LATEX_COMMON_PROMPT}
+
+Output requirements for MIDDLE page:
+- Start a new page with \newpage.
+- Do NOT include any preamble.
+- Strictly DO NOT include \begin{{document}} or \end{{document}}.
+
+- Convert ONLY visible content on THIS page (follow the common rules above).
+
+Important for parallel execution:
+- This call is designated as a MIDDLE page. Output LaTeX content only; no document boundaries.
+"""
+
+# Last page prompt: content only, then close with \end{document}.
+LATEX_LAST_PAGE_PROMPT = rf"""
+{LATEX_COMMON_PROMPT}
+
+Output requirements for FINAL page:
+- Start a new page with \newpage.
+- Do NOT include any preamble.
+- Do NOT include \begin{{document}}.
+- Convert ONLY visible content on THIS page (follow the common rules above).
+- After the converted content for THIS page, Strictly WRITE \end{{document}}.
+- Ensure all environments you opened are properly closed.
+
+Important for parallel execution:
+- This call is designated as the FINAL page. Append \end{{document}} after this page’s content.
+"""
+
+LATEX_USER_PROMPT = """You are an AI agent specialized in parsing PDF documents and converting them into clean, valid LaTeX format. 
+Your goal is to produce LaTeX code that accurately represents the document's structure, content, and layout while ensuring everything fits within standard page margins.
+"""

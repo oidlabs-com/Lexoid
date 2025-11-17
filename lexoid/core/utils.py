@@ -1,29 +1,29 @@
 import asyncio
-import dataclasses
-import io
 import mimetypes
 import os
 import re
-import sys
-from dataclasses import fields, is_dataclass
+from collections import defaultdict, deque
 from hashlib import md5
-from typing import Dict, List, Optional, Type, Union
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import nest_asyncio
+import numpy as np
 import pikepdf
-import pypdfium2
 import requests
 from bs4 import BeautifulSoup
-from docx2pdf import convert
+from Levenshtein import distance
 from loguru import logger
+from markdown import markdown
 from markdownify import markdownify as md
-from PIL import Image
-from PyQt5.QtCore import QMarginsF, QUrl
-from PyQt5.QtGui import QPageLayout, QPageSize
-from PyQt5.QtPrintSupport import QPrinter
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtWidgets import QApplication
+from matplotlib import pyplot as plt
+
+from lexoid.core.llm_selector import DocumentRankedLLMSelector
+
+HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
+DEFAULT_LLM = "gemini-2.0-flash"
+DEFAULT_LOCAL_LM = "ds4sd/SmolDocling-256M-preview"
+DEFAULT_STATIC_FRAMEWORK = "pdfplumber"
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
@@ -56,32 +56,34 @@ def create_sub_pdf(
     return output_path
 
 
-def convert_image_to_pdf(image_path: str) -> bytes:
-    with Image.open(image_path) as img:
-        img_rgb = img.convert("RGB")
-        pdf_buffer = io.BytesIO()
-        img_rgb.save(pdf_buffer, format="PDF")
-        return pdf_buffer.getvalue()
-
-
-def convert_pdf_page_to_image(
-    pdf_document: pypdfium2.PdfDocument, page_number: int
-) -> bytes:
-    """Convert a PDF page to an image."""
-    page = pdf_document[page_number]
-    # Render with 4x scaling for better quality
-    pil_image = page.render(scale=4).to_pil()
-
-    # Convert to bytes
-    img_byte_arr = io.BytesIO()
-    pil_image.save(img_byte_arr, format="PNG")
-    img_byte_arr.seek(0)
-    return img_byte_arr.getvalue()
-
-
 def get_file_type(path: str) -> str:
     """Get the file type of a file based on its extension."""
     return mimetypes.guess_type(path)[0] or ""
+
+
+def resize_image_if_needed(
+    path: str, max_dimension: int = 1500, tmpdir: Optional[str] = None
+) -> str:
+    """Resize image if its dimensions exceed max_dimension."""
+    from PIL import Image
+
+    with Image.open(path) as img:
+        width, height = img.size
+        if max(width, height) > max_dimension:
+            logger.debug(
+                f"Resizing image to fit within max dimensions of {max_dimension}."
+            )
+            scaling_factor = max_dimension / float(max(width, height))
+            new_size = (int(width * scaling_factor), int(height * scaling_factor))
+            img = img.resize(new_size, Image.Resampling.LANCZOS)
+            if tmpdir:
+                folder = tmpdir
+            else:
+                folder = os.path.dirname(path)
+            resized_path = os.path.join(folder, f"resized_{os.path.basename(path)}")
+            img.save(resized_path)
+            return resized_path
+    return path
 
 
 def is_supported_file_type(path: str) -> bool:
@@ -458,76 +460,6 @@ def recursive_read_html(url: str, depth: int, visited_urls: set = None) -> Dict:
     return content
 
 
-def save_webpage_as_pdf(url: str, output_path: str) -> str:
-    """
-    Saves a webpage as a PDF file using PyQt5.
-
-    Args:
-        url (str): The URL of the webpage.
-        output_path (str): The path to save the PDF file.
-
-    Returns:
-        str: The path to the saved PDF file.
-    """
-    if not QApplication.instance():
-        app = QApplication(sys.argv)
-    else:
-        app = QApplication.instance()
-    web = QWebEngineView()
-    web.load(QUrl(url))
-
-    def handle_print_finished(filename, status):
-        print(f"PDF saved to: {filename}")
-        app.quit()
-
-    def handle_load_finished(status):
-        if status:
-            printer = QPrinter(QPrinter.HighResolution)
-            printer.setOutputFormat(QPrinter.PdfFormat)
-            printer.setOutputFileName(output_path)
-
-            page_layout = QPageLayout(
-                QPageSize(QPageSize.A4), QPageLayout.Portrait, QMarginsF(15, 15, 15, 15)
-            )
-            printer.setPageLayout(page_layout)
-
-            web.page().printToPdf(output_path)
-            web.page().pdfPrintingFinished.connect(handle_print_finished)
-
-    web.loadFinished.connect(handle_load_finished)
-    app.exec_()
-
-    return output_path
-
-
-def convert_to_pdf(input_path: str, output_path: str) -> str:
-    """
-    Converts a file or webpage to PDF.
-
-    Args:
-        input_path (str): The path to the input file or URL.
-        output_path (str): The path to save the output PDF file.
-
-    Returns:
-        str: The path to the saved PDF file.
-    """
-    if input_path.startswith(("http://", "https://")):
-        return save_webpage_as_pdf(input_path, output_path)
-    file_type = get_file_type(input_path)
-    if file_type.startswith("image/"):
-        img_data = convert_image_to_pdf(input_path)
-        with open(output_path, "wb") as f:
-            f.write(img_data)
-    elif "word" in file_type:
-        return convert_doc_to_pdf(input_path, os.path.dirname(output_path))
-    else:
-        # Assume it's already a PDF, just copy it
-        with open(input_path, "rb") as src, open(output_path, "wb") as dst:
-            dst.write(src.read())
-
-    return output_path
-
-
 def has_image_in_pdf(path: str):
     with open(path, "rb") as fp:
         content = fp.read()
@@ -545,7 +477,51 @@ def has_hyperlink_in_pdf(path: str):
     )
 
 
-def router(path: str, priority: str = "speed") -> str:
+def get_api_provider_for_model(model: str) -> str:
+    if model.startswith("gemini"):
+        return "gemini"
+    if model.startswith("gpt"):
+        return "openai"
+    if model.startswith("meta-llama"):
+        if "Turbo" in model or model == "meta-llama/Llama-Vision-Free":
+            return "together"
+        return "huggingface"
+    if any(model.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]):
+        return "openrouter"
+    if model.startswith("accounts/fireworks"):
+        return "fireworks"
+    if model.startswith("claude"):
+        return "anthropic"
+    if model.startswith("mistral"):
+        return "mistral"
+    if "docling" in model.lower():
+        return "local"
+    raise ValueError(f"Unsupported model: {model}")
+
+
+def is_api_key_set(api_provider: str) -> bool:
+    if api_provider == "openai":
+        return bool(os.getenv("OPENAI_API_KEY"))
+    elif api_provider == "gemini":
+        return bool(os.getenv("GOOGLE_API_KEY"))
+    elif api_provider == "together":
+        return bool(os.getenv("TOGETHER_API_KEY"))
+    elif api_provider == "huggingface":
+        return bool(os.getenv("HUGGINGFACEHUB_API_TOKEN"))
+    elif api_provider == "openrouter":
+        return bool(os.getenv("OPENROUTER_API_KEY"))
+    elif api_provider == "fireworks":
+        return bool(os.getenv("FIREWORKS_API_KEY"))
+    elif api_provider == "anthropic":
+        return bool(os.getenv("ANTHROPIC_API_KEY"))
+    elif api_provider == "mistral":
+        return bool(os.getenv("MISTRAL_API_KEY"))
+    elif api_provider == "local":
+        return True  # Local models don't require an API key
+    return False
+
+
+def router(path: str, priority: str = "speed", autoselect_llm: bool = False) -> str:
     """
     Routes the file path to the appropriate parser based on the file type.
 
@@ -553,13 +529,30 @@ def router(path: str, priority: str = "speed") -> str:
         path (str): The file path to route.
         priority (str): The priority for routing: "accuracy" (preference to LLM_PARSE) or "speed" (preference to STATIC_PARSE).
     """
+    model_name = None
+    if autoselect_llm:
+        logger.debug("Autoselecting LLM for parsing.")
+        model_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "model_data"
+        )
+        selector = DocumentRankedLLMSelector(
+            model_dir=model_dir, use_image_embeddings=False
+        )
+        ranking = selector.rank_models(path)
+        for model, _ in ranking:
+            api_provider = get_api_provider_for_model(model)
+            if is_api_key_set(api_provider):
+                logger.debug(f"Selected model: {model}.")
+                model_name = model
+                return "LLM_PARSE", model_name
+
     file_type = get_file_type(path)
     if (
         file_type.startswith("text/")
         or "spreadsheet" in file_type
         or "presentation" in file_type
     ):
-        return "STATIC_PARSE"
+        return "STATIC_PARSE", None
 
     if priority == "accuracy":
         # If the file is a PDF without images but has hyperlinks, use STATIC_PARSE
@@ -568,38 +561,43 @@ def router(path: str, priority: str = "speed") -> str:
         has_hyperlink = has_hyperlink_in_pdf(path)
         if file_type == "application/pdf" and not has_image and has_hyperlink:
             logger.debug("Using STATIC_PARSE for PDF with hyperlinks and no images.")
-            return "STATIC_PARSE"
+            return "STATIC_PARSE", None
         logger.debug(
             f"Using LLM_PARSE because PDF has image ({has_image}) or has no hyperlink ({has_hyperlink})."
         )
-        return "LLM_PARSE"
+        return "LLM_PARSE", model_name
     else:
         # If the file is a PDF without images, use STATIC_PARSE
         # Otherwise, use LLM_PARSE
         if file_type == "application/pdf" and not has_image_in_pdf(path):
             logger.debug("Using STATIC_PARSE for PDF without images.")
-            return "STATIC_PARSE"
+            return "STATIC_PARSE", None
         logger.debug("Using LLM_PARSE because PDF has images")
-        return "LLM_PARSE"
+        return "LLM_PARSE", model_name
 
 
-def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
-    temp_path = os.path.join(
-        temp_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
-    )
+def bbox_router(path: str) -> str:
+    """
+    Routes the file path to the appropriate bounding box extraction method based on the file type.
 
-    # Convert the document to PDF
-    # docx2pdf is not supported in linux. Use LibreOffice in linux instead.
-    # May need to install LibreOffice if not already installed.
-    if "linux" in sys.platform.lower():
-        os.system(
-            f'lowriter --headless --convert-to pdf --outdir {temp_dir} "{input_path}"'
-        )
-    else:
-        convert(input_path, temp_path)
+    Args:
+        path (str): The file path to route.
 
-    # Return the path of the converted PDF
-    return temp_path
+    Returns:
+        str: The parser to use for bounding box extraction (e.g., "paddleocr" or "pdfplumber")
+    """
+    file_type = get_file_type(path)
+    if file_type.startswith("image/"):
+        logger.debug("Using PaddleOCR for image file.")
+        return "paddleocr"
+    elif file_type == "application/pdf":
+        if has_image_in_pdf(path):
+            logger.debug("Using PaddleOCR for PDF with images.")
+            return "paddleocr"
+        else:
+            logger.debug("Using PDFPlumber for PDF without images.")
+            return "pdfplumber"
+    raise ValueError(f"No suitable bbox extraction method for file type: {file_type}")
 
 
 def get_uri_rect(path):
@@ -614,114 +612,239 @@ def get_uri_rect(path):
     return {uri: rect for uri, rect in zip(uris, rects)}
 
 
-def convert_schema_to_dict(schema: Union[Dict, Type]) -> Dict:
+def remove_html_tags(text: str):
+    html = markdown(text, extensions=["tables"])
+    return re.sub(HTML_TAG_PATTERN, " ", html)
+
+
+def strip_markdown(text: str) -> str:
     """
-    Convert a dataclass type or existing dict schema to a JSON schema dictionary.
+    Remove markdown formatting for matching words with bbox mapping.
+    """
+    # Remove bold/italic/code/strike
+    text = re.sub(r"[*_`~]", "", text)
+    # Remove links but keep visible text
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    # Remove HTML tags
+    text = remove_html_tags(text)
+    return text
+
+
+def find_bboxes_for_substring(
+    bbox_dict: List[Tuple[str, Tuple[float, float, float, float]]],
+    content: str,
+    substring: str,
+    match_mode: str = "fuzzy",
+    max_edit_distance: int = 3,
+):
+    """
+    Given bounding boxes for words and a substring, return bounding boxes of words in the substring.
 
     Args:
-        schema: Either a dictionary (JSON schema) or a dataclass type
+        bbox_dict (list): List of (word_with_markdown, bbox)
+        content (str): Full markdown content
+        substring (str): Substring to locate
+        match_mode (str): "fuzzy", "exact", or "all_matches" (default: "fuzzy"). "fuzzy" finds the best approximate match (min character-level edit distance), "exact" finds the exact match, "all_matches" returns bounding boxes for all occurrences of the substring
 
     Returns:
-        Dict: JSON schema dictionary
+        List of bounding boxes corresponding to matched words
     """
-    if isinstance(schema, dict):
-        return schema
+    normalized_content = strip_markdown(content).split()
+    normalized_substring = strip_markdown(substring).split()
+    normalized_bboxes = [(strip_markdown(w).strip(), bbox) for w, bbox in bbox_dict]
 
-    # Handle dataclass types
-    if hasattr(schema, "__dataclass_fields__"):
-        return _dataclass_to_json_schema(schema)
+    # Build mapping from word -> list of bboxes
+    bbox_lookup = defaultdict(deque)
+    for word, bbox in normalized_bboxes:
+        bbox_lookup[word].append(bbox)
 
-    raise ValueError(f"Unsupported schema type: {type(schema)}")
+    # Reconstruct bounding boxes in the order of normalized_content
+    ordered_bboxes = []
+    for word in normalized_content:
+        if bbox_lookup[word]:
+            ordered_bboxes.append((word, bbox_lookup[word].popleft()))
+        else:
+            ordered_bboxes.append((word, None))
 
+    # Greedy matching for words without a bbox using edit distance
+    if match_mode == "fuzzy":
+        for i, (word, bbox) in enumerate(ordered_bboxes):
+            if bbox is None:
+                best_word, best_bbox, best_dist = None, None, max_edit_distance + 1
+                # search over *remaining* words in bbox_lookup
+                for cand_word, bboxes in bbox_lookup.items():
+                    if bboxes:
+                        dist = distance(word, cand_word)
+                        if dist < best_dist:
+                            best_word, best_bbox, best_dist = cand_word, bboxes[0], dist
+                if best_bbox is not None:
+                    # assign the bbox and consume it
+                    ordered_bboxes[i] = (word, bbox_lookup[best_word].popleft())
 
-def _dataclass_to_json_schema(dataclass_type: Type) -> Dict:
-    """
-    Convert a dataclass type to a JSON schema dictionary.
+    result = []
 
-    Args:
-        dataclass_type: A dataclass type
-
-    Returns:
-        Dict: JSON schema representation
-    """
-    properties = {}
-    required_fields = []
-
-    for field in fields(dataclass_type):
-        field_schema = _get_field_json_schema(field)
-        properties[field.name] = field_schema
-
-        # Check if field is required (no default value)
-        # Fixed: Use dataclasses.MISSING instead of dataclass.MISSING
-        if field.default == field.default_factory == dataclasses.MISSING:
-            required_fields.append(field.name)
-
-    schema = {"type": "object", "properties": properties}
-
-    if required_fields:
-        schema["required"] = required_fields
-
-    return schema
-
-
-def _get_field_json_schema(field) -> Dict:
-    """
-    Convert a dataclass field to JSON schema property definition.
-    """
-    field_type = field.type
-
-    # Handle basic types
-    if field_type is str:
-        return {"type": "string"}
-    elif field_type is int:
-        return {"type": "integer"}
-    elif field_type is float:
-        return {"type": "number"}
-    elif field_type is bool:
-        return {"type": "boolean"}
-    elif field_type is list:
-        return {"type": "array"}
-    elif field_type is dict:
-        return {"type": "object"}
-
-    if is_dataclass(field_type):
-        return _dataclass_to_json_schema(field_type)
-
-    # Handle typing module types
-    origin = getattr(field_type, "__origin__", None)
-    args = getattr(field_type, "__args__", ())
-
-    if origin is Union:
-        if len(args) == 2 and type(None) in args:
-            non_none_type = next(arg for arg in args if arg is not type(None))
-            base_schema = _type_to_json_schema(non_none_type)
-            return base_schema
-        return {"anyOf": [_type_to_json_schema(arg) for arg in args]}
-    elif origin is list:
-        item_type = args[0] if args else str
-        return {"type": "array", "items": _type_to_json_schema(item_type)}
-    elif origin is dict:
-        return {"type": "object"}
-
-    # Fallback
-    return {"type": "string"}
-
-
-def _type_to_json_schema(python_type) -> Dict:
-    """Convert a Python type to JSON schema type definition."""
-    if python_type is str:
-        return {"type": "string"}
-    elif python_type is int:
-        return {"type": "integer"}
-    elif python_type is float:
-        return {"type": "number"}
-    elif python_type is bool:
-        return {"type": "boolean"}
-    elif python_type is list:
-        return {"type": "array"}
-    elif python_type is dict:
-        return {"type": "object"}
-    elif is_dataclass(python_type):  # Add this check
-        return _dataclass_to_json_schema(python_type)
+    if match_mode != "fuzzy":
+        # Exact sliding window search
+        for i in range(len(normalized_content) - len(normalized_substring) + 1):
+            if (
+                normalized_content[i : i + len(normalized_substring)]
+                == normalized_substring
+            ):
+                bboxes = [
+                    bbox
+                    for (_, bbox) in ordered_bboxes[i : i + len(normalized_substring)]
+                    if bbox is not None
+                ]
+                if match_mode == "all_matches":
+                    result.extend(bboxes)
+                else:
+                    return bboxes
+        return result
     else:
-        return {"type": "string"}  # Default fallback
+        # Fuzzy: find the substring window with minimum character-level edit distance
+        min_dist = max_edit_distance + 1
+        best_start = None
+        for i in range(len(normalized_content) - len(normalized_substring) + 1):
+            window = normalized_content[i : i + len(normalized_substring)]
+            dist = distance(" ".join(window), " ".join(normalized_substring))
+            if dist < min_dist:
+                min_dist = dist
+                best_start = i
+
+        if best_start is not None:
+            bboxes = [
+                bbox
+                for (_, bbox) in ordered_bboxes[
+                    best_start : best_start + len(normalized_substring)
+                ]
+                if bbox is not None
+            ]
+            return bboxes
+
+        return result
+
+
+def merge_bboxes(bboxes, threshold: float = 0.02):
+    """
+    Merge bounding boxes based on horizontal proximity.
+
+    Args:
+        bboxes (list): List of bounding boxes (x0, top, x1, bottom), normalized [0,1]
+        threshold (float): Maximum horizontal gap (in normalized units) to merge boxes
+
+    Returns:
+        list: Merged list of bounding boxes
+    """
+    if not bboxes:
+        return []
+
+    # Sort by left (x0), then top
+    bboxes = sorted(bboxes, key=lambda b: (b[1], b[0]))
+
+    merged = []
+    current = list(bboxes[0])
+
+    for x0, top, x1, bottom in bboxes[1:]:
+        # Check vertical overlap: only merge if boxes overlap vertically
+        if not (current[3] < top or bottom < current[1]):
+            # Horizontal proximity check
+            if min(abs(x0 - current[2]), abs(x1 - current[0])) <= threshold:
+                # Merge into current box
+                current[2] = max(current[2], x1)
+                current[1] = min(current[1], top)
+                current[3] = max(current[3], bottom)
+            else:
+                merged.append(tuple(current))
+                current = [x0, top, x1, bottom]
+        else:
+            merged.append(tuple(current))
+            current = [x0, top, x1, bottom]
+
+    merged.append(tuple(current))
+    return merged
+
+
+def visualize_bounding_boxes(
+    img: np.ndarray,
+    matched_bboxes: list,
+    highlight: bool = False,
+    merge_threshold: float = 0.02,
+):
+    """
+    Visualize bounding boxes on the image, optionally merging nearby boxes.
+
+    Args:
+        img (ndarray): The image on which to draw the bounding boxes
+        matched_bboxes (list): List of bounding boxes (x0, top, x1, bottom), normalized [0,1]
+        highlight (bool): If True, highlight merged boxes with semi-transparent fill
+        merge_threshold (float): Horizontal proximity threshold for merging
+    """
+    plt.figure(figsize=(10, 12))
+    plt.imshow(img)
+    ax = plt.gca()
+    H_img, W_img = img.shape[:2]
+
+    if highlight:
+        linewidth = 0
+        edgecolor = facecolor = (1, 1, 0, 0.5)
+    else:
+        linewidth = 2
+        edgecolor = "red"
+        facecolor = "none"
+
+    # Merge bounding boxes before drawing
+    merged_bboxes = merge_bboxes(matched_bboxes, threshold=merge_threshold)
+
+    # Draw bounding boxes
+    for bbox in merged_bboxes:
+        x0, top, x1, bottom = bbox
+        x0 *= W_img
+        x1 *= W_img
+        top *= H_img
+        bottom *= H_img
+        rect = plt.Rectangle(
+            (x0, top),
+            x1 - x0,
+            bottom - top,
+            linewidth=linewidth,
+            edgecolor=edgecolor,
+            facecolor=facecolor,
+        )
+        ax.add_patch(rect)
+
+    plt.axis("off")
+    plt.show()
+
+
+def split_bbox_by_word_length(
+    bbox: List[float], text: str
+) -> List[Tuple[List[float], str]]:
+    """
+    Approximate splitting of a bounding box into multiple bounding boxes according to word lengths.
+
+    Args:
+        bbox (List[float]): Bounding box in format [x0, top, x1, bottom], normalized.
+        text (str): The detected text within this bounding box.
+
+    Returns:
+        List[Tuple[List[float], str]]: List of tuples with bounding box and corresponding single word text.
+    """
+    words = text.split()
+    if len(words) <= 1:
+        return [(bbox, text)]
+
+    x0, top, x1, bottom = bbox
+    total_width = x1 - x0
+
+    # Calculate the proportional width of each word based on its length
+    total_chars = sum(len(word) for word in words)
+    boxes = []
+    current_x = x0
+
+    for word in words:
+        word_width = total_width * (len(word) / total_chars)
+        word_bbox = [current_x, top, current_x + word_width, bottom]
+        boxes.append((word_bbox, word))
+        current_x += word_width
+
+    return boxes
