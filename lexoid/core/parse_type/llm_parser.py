@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 import torch
 from anthropic import Anthropic
+from google import genai
 from huggingface_hub import InferenceClient
 from loguru import logger
 from mistralai import Mistral
@@ -21,10 +22,11 @@ from together import Together
 from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from lexoid.core.conversion_utils import (
-    convert_image_to_pdf,
     convert_doc_to_base64_images,
+    convert_image_to_pdf,
 )
 from lexoid.core.prompt_templates import (
+    AUDIO_TO_MARKDOWN_PROMPT,
     INSTRUCTIONS_ADD_PG_BREAK,
     LLAMA_PARSER_PROMPT,
     OPENAI_USER_PROMPT,
@@ -92,7 +94,7 @@ def retry_on_error(func):
 @retry_on_error
 def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     mime_type = get_file_type(path)
-    if not ("image" in mime_type or "pdf" in mime_type):
+    if not ("image" in mime_type or "pdf" in mime_type or "audio" in mime_type):
         raise ValueError(
             f"Unsupported file type: {mime_type}. Only PDF and image files are supported for LLM_PARSE."
         )
@@ -106,6 +108,11 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     kwargs["model"] = model
 
     api_provider = get_api_provider_for_model(model)
+
+    if mime_type.startswith("audio") and api_provider != "gemini":
+        raise ValueError(
+            f"Audio files are only supported with the Gemini API provider. The model '{model}' is not compatible."
+        )
 
     if api_provider == "gemini":
         return parse_with_gemini(path, **kwargs)
@@ -398,6 +405,10 @@ def parse_with_local_model(path: str, **kwargs) -> Dict:
 def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
     # Check if the file is an image and convert to PDF if necessary
     mime_type, _ = mimetypes.guess_type(path)
+
+    if mime_type and mime_type.startswith("audio"):
+        return parse_audio_with_gemini(path, **kwargs)
+
     if mime_type and mime_type.startswith("image"):
         pdf_content = convert_image_to_pdf(path)
         mime_type = "application/pdf"
@@ -765,5 +776,39 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             "input": sum(input_tokens for _, _, input_tokens, _, _ in all_results),
             "output": sum(output_tokens for _, _, _, output_tokens, _ in all_results),
             "total": sum(total_tokens for _, _, _, _, total_tokens in all_results),
+        },
+    }
+
+
+def parse_audio_with_gemini(path: str, **kwargs) -> Dict:
+    client = genai.Client()
+    audio_file = client.files.upload(file=path)
+    system_prompt = kwargs.get("system_prompt", None)
+    if system_prompt == "" or system_prompt is None:
+        system_prompt = AUDIO_TO_MARKDOWN_PROMPT + "Audo file name is: {path}\n"
+
+    response = client.models.generate_content(
+        model=kwargs["model"], contents=[system_prompt, audio_file]
+    )
+
+    return {
+        "raw": response.text,
+        "segments": [
+            {
+                "metadata": {"page": 0},
+                "content": response.text,
+            }
+        ],
+        "title": kwargs.get("title", ""),
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+        "token_usage": {
+            "input": response.usage_metadata.prompt_token_count,
+            "output": response.usage_metadata.candidates_token_count,
+            "total": (
+                response.usage_metadata.prompt_token_count
+                + response.usage_metadata.candidates_token_count
+            ),
         },
     }
