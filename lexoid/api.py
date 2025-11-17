@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
 from functools import wraps
 from glob import glob
+import textwrap
 from time import time
 from typing import Dict, List, Optional, Type, Union
 
@@ -394,6 +395,8 @@ def parse_with_schema(
     schema: Union[Dict, Type],
     api: Optional[str] = None,
     model: str = "gpt-4o-mini",
+    example_schema: Dict = {},
+    alternate_keys: Dict = {},
     **kwargs,
 ) -> List[List[Dict]]:
     """
@@ -401,14 +404,18 @@ def parse_with_schema(
 
     Args:
         path (str): Path to the PDF file.
-        schema (Dict): JSON schema to which the parsed output should conform.
+        schema (Union[Dict, Type]): JSON or Dataclass schema to which the parsed output should conform.
         api (str, optional): LLM API provider (One of "openai", "huggingface", "together", "openrouter", and "fireworks").
         model (str, optional): LLM model name.
+        example_schema (Dict): JSON schema with filled example values.
+        alternate_keys (Dict): JSON schema with alternate keys for the keys in the schema.
         **kwargs: Additional arguments for the parser (e.g.: temperature, max_tokens).
-
-    Returns:
-        List[List[Dict]]: List of dictionaries for each page, each conforming to the provided schema.
     """
+    if example_schema is None:
+        example_schema = {}
+    if alternate_keys is None:
+        alternate_keys = {}
+
     if not api:
         api = get_api_provider_for_model(model)
         logger.debug(f"Using API provider: {api}")
@@ -432,8 +439,25 @@ def parse_with_schema(
 
         Here is the output schema:
         {json.dumps(json_schema, indent=2)}
+    """
 
+    # Conditionally append example_schema section
+    if example_schema:
+        system_prompt += f"""
+
+        Here is an example-filled schema to guide formatting:
+        {json.dumps(example_schema, indent=2)}
         """
+
+    # Conditionally append alternate_keys section
+    if alternate_keys:
+        system_prompt += f"""
+
+        Here are alternate keys you may encounter while parsing:
+        {json.dumps(alternate_keys, indent=2)}
+        """
+
+    system_prompt = textwrap.dedent(system_prompt)
 
     user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
 
