@@ -410,6 +410,9 @@ def parse_with_schema(
         example_schema (Dict): JSON schema with filled example values.
         alternate_keys (Dict): JSON schema with alternate keys for the keys in the schema.
         **kwargs: Additional arguments for the parser (e.g.: temperature, max_tokens).
+
+    Returns:
+        List[Dict]: List of dictionaries, one for each page, each conforming to the provided schema.
     """
     if example_schema is None:
         example_schema = {}
