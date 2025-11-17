@@ -414,11 +414,6 @@ def parse_with_schema(
     Returns:
         List[Dict]: List of dictionaries, one for each page, each conforming to the provided schema.
     """
-    if example_schema is None:
-        example_schema = {}
-    if alternate_keys is None:
-        alternate_keys = {}
-
     if not api:
         api = get_api_provider_for_model(model)
         logger.debug(f"Using API provider: {api}")
