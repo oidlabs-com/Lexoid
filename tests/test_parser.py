@@ -8,7 +8,7 @@ from benchmark_utils import calculate_similarities
 from dotenv import load_dotenv
 from loguru import logger
 
-from lexoid.api import parse
+from lexoid.api import parse, parse_with_schema
 
 load_dotenv()
 output_dir = "tests/outputs"
@@ -414,3 +414,19 @@ async def test_docx_path_injection(sample):
         if os.path.exists(dir_name):
             os.rmdir(dir_name)
             assert False, "Path injection detected"
+
+
+@pytest.mark.asyncio
+async def test_parse_with_schema():
+    sample_schema = {
+        "Disability Category": "string",
+        "Participants": "int",
+        "Ballots Completed": "int",
+        "Ballots Incomplete/Terminated": "int",
+        "Accuracy": ["string"],
+        "Time to complete": ["string"],
+    }
+    pdf_path = "examples/inputs/test_1.pdf"
+    result = parse_with_schema(path=pdf_path, schema=sample_schema)[0][0]
+    assert isinstance(result, dict)
+    assert all(key in result for key in sample_schema.keys())
