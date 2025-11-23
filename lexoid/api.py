@@ -37,6 +37,7 @@ from lexoid.core.utils import (
     download_file,
     get_file_type,
     get_webpage_soup,
+    has_image_in_pdf,
     is_supported_file_type,
     is_supported_url_file_type,
     recursive_read_html,
@@ -62,6 +63,23 @@ def retry_with_different_parser_type(func):
                 if args[1] == ParserType.AUTO:
                     router_priority = kwargs.get("router_priority", "speed")
                     autoselect_llm = kwargs.get("autoselect_llm", False)
+                    if router_priority == "cost" and has_image_in_pdf(kwargs["path"]):
+                        # Handling this outside of router to allow for multiple func calls
+                        kwargs["parser_type"] = ParserType.STATIC_PARSE
+                        kwargs["framework"] = "paddleocr"
+                        result = func(**kwargs)
+                        character_threshold = kwargs.get("character_threshold", 100)
+                        len_result = len(result["raw"].strip())
+                        if len_result < character_threshold:
+                            logger.debug(
+                                f"Low character count detected ({len_result} < {character_threshold}), returning result"
+                            )
+                            return result
+                        logger.debug(
+                            f"Character count above threshold ({len_result} >= {character_threshold}), switching to LLM_PARSE"
+                        )
+                        kwargs["parser_type"] = ParserType.LLM_PARSE
+                        return func(**kwargs)
                     routed_parser_type, model = router(
                         kwargs["path"], router_priority, autoselect_llm=autoselect_llm
                     )
