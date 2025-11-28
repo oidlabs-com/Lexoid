@@ -96,7 +96,7 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     mime_type = get_file_type(path)
     if not ("image" in mime_type or "pdf" in mime_type or "audio" in mime_type):
         raise ValueError(
-            f"Unsupported file type: {mime_type}. Only PDF and image files are supported for LLM_PARSE."
+            f"Unsupported file type: {mime_type}. Only PDF, image, and audio files are supported for LLM_PARSE."
         )
     if "api_provider" in kwargs:
         if kwargs["api_provider"] == "local":
