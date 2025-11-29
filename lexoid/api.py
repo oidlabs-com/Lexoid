@@ -191,15 +191,15 @@ def parse_chunk_list(
     """
     combined_segments = []
     raw_texts = []
+    parsers_used = []
     token_usage = {"input": 0, "output": 0, "llm_page_count": 0}
     for file_path in file_paths:
         result = parse_chunk(file_path, parser_type, **kwargs)
         combined_segments.extend(result["segments"])
         raw_texts.append(result["raw"])
-        if (
-            result.get("parser_used") == ParserType.LLM_PARSE
-            and "token_usage" in result
-        ):
+        parser_used = result.get("parser_used")
+        parsers_used.append(parser_used.value if parser_used else "UNKNOWN")
+        if parser_used == ParserType.LLM_PARSE and "token_usage" in result:
             token_usage["input"] += result["token_usage"]["input"]
             token_usage["output"] += result["token_usage"]["output"]
             token_usage["llm_page_count"] += len(result["segments"])
@@ -213,6 +213,7 @@ def parse_chunk_list(
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
         "token_usage": token_usage,
+        "parsers_used": parsers_used,
     }
 
 
@@ -346,6 +347,11 @@ def parse(
                     ),
                     "total": sum(r["token_usage"]["total"] for r in chunk_results),
                 },
+                "parsers_used": [
+                    parser
+                    for r in chunk_results
+                    for parser in r.get("parsers_used", [])
+                ],
             }
 
         if "api_cost_mapping" in kwargs and "token_usage" in result:

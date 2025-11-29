@@ -430,3 +430,28 @@ async def test_parse_with_schema():
     result = parse_with_schema(path=pdf_path, schema=sample_schema)[0][0]
     assert isinstance(result, dict)
     assert all(key in result for key in sample_schema.keys())
+
+
+@pytest.mark.parametrize("character_threshold", [160, 100])
+@pytest.mark.asyncio
+async def test_cost_priority_routing(character_threshold):
+    sample = "examples/inputs/NHL_agreement_2022_pg1.pdf"
+    parser_type = "AUTO"
+    router_priority = "cost"
+    api_cost_path = os.path.join(os.path.dirname(__file__), "api_cost_mapping.json")
+    config = {
+        "parser_type": parser_type,
+        "router_priority": router_priority,
+        "page_nums": 1,
+        "pages_per_split": 1,
+        "character_threshold": character_threshold,
+        "api_cost_mapping": api_cost_path,
+    }
+    result = parse(sample, **config)
+    logger.debug(f"Token cost: {result['token_cost']}")
+    if character_threshold > 150:
+        assert "STATIC_PARSE" in result["parsers_used"]
+        assert result["token_cost"]["total"] == 0
+    else:
+        assert "LLM_PARSE" in result["parsers_used"]
+        assert result["token_cost"]["total"] > 0
