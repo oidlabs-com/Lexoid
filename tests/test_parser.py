@@ -455,3 +455,10 @@ async def test_cost_priority_routing(character_threshold):
     else:
         assert "LLM_PARSE" in result["parsers_used"]
         assert result["token_cost"]["total"] > 0
+
+
+@pytest.mark.asyncio
+async def test_audio_parse():
+    path = "examples/inputs/harvard.wav"
+    parsed_md = parse(path, parser_type="LLM_PARSE", model="gemini-2.5-flash")["raw"]
+    assert "zestful food is the hot cross bun" in parsed_md
