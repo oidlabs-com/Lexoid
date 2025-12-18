@@ -97,6 +97,7 @@ def is_supported_file_type(path: str) -> bool:
         or "presentation" in file_type
         or file_type.startswith("image/")
         or file_type.startswith("text")
+        or file_type.startswith("audio")
     ):
         return True
     return False
@@ -553,6 +554,10 @@ def router(path: str, priority: str = "speed", autoselect_llm: bool = False) -> 
         or "presentation" in file_type
     ):
         return "STATIC_PARSE", None
+
+    if file_type.startswith("audio"):
+        logger.debug("Using LLM_PARSE because the type of file is audio.")
+        return "LLM_PARSE", None
 
     if priority == "accuracy":
         # If the file is a PDF without images but has hyperlinks, use STATIC_PARSE

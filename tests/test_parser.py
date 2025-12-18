@@ -430,3 +430,10 @@ async def test_parse_with_schema():
     result = parse_with_schema(path=pdf_path, schema=sample_schema)[0][0]
     assert isinstance(result, dict)
     assert all(key in result for key in sample_schema.keys())
+
+
+@pytest.mark.asyncio
+async def test_audio_parse():
+    path = "examples/inputs/harvard.wav"
+    parsed_md = parse(path, parser_type="LLM_PARSE", model="gemini-2.5-flash")["raw"]
+    assert "zestful food is the hot cross bun" in parsed_md

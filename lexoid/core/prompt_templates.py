@@ -175,3 +175,10 @@ Important for parallel execution:
 LATEX_USER_PROMPT = """You are an AI agent specialized in parsing PDF documents and converting them into clean, valid LaTeX format. 
 Your goal is to produce LaTeX code that accurately represents the document's structure, content, and layout while ensuring everything fits within standard page margins.
 """
+
+AUDIO_TO_MARKDOWN_PROMPT = """You are an expert transcription and formatting assistant. 
+Convert the provided audio into a clean, well-structured Markdown document, preserving the logical flow, sections, and any lists or numbered points mentioned in the speech. 
+Remove background noise and ignore any irrelevant sounds, side conversations, or filler words like “um” and “uh” that do not add meaning. 
+Where appropriate, use Markdown headings, bullet points, numbered lists, and bold/italic text to improve clarity and readability. 
+If the speaker mentions code, equations, or examples, format them using proper Markdown code blocks or inline code. 
+Determine whether the speaker explicitly states a clear title in the audio; if a title is stated, use it as the main top-level Markdown heading; otherwise, use the audio file name (without its extension) as the main top-level Markdown heading."""
