@@ -603,13 +603,6 @@ def create_response(
             },
             include_image_base64=True,
         )
-
-        class TokenUsage:
-            def __init__(self, prompt_tokens, completion_tokens, total_tokens):
-                self.prompt_tokens = prompt_tokens
-                self.completion_tokens = completion_tokens
-                self.total_tokens = total_tokens
-
         return {
             "response": response.pages[0].markdown,
             "usage": {
@@ -618,6 +611,7 @@ def create_response(
                 "total_tokens": 0,  # Mistral does not provide token usage
             },
         }
+
     if api == "anthropic":
         image_media_type = image_url.split(";")[0].split(":")[1]
         image_data = image_url.split(",")[1]
@@ -785,7 +779,7 @@ def parse_audio_with_gemini(path: str, **kwargs) -> Dict:
     audio_file = client.files.upload(file=path)
     system_prompt = kwargs.get("system_prompt", None)
     if system_prompt == "" or system_prompt is None:
-        system_prompt = AUDIO_TO_MARKDOWN_PROMPT + "Audio file name is: {path}\n"
+        system_prompt = AUDIO_TO_MARKDOWN_PROMPT + f"Audio file name is: {path}\n"
 
     response = client.models.generate_content(
         model=kwargs["model"], contents=[system_prompt, audio_file]
