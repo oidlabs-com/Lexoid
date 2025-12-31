@@ -16,17 +16,14 @@ from lexoid.core.utils import (
     split_md_by_headings,
     split_pdf,
 )
-
 from pdfminer.high_level import extract_pages
 from pdfminer.layout import LTTextContainer
 from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
 from pptx2md import ConversionConfig, convert
 
-
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
-from paddleocr import PaddleOCR
-
 from loguru import logger
+from paddleocr import PaddleOCR
 
 
 def retry_with_different_parser(func):
