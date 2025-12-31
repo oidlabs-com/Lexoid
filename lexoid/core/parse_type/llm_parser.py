@@ -18,7 +18,7 @@ from mistralai import Mistral
 from openai import OpenAI
 from PIL import Image
 from requests.exceptions import HTTPError
-from together import Together
+
 from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from lexoid.core.conversion_utils import (
@@ -38,6 +38,10 @@ from lexoid.core.utils import (
     get_api_provider_for_model,
     get_file_type,
 )
+
+# Till Together new API is stable
+os.environ.setdefault("TOGETHER_NO_BANNER", "1")
+from together import Together
 
 
 def retry_on_error(func):
