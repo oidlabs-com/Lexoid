@@ -15,8 +15,8 @@ output_dir = "tests/outputs"
 os.makedirs(output_dir, exist_ok=True)
 models = [
     # Google models
-    "gemini-2.0-flash",
-    "gemini-2.0-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
     # OpenAI models
     "gpt-4o",
     "gpt-4o-mini",
@@ -58,6 +58,13 @@ async def test_jpg_parse(model):
         f.write(result)
     score = calculate_similarities(result, expected_ouput)["sequence_matcher"]
     assert round(score, 3) > 0.8
+
+
+@pytest.mark.asyncio
+async def test_static_parse_images():
+    input_data = "examples/inputs/cvs_coupon.jpg"
+    result = parse(input_data, parser_type="STATIC_PARSE")["raw"]
+    assert isinstance(result, str)
 
 
 @pytest.mark.asyncio
@@ -435,7 +442,7 @@ async def test_parse_with_schema():
 @pytest.mark.parametrize("character_threshold", [160, 100])
 @pytest.mark.asyncio
 async def test_cost_priority_routing(character_threshold):
-    sample = "examples/inputs/NHL_agreement_2022_pg1.pdf"
+    sample = "examples/inputs/cvs_coupon.jpg"
     parser_type = "AUTO"
     router_priority = "cost"
     api_cost_path = os.path.join(os.path.dirname(__file__), "api_cost_mapping.json")

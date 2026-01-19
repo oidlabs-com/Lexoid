@@ -771,7 +771,10 @@ def parse_with_paddleocr(path: str, **kwargs) -> Dict:
         page_texts = []
         page_bboxes = []
 
-        page_num = result["page_index"]
+        page_num = result.get("page_index", 0)
+        if not page_num:
+            page_num = 0
+
         height_img, width_img, _ = result["doc_preprocessor_res"]["output_img"].shape
         for text, bbox in zip(result["rec_texts"], result["dt_polys"]):
             x_coords = bbox[:, 0]
@@ -794,7 +797,6 @@ def parse_with_paddleocr(path: str, **kwargs) -> Dict:
 
         page_text_str = " ".join(page_texts)
         all_texts.append(page_text_str)
-
         segments.append(
             {
                 "metadata": {"page": kwargs.get("start", 1) + page_num},
