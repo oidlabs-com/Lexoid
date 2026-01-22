@@ -456,7 +456,7 @@ async def test_parse_with_schema():
 @pytest.mark.parametrize("character_threshold", [160, 100])
 @pytest.mark.asyncio
 async def test_cost_priority_routing(character_threshold):
-    sample = "examples/inputs/cvs_coupon.jpg"
+    sample = "examples/inputs/NHL_agreement_2022_pg1.pdf"
     parser_type = "AUTO"
     router_priority = "cost"
     api_cost_path = os.path.join(os.path.dirname(__file__), "api_cost_mapping.json")
