@@ -770,10 +770,9 @@ def parse_with_paddleocr(path: str, **kwargs) -> Dict:
     for result in results:
         page_texts = []
         page_bboxes = []
-
-        page_num = result.get("page_index", 0)
-        if not page_num:
-            page_num = 0
+        # OCRResult as dict
+        page_num = dict(result).get("page_index", 0)  # return value could be None
+        page_num = page_num or 0
 
         height_img, width_img, _ = result["doc_preprocessor_res"]["output_img"].shape
         for text, bbox in zip(result["rec_texts"], result["dt_polys"]):
