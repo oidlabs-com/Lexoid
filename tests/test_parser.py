@@ -15,8 +15,8 @@ output_dir = "tests/outputs"
 os.makedirs(output_dir, exist_ok=True)
 models = [
     # Google models
-    "gemini-2.0-flash",
-    "gemini-2.0-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
     # OpenAI models
     "gpt-4o",
     "gpt-4o-mini",
@@ -58,6 +58,27 @@ async def test_jpg_parse(model):
         f.write(result)
     score = calculate_similarities(result, expected_ouput)["sequence_matcher"]
     assert round(score, 3) > 0.8
+
+
+@pytest.mark.asyncio
+async def test_static_parse_images():
+    input_data_1 = "examples/inputs/cvs_coupon.jpg"
+    result = parse(input_data_1, parser_type="STATIC_PARSE")["raw"]
+    assert isinstance(result, str)
+    assert "7168" in result
+    assert "11/02/2024" in result
+
+    input_data_2 = "examples/inputs/NHL_agreement_2022_pg1.pdf"
+    result = parse(
+        input_data_2,
+        parser_type="AUTO",
+        router_priority="cost",
+        page_nums=1,
+        pages_per_split=1,
+        character_threshold=160,
+    )["raw"]
+    assert isinstance(result, str)
+    assert "september16,2012" in result.lower()
 
 
 @pytest.mark.asyncio
