@@ -208,3 +208,17 @@
 
 ### Fixed
 * Switch from `os.system()` to `subprocess.run()` to avoid injection via doc path
+
+## [0.1.19]
+
+### Added
+* Support for granite docling
+* Support for providing example values or alternate keys for `parse_with_schema` function
+* Support for audio to markdown
+* AUTO routing with cost priority
+
+### Changed
+* Improved PaddleOCR efficiency by skipping conversion to images
+
+### Fixed
+* STATIC_PARSE for images
