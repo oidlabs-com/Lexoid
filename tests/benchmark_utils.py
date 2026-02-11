@@ -112,3 +112,13 @@ def calculate_similarities(
     similarities.update(precision_recall_f1_score(text1, text2))
 
     return similarities
+
+
+metric_names = (
+    "sequence_matcher",
+    "cosine",
+    "jaccard",
+    "precision",
+    "recall",
+    "f1_score",
+)

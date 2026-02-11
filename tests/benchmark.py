@@ -10,7 +10,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from lexoid.api import parse
-from benchmark_utils import calculate_similarities
+from benchmark_utils import calculate_similarities, metric_names
 
 load_dotenv()
 
@@ -18,6 +18,9 @@ config_options = {
     "parser_type": ["LLM_PARSE", "STATIC_PARSE", "AUTO"],
     "model": [
         # # Google models
+        "gemini-3-flash-preview",
+        # "gemini-3-pro-preview",
+        # "gemini-3-pro-image-preview",
         # "gemini-2.5-flash",
         # "gemini-2.5-pro",
         # "gemini-2.0-flash",
@@ -32,6 +35,7 @@ config_options = {
         # "claude-3-7-sonnet-20250219",
         # "claude-3-5-sonnet-20241022",
         # # OpenAI models
+        # "gpt-5.2",
         # "gpt-5",
         # "gpt-5-mini",
         # "gpt-4.1",
@@ -163,14 +167,14 @@ def run_benchmark_config(
             break  # Stop further iterations if an error occurs
 
     mean_similarity = (
-        {metric: mean([s[metric] for s in similarities]) for metric in similarities[0]}
+        {metric: mean([s[metric] for s in similarities]) for metric in metric_names}
         if similarities
         else None
     )
     std_similarity = (
-        {metric: stdev([s[metric] for s in similarities]) for metric in similarities[0]}
+        {metric: stdev([s[metric] for s in similarities]) for metric in metric_names}
         if len(similarities) > 1
-        else {metric: 0.0 for metric in similarities[0]}
+        else {metric: 0.0 for metric in metric_names}
     )
 
     return BenchmarkResult(
@@ -196,15 +200,15 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
         all_costs = [c for r in valid_results for c in r.cost]
         avg_similarity = {
             metric: mean([s[metric] for s in all_similarities])
-            for metric in all_similarities[0]
+            for metric in metric_names
         }
         std_similarity = (
             {
                 metric: stdev([s[metric] for s in all_similarities])
-                for metric in all_similarities[0]
+                for metric in metric_names
             }
             if len(all_similarities) > 1
-            else {metric: 0.0 for metric in avg_similarity}
+            else {metric: 0.0 for metric in metric_names}
         )
         avg_execution_time = mean(all_execution_times)
         avg_cost = mean(all_costs)
@@ -448,7 +452,8 @@ def main():
     ]
 
     # Can be either a single file or directory
-    input_path = "examples/inputs"
+    # input_path = "examples/inputs"
+    input_path = "examples/inputs/grocery_bill.jpg"
     output_dir = "examples/outputs"
 
     run_id = "_".join(
