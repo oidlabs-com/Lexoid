@@ -662,10 +662,10 @@ def create_response(
         "messages": messages,
     }
 
-    # if api == "openai" and (model in ["gpt-5", "gpt-5-mini"] or model.startswith("o")):
-    #     # Unsupported in some models
-    #     del completion_params["max_tokens"]
-    #     del completion_params["temperature"]
+    if api == "openai":
+        # Unsupported in some models
+        del completion_params["max_tokens"]
+        del completion_params["temperature"]
 
     # Get completion from selected API
     response = client.chat.completions.create(**completion_params)

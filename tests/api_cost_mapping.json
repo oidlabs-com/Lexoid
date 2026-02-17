@@ -7,6 +7,10 @@
         "input": 2,
         "output": 12
     },
+    "gemini-3-pro-image-preview": {
+        "input": 2,
+        "output": 12
+    },
     "gemini-2.5-flash": {
         "input": 0.3,
         "output": 2.5

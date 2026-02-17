@@ -114,7 +114,7 @@ def calculate_similarities(
     return similarities
 
 
-metric_names = (
+METRIC_NAMES = (
     "sequence_matcher",
     "cosine",
     "jaccard",

@@ -10,7 +10,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 from lexoid.api import parse
-from benchmark_utils import calculate_similarities, metric_names
+from benchmark_utils import calculate_similarities, METRIC_NAMES
 
 load_dotenv()
 
@@ -167,14 +167,14 @@ def run_benchmark_config(
             break  # Stop further iterations if an error occurs
 
     mean_similarity = (
-        {metric: mean([s[metric] for s in similarities]) for metric in metric_names}
+        {metric: mean([s[metric] for s in similarities]) for metric in METRIC_NAMES}
         if similarities
         else None
     )
     std_similarity = (
-        {metric: stdev([s[metric] for s in similarities]) for metric in metric_names}
+        {metric: stdev([s[metric] for s in similarities]) for metric in METRIC_NAMES}
         if len(similarities) > 1
-        else {metric: 0.0 for metric in metric_names}
+        else {metric: 0.0 for metric in METRIC_NAMES}
     )
 
     return BenchmarkResult(
@@ -200,15 +200,15 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
         all_costs = [c for r in valid_results for c in r.cost]
         avg_similarity = {
             metric: mean([s[metric] for s in all_similarities])
-            for metric in metric_names
+            for metric in METRIC_NAMES
         }
         std_similarity = (
             {
                 metric: stdev([s[metric] for s in all_similarities])
-                for metric in metric_names
+                for metric in METRIC_NAMES
             }
             if len(all_similarities) > 1
-            else {metric: 0.0 for metric in metric_names}
+            else {metric: 0.0 for metric in METRIC_NAMES}
         )
         avg_execution_time = mean(all_execution_times)
         avg_cost = mean(all_costs)
@@ -452,8 +452,8 @@ def main():
     ]
 
     # Can be either a single file or directory
-    # input_path = "examples/inputs"
-    input_path = "examples/inputs/grocery_bill.jpg"
+    input_path = "examples/inputs"
+    # input_path = "examples/inputs/grocery_bill.jpg"
     output_dir = "examples/outputs"
 
     run_id = "_".join(
