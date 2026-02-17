@@ -450,6 +450,8 @@ def parse_image_with_gemini(
     }
     if kwargs["model"] == "gemini-2.5-pro":
         generation_config["thinkingConfig"] = {"thinkingBudget": 128}
+    elif kwargs["model"].startswith("gemini-3"):
+        generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
 
     payload = {
         "contents": [
@@ -658,11 +660,9 @@ def create_response(
     completion_params = {
         "model": model,
         "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
     }
 
-    if api == "openai" and (model in ["gpt-5", "gpt-5-mini"] or model.startswith("o")):
+    if api == "openai":
         # Unsupported in some models
         del completion_params["max_tokens"]
         del completion_params["temperature"]
