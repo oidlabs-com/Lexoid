@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.19"
+version = "0.1.20"
 description = ""
 authors = []
 readme = "README.md"
@@ -8,7 +8,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.10"
 google-generativeai = "^0.8.1"
-openai = "^1.47.0"
+openai = "^2.18.0"
 pikepdf = "^9.3.0"
 pdfplumber = "^0.11.4"
 pandas = "^2.2.3"
