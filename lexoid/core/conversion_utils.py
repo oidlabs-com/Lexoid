@@ -12,11 +12,6 @@ import docx2pdf
 import numpy as np
 import pypdfium2 as pdfium
 from PIL import Image
-from PyQt5.QtCore import QMarginsF, QUrl
-from PyQt5.QtGui import QPageLayout, QPageSize
-from PyQt5.QtPrintSupport import QPrinter
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtWidgets import QApplication
 
 from loguru import logger
 
@@ -126,6 +121,11 @@ def save_webpage_as_pdf(url: str, output_path: str) -> str:
     Returns:
         str: The path to the saved PDF file.
     """
+    from PyQt5.QtCore import QMarginsF, QUrl
+    from PyQt5.QtGui import QPageLayout, QPageSize
+    from PyQt5.QtPrintSupport import QPrinter
+    from PyQt5.QtWebEngineWidgets import QWebEngineView
+    from PyQt5.QtWidgets import QApplication
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     if not QApplication.instance():
         app = QApplication(sys.argv)
