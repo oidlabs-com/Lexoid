@@ -428,7 +428,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
 
 
 def parse_image_with_gemini(
-    base64_file: str, mime_type: str = "image/png", **kwargs
+    base64_file: Optional[str], mime_type: str = "image/png", **kwargs
 ) -> List[Dict] | str:
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
@@ -448,20 +448,20 @@ def parse_image_with_gemini(
     generation_config = {
         "temperature": kwargs.get("temperature", 0),
     }
-    if kwargs["model"] == "gemini-2.5-pro":
-        generation_config["thinkingConfig"] = {"thinkingBudget": 128}
-    elif kwargs["model"].startswith("gemini-2.5-flash"):
-        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
-    elif kwargs["model"].startswith("gemini-3"):
-        generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
+    parts = [{"text": prompt}]
+    if base64_file:
+        if kwargs["model"] == "gemini-2.5-pro":
+            generation_config["thinkingConfig"] = {"thinkingBudget": 128}
+        elif kwargs["model"].startswith("gemini-2.5-flash"):
+            generation_config["thinkingConfig"] = {"thinkingBudget": 0}
+        elif kwargs["model"].startswith("gemini-3"):
+            generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
 
+        parts.append({"inline_data": {"mime_type": mime_type, "data": base64_file}})
     payload = {
         "contents": [
             {
-                "parts": [
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": mime_type, "data": base64_file}},
-                ]
+                "parts": parts,
             }
         ],
         "generationConfig": generation_config,
@@ -585,7 +585,8 @@ def create_response(
     assert api in clients, f"Unsupported API: {api}"
 
     if api == "gemini":
-        image_url = image_url.split("data:image/png;base64,")[1]
+        if image_url and image_url.startswith("data:image/png;base64,"):
+            image_url = image_url.split("data:image/png;base64,")[1]
         response = parse_image_with_gemini(
             base64_file=image_url,
             model=model,
@@ -621,24 +622,27 @@ def create_response(
         }
 
     if api == "anthropic":
-        image_media_type = image_url.split(";")[0].split(":")[1]
-        image_data = image_url.split(",")[1]
+        content = [{"type": "text", "text": user_prompt}]
+        if image_url:
+            image_media_type = image_url.split(";")[0].split(":")[1]
+            image_data = image_url.split(",")[1]
+            content.insert(
+                0,
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": image_media_type,
+                        "data": image_data,
+                    },
+                },
+            )
         response = client.messages.create(
             model=model,
             messages=[
                 {
                     "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": image_media_type,
-                                "data": image_data,
-                            },
-                        },
-                        {"type": "text", "text": user_prompt},
-                    ],
+                    "content": content,
                 }
             ],
             max_tokens=max_tokens,
