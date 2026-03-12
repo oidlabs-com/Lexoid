@@ -450,6 +450,8 @@ def parse_image_with_gemini(
     }
     if kwargs["model"] == "gemini-2.5-pro":
         generation_config["thinkingConfig"] = {"thinkingBudget": 128}
+    elif kwargs["model"].startswith("gemini-2.5-flash"):
+        generation_config["thinkingConfig"] = {"thinkingBudget": 0}
     elif kwargs["model"].startswith("gemini-3"):
         generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
 
