@@ -21,6 +21,10 @@ RUN apt-get update && apt-get install -y \
     libqt5svg5-dev \
     libgl1-mesa-dev \
     python3-dev \
+    python3-pyqt5 \
+    python3-pyqt5.sip \
+    python3-pyqt5.qtwebengine \
+    pyqt5-dev-tools \
     libnss3 \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
