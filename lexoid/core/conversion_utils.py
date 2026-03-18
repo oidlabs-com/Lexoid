@@ -5,20 +5,20 @@ import mimetypes
 import os
 import subprocess
 import sys
-from typing import Dict, List, Tuple, Type, Union
+from typing import Any, Dict, List, Tuple, Type, Union, get_args, get_origin
 
 import cv2
 import docx2pdf
 import numpy as np
 import pypdfium2 as pdfium
+from loguru import logger
 from PIL import Image
+from pydantic import BaseModel
 from PyQt5.QtCore import QMarginsF, QUrl
 from PyQt5.QtGui import QPageLayout, QPageSize
 from PyQt5.QtPrintSupport import QPrinter
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtWidgets import QApplication
-
-from loguru import logger
 
 
 def convert_pdf_page_to_base64(
@@ -217,112 +217,118 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
 
 def convert_schema_to_dict(schema: Union[Dict, Type]) -> Dict:
     """
-    Convert a dataclass type or existing dict schema to a JSON schema dictionary.
-
-    Args:
-        schema: Either a dictionary (JSON schema) or a dataclass type
-
-    Returns:
-        Dict: JSON schema dictionary
+    Convert a dict, dataclass, or Pydantic BaseModel into JSON schema.
     """
     if isinstance(schema, dict):
         return schema
 
-    # Handle dataclass types
-    if hasattr(schema, "__dataclass_fields__"):
+    if dataclasses.is_dataclass(schema):
         return _dataclass_to_json_schema(schema)
 
-    raise ValueError(f"Unsupported schema type: {type(schema)}")
+    if BaseModel and isinstance(schema, type) and issubclass(schema, BaseModel):
+        return _pydantic_to_json_schema(schema)
+
+    raise TypeError("Schema must be dict, dataclass, or Pydantic BaseModel")
 
 
-def _dataclass_to_json_schema(dataclass_type: Type) -> Dict:
-    """
-    Convert a dataclass type to a JSON schema dictionary.
-
-    Args:
-        dataclass_type: A dataclass type
-
-    Returns:
-        Dict: JSON schema representation
-    """
+def _pydantic_to_json_schema(model: Type) -> Dict:
     properties = {}
-    required_fields = []
+    required = []
 
-    for field in dataclasses.fields(dataclass_type):
-        field_schema = _get_field_json_schema(field)
-        properties[field.name] = field_schema
+    for name, field in model.model_fields.items():
+        field_schema = _python_type_to_schema(field.annotation)
 
-        # Check if field is required (no default value)
-        # Fixed: Use dataclasses.MISSING instead of dataclass.MISSING
-        if field.default == field.default_factory == dataclasses.MISSING:
-            required_fields.append(field.name)
+        if field.description:
+            field_schema["description"] = field.description
+
+        properties[name] = field_schema
+
+        if field.is_required():
+            required.append(name)
 
     schema = {"type": "object", "properties": properties}
 
-    if required_fields:
-        schema["required"] = required_fields
+    if required:
+        schema["required"] = required
 
     return schema
 
 
-def _get_field_json_schema(field) -> Dict:
+def _dataclass_to_json_schema(cls: Type) -> Dict:
+    properties = {}
+    required = []
+
+    for field in dataclasses.fields(cls):
+        field_schema = _python_type_to_schema(field.type)
+
+        # description from metadata
+        description = field.metadata.get("description") if field.metadata else None
+        if description:
+            field_schema["description"] = description
+
+        properties[field.name] = field_schema
+
+        if (
+            field.default is dataclasses.MISSING
+            and field.default_factory is dataclasses.MISSING
+        ):
+            required.append(field.name)
+
+    schema = {"type": "object", "properties": properties}
+
+    if required:
+        schema["required"] = required
+
+    return schema
+
+
+def _python_type_to_schema(tp: Any) -> Dict:
     """
-    Convert a dataclass field to JSON schema property definition.
+    Convert arbitrary Python typing annotations to JSON schema.
+    Handles recursion for dataclasses and Pydantic models.
     """
-    field_type = field.type
 
-    # Handle basic types
-    if field_type is str:
-        return {"type": "string"}
-    elif field_type is int:
-        return {"type": "integer"}
-    elif field_type is float:
-        return {"type": "number"}
-    elif field_type is bool:
-        return {"type": "boolean"}
-    elif field_type is list:
-        return {"type": "array"}
-    elif field_type is dict:
-        return {"type": "object"}
+    origin = get_origin(tp)
+    args = get_args(tp)
 
-    if dataclasses.is_dataclass(field_type):
-        return _dataclass_to_json_schema(field_type)
+    # Primitive types
+    primitive_map = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        dict: "object",
+        list: "array",
+    }
 
-    # Handle typing module types
-    origin = getattr(field_type, "__origin__", None)
-    args = getattr(field_type, "__args__", ())
+    if tp in primitive_map:
+        return {"type": primitive_map[tp]}
 
+    # Optional / Union
     if origin is Union:
-        if len(args) == 2 and type(None) in args:
-            non_none_type = next(arg for arg in args if arg is not type(None))
-            base_schema = _type_to_json_schema(non_none_type)
-            return base_schema
-        return {"anyOf": [_type_to_json_schema(arg) for arg in args]}
-    elif origin is list:
+        non_none = [a for a in args if a is not type(None)]
+
+        if len(non_none) == 1:
+            return _python_type_to_schema(non_none[0])
+
+        return {"anyOf": [_python_type_to_schema(a) for a in non_none]}
+
+    # List
+    if origin in (list, List):
         item_type = args[0] if args else str
-        return {"type": "array", "items": _type_to_json_schema(item_type)}
-    elif origin is dict:
+        return {"type": "array", "items": _python_type_to_schema(item_type)}
+
+    # Dict
+    if origin in (dict, Dict):
         return {"type": "object"}
+
+    # Nested dataclass
+    if dataclasses.is_dataclass(tp):
+        return _dataclass_to_json_schema(tp)
+
+    # Nested Pydantic model
+    if BaseModel and isinstance(tp, type) and issubclass(tp, BaseModel):
+        return _pydantic_to_json_schema(tp)
 
     # Fallback
     return {"type": "string"}
-
-
-def _type_to_json_schema(python_type) -> Dict:
-    """Convert a Python type to JSON schema type definition."""
-    if python_type is str:
-        return {"type": "string"}
-    elif python_type is int:
-        return {"type": "integer"}
-    elif python_type is float:
-        return {"type": "number"}
-    elif python_type is bool:
-        return {"type": "boolean"}
-    elif python_type is list:
-        return {"type": "array"}
-    elif python_type is dict:
-        return {"type": "object"}
-    elif dataclasses.is_dataclass(python_type):  # Add this check
-        return _dataclass_to_json_schema(python_type)
-    else:
-        return {"type": "string"}  # Default fallback
