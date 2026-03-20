@@ -1,0 +1,12 @@
+.git
+.gitignore
+.vscode
+.github
+**/__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+dist
+lexoid.egg-info

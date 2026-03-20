@@ -1,0 +1,11 @@
+version: "3.9"
+
+services:
+  lexoid:
+    build: .
+    container_name: lexoid_app
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
