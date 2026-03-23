@@ -489,6 +489,8 @@ def parse_with_schema(
     user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
 
     if fill_single_schema:
+        if "api" in kwargs:
+            del kwargs["api"]
         response = parse(
             path, parser_type=ParserType.LLM_PARSE, api=api, model=model, **kwargs
         )

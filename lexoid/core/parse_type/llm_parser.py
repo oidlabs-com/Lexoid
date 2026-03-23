@@ -672,11 +672,6 @@ def create_response(
         "messages": messages,
     }
 
-    if api == "openai":
-        # Unsupported in some models
-        del completion_params["max_tokens"]
-        del completion_params["temperature"]
-
     # Get completion from selected API
     response = client.chat.completions.create(**completion_params)
     token_usage = response.usage
