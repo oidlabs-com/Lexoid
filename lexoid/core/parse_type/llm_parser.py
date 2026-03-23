@@ -587,6 +587,9 @@ def create_response(
     if api == "gemini":
         if image_url and image_url.startswith("data:image/png;base64,"):
             image_url = image_url.split("data:image/png;base64,")[1]
+        prompt = system_prompt
+        if user_prompt:
+            prompt += "\n\n" + user_prompt
         response = parse_image_with_gemini(
             base64_file=image_url,
             model=model,
