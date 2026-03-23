@@ -419,8 +419,9 @@ def parse_with_schema(
     schema: Union[Dict, Type],
     api: Optional[str] = None,
     model: str = "gpt-4o-mini",
-    example_schema: Dict = {},
-    alternate_keys: Dict = {},
+    example_schema: Optional[Dict] = None,
+    alternate_keys: Optional[Dict] = None,
+    fill_single_schema: bool = False,
     **kwargs,
 ) -> List[List[Dict]]:
     """
@@ -438,6 +439,10 @@ def parse_with_schema(
     Returns:
         List[Dict]: List of dictionaries, one for each page, each conforming to the provided schema.
     """
+    if example_schema is None:
+        example_schema = {}
+    if alternate_keys is None:
+        alternate_keys = {}
     if not api:
         api = get_api_provider_for_model(model)
         logger.debug(f"Using API provider: {api}")
@@ -482,6 +487,25 @@ def parse_with_schema(
     system_prompt = textwrap.dedent(system_prompt)
 
     user_prompt = "You are an AI agent that parses documents and returns them in the specified JSON format. Please parse the document and return it in the required format."
+
+    if fill_single_schema:
+        response = parse(
+            path, parser_type=ParserType.LLM_PARSE, api=api, model=model, **kwargs
+        )
+        content = response["raw"]
+        user_prompt += f"\n\nDocument content:\n<content>\n{content}\n</content>\n\nPlease parse the entire document and return a single JSON instance that conforms to the provided schema."
+        resp_dict = create_response(
+            api=api,
+            model=model,
+            user_prompt=user_prompt,
+            system_prompt=system_prompt,
+            temperature=kwargs.get("temperature", 0.0),
+            max_tokens=kwargs.get("max_tokens", 1024),
+        )
+        response = resp_dict.get("response", "")
+        response = response.split("```json")[-1].split("```")[0].strip()
+        logger.debug(f"Processing document with response: {response}")
+        return [json.loads(response)]
 
     responses = []
     images = convert_doc_to_base64_images(path)
