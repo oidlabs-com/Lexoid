@@ -299,6 +299,7 @@ def parse_with_local_model(path: str, **kwargs) -> Dict:
     import torch
     from transformers import AutoModelForVision2Seq, AutoProcessor
     from PIL import Image
+
     model_name = kwargs.get("model", DEFAULT_LOCAL_LM)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -420,6 +421,7 @@ def parse_image_with_gemini(
     base64_file: Optional[str], mime_type: str = "image/png", **kwargs
 ) -> List[Dict] | str:
     import requests
+
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("GOOGLE_API_KEY environment variable is not set")
@@ -584,8 +586,8 @@ def create_response(
     assert api in clients, f"Unsupported API: {api}"
 
     if api == "gemini":
-        if image_url and image_url.startswith("data:image/png;base64,"):
-            image_url = image_url.split("data:image/png;base64,")[1]
+        if image_url and ";base64," in image_url:
+            image_url = image_url.split(";base64,")[1]
         prompt = system_prompt
         if user_prompt:
             prompt += "\n\n" + user_prompt
@@ -788,6 +790,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
 
 def parse_audio_with_gemini(path: str, **kwargs) -> Dict:
     from google import genai
+
     client = genai.Client()
     audio_file = client.files.upload(file=path)
     system_prompt = kwargs.get("system_prompt", None)
