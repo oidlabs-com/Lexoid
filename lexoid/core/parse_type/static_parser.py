@@ -6,8 +6,6 @@ from time import time
 from typing import Dict, List, Tuple
 
 import pandas as pd
-import pdfplumber
-from docx import Document
 from lexoid.core.utils import (
     get_file_type,
     get_uri_rect,
@@ -16,14 +14,9 @@ from lexoid.core.utils import (
     split_md_by_headings,
     split_pdf,
 )
-from pdfminer.high_level import extract_pages
-from pdfminer.layout import LTTextContainer
-from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
-from pptx2md import ConversionConfig, convert
 
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 from loguru import logger
-from paddleocr import PaddleOCR
 
 
 def retry_with_different_parser(func):
@@ -74,6 +67,8 @@ def parse_static_doc(path: str, **kwargs) -> Dict:
     Returns:
         Dict: Dictionary containing parsed document data
     """
+    from pptx2md import ConversionConfig, convert
+
     framework = kwargs.get("framework", "pdfplumber")
 
     file_type = get_file_type(path)
@@ -153,6 +148,8 @@ def parse_with_pdfminer(path: str, **kwargs) -> Dict:
     Returns:
         Dict: Dictionary containing parsed document data
     """
+    from pdfminer.layout import LTTextContainer
+    from pdfminer.high_level import extract_pages
     pages = list(extract_pages(path))
     segments = []
     raw_texts = []
@@ -265,6 +262,8 @@ def process_pdf_page_with_pdfplumber(
     """
     Process a single page's content and return formatted markdown text.
     """
+    from pdfplumber.utils import get_bbox_overlap, obj_to_bbox
+
     markdown_content = []
     current_paragraph = []
     current_heading = []
@@ -680,6 +679,7 @@ def process_pdf_with_pdfplumber(
     Returns: List[Tuple[str, List[Tuple[str, Tuple[float, float, float, float]]]]]
     Each page returns a (markdown_text, [(word, (x0, top, x1, bottom))]) tuple for both content and bounding box mapping.
     """
+    import pdfplumber
     page_data = []
 
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -734,6 +734,7 @@ def parse_with_docx(path: str, **kwargs) -> Dict:
     Returns:
         Dict: Dictionary containing parsed document data
     """
+    from docx import Document
     doc = Document(path)
     full_text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
 
@@ -757,6 +758,8 @@ def parse_with_paddleocr(path: str, **kwargs) -> Dict:
     Returns:
         Dict: Dictionary containing parsed document data with segments per page.
     """
+    from paddleocr import PaddleOCR
+
     ocr = PaddleOCR(
         use_doc_orientation_classify=False,
         use_doc_unwarping=False,

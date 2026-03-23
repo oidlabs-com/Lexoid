@@ -13,12 +13,6 @@ import numpy as np
 import pypdfium2 as pdfium
 from loguru import logger
 from PIL import Image
-from pydantic import BaseModel
-from PyQt5.QtCore import QMarginsF, QUrl
-from PyQt5.QtGui import QPageLayout, QPageSize
-from PyQt5.QtPrintSupport import QPrinter
-from PyQt5.QtWebEngineWidgets import QWebEngineView
-from PyQt5.QtWidgets import QApplication
 
 
 def convert_pdf_page_to_base64(
@@ -126,6 +120,12 @@ def save_webpage_as_pdf(url: str, output_path: str) -> str:
     Returns:
         str: The path to the saved PDF file.
     """
+    from PyQt5.QtCore import QMarginsF, QUrl
+    from PyQt5.QtGui import QPageLayout, QPageSize
+    from PyQt5.QtPrintSupport import QPrinter
+    from PyQt5.QtWebEngineWidgets import QWebEngineView
+    from PyQt5.QtWidgets import QApplication
+
     os.environ["QT_QPA_PLATFORM"] = "offscreen"
     if not QApplication.instance():
         app = QApplication(sys.argv)
@@ -219,6 +219,8 @@ def convert_schema_to_dict(schema: Union[Dict, Type]) -> Dict:
     """
     Convert a dict, dataclass, or Pydantic BaseModel into JSON schema.
     """
+    from pydantic import BaseModel
+
     if isinstance(schema, dict):
         return schema
 
@@ -287,6 +289,7 @@ def _python_type_to_schema(tp: Any) -> Dict:
     Convert arbitrary Python typing annotations to JSON schema.
     Handles recursion for dataclasses and Pydantic models.
     """
+    from pydantic import BaseModel
 
     origin = get_origin(tp)
     args = get_args(tp)

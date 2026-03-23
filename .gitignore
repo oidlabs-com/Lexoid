@@ -168,3 +168,6 @@ inputs/
 
 # Others
 .DS_Store
+
+.vscode/
+.github/

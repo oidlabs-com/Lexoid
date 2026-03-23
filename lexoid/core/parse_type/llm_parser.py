@@ -8,18 +8,8 @@ import time
 from functools import wraps
 from typing import Dict, List, Optional, Tuple
 
-import requests
-import torch
-from anthropic import Anthropic
-from google import genai
-from huggingface_hub import InferenceClient
 from loguru import logger
-from mistralai import Mistral
-from openai import OpenAI
-from PIL import Image
 from requests.exceptions import HTTPError
-
-from transformers import AutoModelForVision2Seq, AutoProcessor
 
 from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
@@ -38,10 +28,6 @@ from lexoid.core.utils import (
     get_api_provider_for_model,
     get_file_type,
 )
-
-# Till Together new API is stable
-os.environ.setdefault("TOGETHER_NO_BANNER", "1")
-from together import Together
 
 
 def retry_on_error(func):
@@ -310,6 +296,9 @@ def doctags_to_markdown_and_bboxes(
 
 def parse_with_local_model(path: str, **kwargs) -> Dict:
     # Source: https://huggingface.co/ibm-granite/granite-docling-258M
+    import torch
+    from transformers import AutoModelForVision2Seq, AutoProcessor
+    from PIL import Image
     model_name = kwargs.get("model", DEFAULT_LOCAL_LM)
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -430,6 +419,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
 def parse_image_with_gemini(
     base64_file: Optional[str], mime_type: str = "image/png", **kwargs
 ) -> List[Dict] | str:
+    import requests
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("GOOGLE_API_KEY environment variable is not set")
@@ -559,6 +549,15 @@ def create_response(
     temperature: float = 0.0,
     max_tokens: int = 1024,
 ) -> Dict:
+    from anthropic import Anthropic
+    from huggingface_hub import InferenceClient
+    from mistralai import Mistral
+    from openai import OpenAI
+
+    # Till Together new API is stable
+    os.environ.setdefault("TOGETHER_NO_BANNER", "1")
+    from together import Together
+
     # Initialize appropriate client
     clients = {
         "openai": lambda: OpenAI(),
@@ -788,6 +787,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
 
 
 def parse_audio_with_gemini(path: str, **kwargs) -> Dict:
+    from google import genai
     client = genai.Client()
     audio_file = client.files.upload(file=path)
     system_prompt = kwargs.get("system_prompt", None)
