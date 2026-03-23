@@ -222,3 +222,14 @@
 
 ### Fixed
 * STATIC_PARSE for images
+
+## [0.1.20]
+
+### Added
+* Docker example for installation
+* Schema parsing improvements:
+  - Support pydantic BaseModel
+  - Support parsing the entire doc and filling a single instance of the schema (as opposed to filling one or more schemas per page)
+
+### Changed
+* Updated benchmark with Gemini 3 and GPT 5.2
