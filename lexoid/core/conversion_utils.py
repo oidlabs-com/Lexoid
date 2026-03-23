@@ -227,7 +227,7 @@ def convert_schema_to_dict(schema: Union[Dict, Type]) -> Dict:
     if dataclasses.is_dataclass(schema):
         return _dataclass_to_json_schema(schema)
 
-    if BaseModel and isinstance(schema, type) and issubclass(schema, BaseModel):
+    if isinstance(schema, type) and issubclass(schema, BaseModel):
         return _pydantic_to_json_schema(schema)
 
     raise TypeError("Schema must be dict, dataclass, or Pydantic BaseModel")
@@ -330,7 +330,7 @@ def _python_type_to_schema(tp: Any) -> Dict:
         return _dataclass_to_json_schema(tp)
 
     # Nested Pydantic model
-    if BaseModel and isinstance(tp, type) and issubclass(tp, BaseModel):
+    if isinstance(tp, type) and issubclass(tp, BaseModel):
         return _pydantic_to_json_schema(tp)
 
     # Fallback
