@@ -1,9 +1,9 @@
 import asyncio
+import hashlib
 import mimetypes
 import os
 import re
 from collections import defaultdict, deque
-from hashlib import md5
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -13,12 +13,11 @@ import pikepdf
 import requests
 from bs4 import BeautifulSoup
 from Levenshtein import distance
+from lexoid.core.llm_selector import DocumentRankedLLMSelector
 from loguru import logger
 from markdown import markdown
 from markdownify import markdownify as md
 from matplotlib import pyplot as plt
-
-from lexoid.core.llm_selector import DocumentRankedLLMSelector
 
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 DEFAULT_LLM = os.getenv("DEFAULT_LLM", "gemini-2.5-flash")
@@ -375,7 +374,7 @@ def read_html_content(url: str) -> Dict:
 
     soup = get_webpage_soup(url)
     title = soup.title.string.strip() if soup.title else "No title"
-    url_hash = md5(url.encode("utf-8")).hexdigest()[:8]
+    url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:8]
     full_title = f"{title} - {url_hash}"
     return html_to_markdown(str(soup), title=full_title, url=url)
 
