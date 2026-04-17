@@ -485,12 +485,19 @@ async def test_audio_parse():
 
 
 @pytest.mark.asyncio
-async def test_ollama_parse_integration():
+@pytest.mark.parametrize(
+    "input_file,expected_keywords",
+    [
+        ("examples/inputs/costco_bill.jpg", ["costco"]),
+        ("examples/inputs/test_1.pdf", ["Blind", "Low Vision", "Results"]),
+    ],
+)
+async def test_ollama_parse_integration(input_file: str, expected_keywords: list):
     if not os.getenv("RUN_OLLAMA_TESTS"):
         pytest.skip("RUN_OLLAMA_TESTS is not enabled")
 
     result = parse(
-        "examples/inputs/costco_bill.jpg",
+        input_file,
         parser_type="LLM_PARSE",
         api_provider="ollama",
         model="gemma4:latest",
@@ -499,4 +506,5 @@ async def test_ollama_parse_integration():
     assert isinstance(result["raw"], str)
     logger.info(f"Ollama parse result: {result['raw'][:100]}")
     assert result["raw"].strip()
-    assert "costco" in result["raw"].lower()
+    for keyword in expected_keywords:
+        assert keyword.lower() in result["raw"].lower()
