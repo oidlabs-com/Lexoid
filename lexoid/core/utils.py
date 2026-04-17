@@ -22,6 +22,8 @@ from matplotlib import pyplot as plt
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 DEFAULT_LLM = os.getenv("DEFAULT_LLM", "gemini-2.5-flash")
 DEFAULT_LOCAL_LM = os.getenv("DEFAULT_LOCAL_LM", "ds4sd/SmolDocling-256M-preview")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:3080")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 DEFAULT_STATIC_FRAMEWORK = os.getenv("DEFAULT_STATIC_FRAMEWORK", "pdfplumber")
 
 
