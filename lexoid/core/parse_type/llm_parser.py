@@ -658,7 +658,6 @@ def create_response(
     if api == "gemini":
         if image_url:
             image_url = strip_data_url_prefix(image_url)
-        prompt = build_ollama_prompt(system_prompt, user_prompt)
         response = parse_image_with_gemini(
             base64_file=image_url,
             model=model,
@@ -672,10 +671,10 @@ def create_response(
         }
 
     if api == "ollama":
-        prompt = build_ollama_prompt(system_prompt, user_prompt)
+        _instructions = build_ollama_prompt(system_prompt, user_prompt)
         return create_ollama_response(
             model=model,
-            prompt=prompt,
+            prompt=_instructions,
             image_url=image_url,
             temperature=temperature,
             max_tokens=max_tokens,
