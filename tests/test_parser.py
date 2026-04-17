@@ -6,9 +6,8 @@ import os
 import pytest
 from benchmark_utils import calculate_similarities
 from dotenv import load_dotenv
-from loguru import logger
-
 from lexoid.api import parse, parse_with_schema
+from loguru import logger
 
 load_dotenv()
 output_dir = "tests/outputs"
@@ -483,3 +482,21 @@ async def test_audio_parse():
     path = "examples/inputs/audio/harvard.wav"
     parsed_md = parse(path, parser_type="LLM_PARSE", model="gemini-2.5-flash")["raw"]
     assert "zestful food is the hot cross bun" in parsed_md
+
+
+@pytest.mark.asyncio
+async def test_ollama_parse_integration():
+    if not os.getenv("RUN_OLLAMA_TESTS"):
+        pytest.skip("RUN_OLLAMA_TESTS is not enabled")
+
+    result = parse(
+        "examples/inputs/costco_bill.jpg",
+        parser_type="LLM_PARSE",
+        api_provider="ollama",
+        model="gemma4:latest",
+        max_processes=1,
+    )
+    assert isinstance(result["raw"], str)
+    logger.info(f"Ollama parse result: {result['raw'][:100]}")
+    assert result["raw"].strip()
+    assert "costco" in result["raw"].lower()
