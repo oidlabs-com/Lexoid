@@ -42,6 +42,12 @@ ollama pull gemma4
 export OLLAMA_BASE_URL=127.0.0.1:11434
 ollama list
 ollama serve
+
+# docker
+Reference: https://docs.ollama.com/docker#run-model-locally
+CPU example (will most likely be slower; remember to adjust `OLLAMA_TIMEOUT` as needed)
+- docker run -d -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_BASE_URL=0.0.0.0 -e OLLAMA_TIMEOUT=240 --name ollama ollama/ollama
+- docker exec -it ollama ollama pull gemma4:latest
 ```
 
 Optionally, to use `Playwright` for retrieving web content (instead of the `requests` library):

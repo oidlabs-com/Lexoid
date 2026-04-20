@@ -502,6 +502,7 @@ async def test_ollama_parse_integration(input_file: str, expected_keywords: list
         api_provider="ollama",
         model="gemma4:latest",
         max_processes=1,
+        max_image_dimension=1024,
     )
     assert isinstance(result["raw"], str)
     logger.info(f"Ollama parse result: {result['raw'][:100]}")
