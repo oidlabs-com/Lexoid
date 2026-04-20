@@ -91,7 +91,7 @@ async def test_static_parse_images():
 )
 async def test_url_detection_auto_routing(sample):
     patterns = ["http", "https", "www"]
-    model_type = "gemini-1.5-pro"
+    model_type = "gemini-2.5-pro"
     config = {"parser_type": "AUTO", "model": model_type, "verbose": True}
     result = parse(sample, **config)["raw"]
     assert isinstance(result, str)

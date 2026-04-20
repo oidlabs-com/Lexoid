@@ -8,6 +8,7 @@ import time
 from functools import wraps
 from typing import Dict, List, Optional, Tuple
 
+import requests
 from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
     convert_image_to_pdf,
@@ -83,7 +84,7 @@ def retry_on_error(func):
 
 
 @retry_on_error
-def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
+def parse_llm_doc(path: str, **kwargs) -> Dict:
     mime_type = get_file_type(path)
     if not ("image" in mime_type or "pdf" in mime_type or "audio" in mime_type):
         raise ValueError(
@@ -465,7 +466,7 @@ def parse_with_local_model(path: str, **kwargs) -> Dict:
     }
 
 
-def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
+def parse_with_gemini(path: str, **kwargs) -> Dict:
     # Check if the file is an image and convert to PDF if necessary
     mime_type, _ = mimetypes.guess_type(path)
 
@@ -488,8 +489,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
 
 def parse_image_with_gemini(
     base64_file: Optional[str], mime_type: str = "image/png", **kwargs
-) -> List[Dict] | str:
-    import requests
+) -> Dict:
 
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
