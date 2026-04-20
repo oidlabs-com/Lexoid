@@ -151,8 +151,8 @@ def create_ollama_response(
     try:
         response = requests.post(url, json=payload, timeout=OLLAMA_TIMEOUT)
     except requests.RequestException as exc:
-        raise HTTPError(
-            f"Ollama request failed for model '{model}' at {url}: {exc}"
+        raise requests.RequestException(
+            f"Ollama transport error for model '{model}' at {url}: {exc}"
         ) from exc
 
     if not response.ok:
