@@ -39,7 +39,7 @@ For local inference with Ollama, no API key is required. Install Ollama, pull th
 
 ```bash
 ollama pull gemma4
-export OLLAMA_HOST=127.0.0.1:11434
+export OLLAMA_BASE_URL=127.0.0.1:11434
 ollama list
 ollama serve
 ```
