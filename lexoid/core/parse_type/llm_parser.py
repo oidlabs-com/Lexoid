@@ -459,7 +459,6 @@ def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
         "url": kwargs.get("url", ""),
         "parent_title": kwargs.get("parent_title", ""),
         "recursive_docs": [],
-        "token_usage": {"input": 0, "output": 0, "total": 0},
     }
 
 
