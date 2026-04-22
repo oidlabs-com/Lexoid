@@ -496,6 +496,8 @@ def get_api_provider_for_model(model: str) -> str:
         return "mistral"
     if "docling" in model.lower():
         return "local"
+    if model.lower().startswith("paddlepaddle/paddleocr-vl"):
+        return "local"
     raise ValueError(f"Unsupported model: {model}")
 
 
