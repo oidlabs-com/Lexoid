@@ -166,6 +166,8 @@ def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     # Convert the document to PDF
     # docx2pdf is not supported in linux. Use LibreOffice in linux instead.
     # May need to install LibreOffice if not already installed.
+    input_path = os.path.abspath(input_path)
+    temp_dir = os.path.abspath(temp_dir)
     if "linux" in sys.platform.lower():
         subprocess.run(
             [
