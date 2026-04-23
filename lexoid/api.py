@@ -154,10 +154,15 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
         logger.debug("Using LLM parser")
         result = parse_llm_doc(path, **kwargs)
 
+    if "error" in result:
+        raise RuntimeError(result["error"])
+
     result["parser_used"] = parser_type
 
     return_bboxes = kwargs.get("return_bboxes", False)
-    has_bboxes = bool(result["segments"][0].get("bboxes"))
+    has_bboxes = False
+    if result.get("segments"):
+        has_bboxes = bool(result["segments"][0].get("bboxes"))
     bbox_framework = kwargs.get("bbox_framework", None)
     framework = kwargs.get("framework", DEFAULT_STATIC_FRAMEWORK)
     bbox_framework_different = bbox_framework and bbox_framework != framework
