@@ -225,16 +225,7 @@ async def test_parsing_arxiv_url():
 
 
 @pytest.mark.asyncio
-@patch("lexoid.api.parse_llm_doc")
-async def test_parsing_docx_type(mock_parse_llm_doc):
-    mock_parse_llm_doc.return_value = {
-        "raw": "Mocked LLM content",
-        "segments": [
-            {"content": "Mocked page 1", "metadata": {"page": 1}},
-            {"content": "Mocked page 2", "metadata": {"page": 2}}
-        ],
-        "token_usage": {"input": 10, "output": 10, "llm_page_count": 2}
-    }
+async def test_parsing_docx_type():
     sample = "examples/inputs/sample.docx"
     parser_type = "STATIC_PARSE"
     results = parse(sample, parser_type)["segments"]

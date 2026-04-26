@@ -3,6 +3,7 @@ import dataclasses
 import io
 import mimetypes
 import os
+import shutil
 import subprocess
 import sys
 from typing import Any, Dict, List, Tuple, Type, Union, get_args, get_origin
@@ -158,34 +159,72 @@ def save_webpage_as_pdf(url: str, output_path: str) -> str:
     return output_path
 
 
+def _is_valid_pdf(path: str) -> bool:
+    """Return True when the PDF exists and is non-empty."""
+    return os.path.exists(path) and os.path.getsize(path) > 0
+
+
+def _convert_with_soffice(input_path: str, out_dir: str) -> None:
+    """Convert DOC/DOCX to PDF using LibreOffice-compatible binaries."""
+    soffice_bin = shutil.which("soffice") or shutil.which("lowriter")
+    if not soffice_bin:
+        raise RuntimeError("LibreOffice binary not found (soffice/lowriter).")
+
+    subprocess.run(
+        [
+            soffice_bin,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            out_dir,
+            input_path,
+        ],
+        check=True,
+    )
+
+
 def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     input_path = os.path.abspath(input_path)
     temp_dir = os.path.abspath(temp_dir)
+    os.makedirs(temp_dir, exist_ok=True)
+    doc_name = os.path.basename(input_path)
+
     temp_path = os.path.join(
         temp_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
     )
+    logger.info(f"DOCX->PDF conversion started for {doc_name}")
 
-    # Convert the document to PDF
-    # docx2pdf is not supported in linux. Use LibreOffice in linux instead.
-    # May need to install LibreOffice if not already installed.
-
+    # Linux: use LibreOffice path only.
     if "linux" in sys.platform.lower():
-        subprocess.run(
-            [
-                "lowriter",
-                "--headless",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                temp_dir,
-                input_path,
-            ],
-            check=True,
-        )
-    else:
-        docx2pdf.convert(input_path, temp_path)
+        _convert_with_soffice(input_path, temp_dir)
+        if not _is_valid_pdf(temp_path):
+            raise RuntimeError(
+                f"LibreOffice conversion finished but PDF is missing/empty: {temp_path}"
+            )
+        return temp_path
 
-    # Return the path of the converted PDF
+    # Non-Linux (macOS/Windows): try docx2pdf first, then fallback to soffice.
+    try:
+        logger.debug(f"Converting document {doc_name} to PDF using docx2pdf...")
+        docx2pdf.convert(input_path, temp_path)
+    except Exception as docx_err:
+        logger.warning(
+            f"docx2pdf failed for {doc_name}, will fallback to soffice: {docx_err}"
+        )
+
+    if _is_valid_pdf(temp_path):
+        return temp_path
+
+    logger.debug("Falling back to LibreOffice conversion via soffice/lowriter...")
+    _convert_with_soffice(input_path, temp_dir)
+
+    if not _is_valid_pdf(temp_path):
+        raise RuntimeError(
+            "DOCX to PDF conversion failed with both docx2pdf and soffice. "
+            f"Expected output: {temp_path}"
+        )
+
     return temp_path
 
 
@@ -209,6 +248,9 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
         with open(output_path, "wb") as f:
             f.write(img_data)
     elif "word" in file_type:
+        logger.debug(
+            f"Converting document {os.path.basename(input_path)} to PDF..."
+        )
         return convert_doc_to_pdf(input_path, os.path.dirname(output_path))
     else:
         # Assume it's already a PDF, just copy it
