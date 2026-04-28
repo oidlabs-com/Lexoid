@@ -473,7 +473,6 @@ def parse_with_docling(path: str, **kwargs) -> Dict:
     }
 
 
-<<<<<<< HEAD
 def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
     # Source: https://huggingface.co/PaddlePaddle/PaddleOCR-VL
     try:
@@ -534,9 +533,6 @@ def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
 
 
 def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
-=======
-def parse_with_gemini(path: str, **kwargs) -> Dict:
->>>>>>> main
     # Check if the file is an image and convert to PDF if necessary
     mime_type, _ = mimetypes.guess_type(path)
 
