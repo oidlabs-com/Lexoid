@@ -365,6 +365,13 @@ def doctags_to_markdown_and_bboxes(
 
 
 def parse_with_local_model(path: str, **kwargs) -> Dict:
+    model_name = kwargs.get("model", DEFAULT_LOCAL_LM)
+    if model_name.lower().startswith("paddlepaddle/paddleocr-vl"):
+        return parse_with_paddleocr_vl(path, **kwargs)
+    return parse_with_docling(path, **kwargs)
+
+
+def parse_with_docling(path: str, **kwargs) -> Dict:
     # Source: https://huggingface.co/ibm-granite/granite-docling-258M
     import torch
     from PIL import Image
@@ -466,7 +473,66 @@ def parse_with_local_model(path: str, **kwargs) -> Dict:
     }
 
 
-def parse_with_gemini(path: str, **kwargs) -> Dict:
+def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
+    # Source: https://huggingface.co/PaddlePaddle/PaddleOCR-VL
+    try:
+        from paddleocr import PaddleOCRVL
+    except ImportError as e:
+        raise ImportError(
+            "PaddleOCR-VL requires paddleocr>=3.3.0. "
+            "Upgrade with: pip install -U 'paddleocr[doc-parser]'"
+        ) from e
+
+    model_name = kwargs.get("model", "")
+    default_pipeline_version = (
+        "v1.5" if model_name.lower().endswith("paddleocr-vl-1.5") else "v1"
+    )
+    pipeline_kwargs = {
+        "pipeline_version": kwargs.get("pipeline_version", default_pipeline_version),
+        "use_doc_orientation_classify": False,
+        "use_doc_unwarping": False,
+    }
+    try:
+        pipeline = PaddleOCRVL(**pipeline_kwargs)
+    except RuntimeError as e:
+        raise RuntimeError(
+            "Failed to initialize PaddleOCRVL pipeline. "
+            "Install PaddleOCR with the doc-parser extras: "
+            "pip install -U 'paddleocr[doc-parser]'. "
+            "See https://paddlepaddle.github.io/PaddleOCR/main/version3.x/pipeline_usage/PaddleOCR-VL.html"
+        ) from e
+
+    results = pipeline.predict(path)
+
+    start_page = kwargs.get("start", 0)
+    segments: List[Dict] = []
+    page_markdowns: List[str] = []
+
+    for idx, res in enumerate(results):
+        md = res.markdown
+        if isinstance(md, dict):
+            page_md = md.get("markdown_texts") or md.get("text") or ""
+        else:
+            page_md = str(md)
+        page_markdowns.append(page_md)
+        segments.append(
+            {
+                "metadata": {"page": start_page + idx + 1},
+                "content": page_md,
+            }
+        )
+
+    return {
+        "raw": "\n\n---\n\n".join(page_markdowns),
+        "segments": segments,
+        "title": kwargs.get("title", ""),
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+    }
+
+
+def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
     # Check if the file is an image and convert to PDF if necessary
     mime_type, _ = mimetypes.guess_type(path)
 
