@@ -1,7 +1,7 @@
 <div align="center">
-  
+
 <img src="assets/logo.png">
-  
+
 </div>
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/oidlabs-com/Lexoid/blob/main/examples/example_notebook_colab.ipynb)
@@ -35,6 +35,21 @@ OPENAI_API_KEY=""
 GOOGLE_API_KEY=""
 ```
 
+For local inference with Ollama, no API key is required. Install Ollama, pull the target model, and keep the local server running:
+
+```bash
+ollama pull gemma4
+export OLLAMA_BASE_URL=127.0.0.1:11434
+ollama list
+ollama serve
+
+# docker
+Reference: https://docs.ollama.com/docker#run-model-locally
+CPU example (will most likely be slower; remember to adjust `OLLAMA_TIMEOUT` as needed)
+- docker run -d -v ollama:/root/.ollama -p 11434:11434 -e OLLAMA_BASE_URL=0.0.0.0 -e OLLAMA_TIMEOUT=240 --name ollama ollama/ollama
+- docker exec -it ollama ollama pull gemma4:latest
+```
+
 Optionally, to use `Playwright` for retrieving web content (instead of the `requests` library):
 
 ```
@@ -43,9 +58,9 @@ playwright install --with-deps --only-shell chromium
 
 ### Building `.whl` from source
 
->[!NOTE]
->Installing the package from within the virtual environment could cause unexpected behavior, 
->as Lexoid creates and activates its own environment in order to build the wheel.
+> [!NOTE]
+> Installing the package from within the virtual environment could cause unexpected behavior,
+> as Lexoid creates and activates its own environment in order to build the wheel.
 
 ```
 make build
@@ -103,12 +118,38 @@ print(parsed_md)
 - \*\*kwargs: Additional arguments for the parser.
 
 ## Supported API Providers
-* Google
-* OpenAI
-* Hugging Face
-* Together AI
-* OpenRouter
-* Fireworks
+
+- Google
+- OpenAI
+- Hugging Face
+- Together AI
+- OpenRouter
+- Fireworks
+- Ollama
+
+## Ollama Local Parsing
+
+Lexoid supports local `LLM_PARSE` inference through Ollama. The initial recommended model is `gemma4:latest`.
+
+```python
+from lexoid.api import parse
+
+result = parse(
+	"path/to/document.pdf",
+	parser_type="LLM_PARSE",
+	api_provider="ollama",
+	model="gemma4:latest",
+	max_processes=1,
+)
+
+print(result["raw"])
+```
+
+Notes:
+
+- Ollama uses the default local endpoint `http://localhost:11434` unless `OLLAMA_BASE_URL` is set.
+- Lexoid forces `max_processes=1` for Ollama-backed parsing to avoid local multiprocess contention.
+- `AUTO` routing does not select Ollama in this first version; choose it explicitly with `api_provider="ollama"`.
 
 ## Benchmark
 
@@ -116,35 +157,36 @@ Results aggregated across 14 documents.
 
 _Note:_ Benchmarks are currently done in the zero-shot setting.
 
-| Rank | Model | SequenceMatcher Similarity | TFIDF Similarity | Time (s) | Cost ($) |
-| --- | --- | --- | --- | --- | --- |
-| 1 | gemini-3-pro-preview | 0.917 (±0.127) | 0.943 (±0.159) | 46.92 | 0.06288 |
-| 2 | AUTO (with auto-selected model) | 0.899 (±0.131) | 0.960 (±0.066) | 21.17 | 0.00066 |
-| 3 | AUTO | 0.895 (±0.112) | 0.973 (±0.046) | 9.29 | 0.00063 |
-| 4 | gpt-5.2 | 0.890 (±0.193) | 0.975 (±0.036) | 33.32 | 0.03959 |
-| 5 | gemini-2.5-flash | 0.886 (±0.164) | 0.986 (±0.027) | 52.55 | 0.01226 |
-| 6 | mistral-ocr-latest | 0.882 (±0.106) | 0.932 (±0.091) | 5.75 | 0.00121 |
-| 7 | gemini-2.5-pro | 0.876 (±0.195) | 0.976 (±0.049) | 22.65 | 0.02408 |
-| 8 | gemini-2.0-flash | 0.875 (±0.148) | 0.977 (±0.037) | 11.96 | 0.00079 |
-| 9 | claude-3-5-sonnet-20241022 | 0.858 (±0.184) | 0.930 (±0.098) | 17.32 | 0.01804 |
-| 10 | gemini-1.5-flash | 0.842 (±0.214) | 0.969 (±0.037) | 15.58 | 0.00043 |
-| 11 | gpt-5-mini | 0.819 (±0.201) | 0.917 (±0.104) | 52.84 | 0.00811 |
-| 12 | gpt-5 | 0.807 (±0.215) | 0.919 (±0.088) | 98.12 | 0.05505 |
-| 13 | claude-sonnet-4-20250514 | 0.801 (±0.188) | 0.905 (±0.136) | 22.02 | 0.02056 |
-| 14 | claude-opus-4-20250514 | 0.789 (±0.220) | 0.886 (±0.148) | 29.55 | 0.09513 |
-| 15 | accounts/fireworks/models/llama4-maverick-instruct-basic | 0.772 (±0.203) | 0.930 (±0.117) | 16.02 | 0.00147 |
-| 16 | gemini-1.5-pro | 0.767 (±0.309) | 0.865 (±0.230) | 24.77 | 0.01139 |
-| 17 | gemini-3-flash-preview | 0.766 (±0.293) | 0.858 (±0.210) | 39.38 | 0.00969 |
-| 18 | gpt-4.1-mini | 0.754 (±0.249) | 0.803 (±0.193) | 23.28 | 0.00347 |
-| 19 | accounts/fireworks/models/llama4-scout-instruct-basic | 0.754 (±0.243) | 0.942 (±0.063) | 13.36 | 0.00087 |
-| 20 | gpt-4o | 0.752 (±0.269) | 0.896 (±0.123) | 28.87 | 0.01469 |
-| 21 | gpt-4o-mini | 0.728 (±0.241) | 0.850 (±0.128) | 18.96 | 0.00609 |
-| 22 | claude-3-7-sonnet-20250219 | 0.646 (±0.397) | 0.758 (±0.297) | 57.96 | 0.01730 |
-| 23 | gpt-4.1 | 0.637 (±0.301) | 0.787 (±0.185) | 35.37 | 0.01498 |
-| 24 | google/gemma-3-27b-it | 0.604 (±0.342) | 0.788 (±0.297) | 23.16 | 0.00020 |
-| 25 | ds4sd/SmolDocling-256M-preview | 0.603 (±0.292) | 0.705 (±0.262) | 507.74 | 0.00000 |
-| 26 | microsoft/phi-4-multimodal-instruct | 0.589 (±0.273) | 0.820 (±0.197) | 14.00 | 0.00045 |
-| 27 | qwen/qwen-2.5-vl-7b-instruct | 0.498 (±0.378) | 0.630 (±0.445) | 14.73 | 0.00056 |
+| Rank | Model                                                    | SequenceMatcher Similarity | TFIDF Similarity | Time (s) | Cost ($) |
+| ---- | -------------------------------------------------------- | -------------------------- | ---------------- | -------- | -------- |
+| 1    | gemini-3-pro-preview                                     | 0.917 (±0.127)             | 0.943 (±0.159)   | 46.92    | 0.06288  |
+| 2    | AUTO (with auto-selected model)                          | 0.899 (±0.131)             | 0.960 (±0.066)   | 21.17    | 0.00066  |
+| 3    | AUTO                                                     | 0.895 (±0.112)             | 0.973 (±0.046)   | 9.29     | 0.00063  |
+| 4    | gpt-5.2                                                  | 0.890 (±0.193)             | 0.975 (±0.036)   | 33.32    | 0.03959  |
+| 5    | gemini-2.5-flash                                         | 0.886 (±0.164)             | 0.986 (±0.027)   | 52.55    | 0.01226  |
+| 6    | mistral-ocr-latest                                       | 0.882 (±0.106)             | 0.932 (±0.091)   | 5.75     | 0.00121  |
+| 7    | gemini-2.5-pro                                           | 0.876 (±0.195)             | 0.976 (±0.049)   | 22.65    | 0.02408  |
+| 8    | gemini-2.0-flash                                         | 0.875 (±0.148)             | 0.977 (±0.037)   | 11.96    | 0.00079  |
+| 9    | claude-3-5-sonnet-20241022                               | 0.858 (±0.184)             | 0.930 (±0.098)   | 17.32    | 0.01804  |
+| 10   | gemini-1.5-flash                                         | 0.842 (±0.214)             | 0.969 (±0.037)   | 15.58    | 0.00043  |
+| 11   | gpt-5-mini                                               | 0.819 (±0.201)             | 0.917 (±0.104)   | 52.84    | 0.00811  |
+| 12   | gpt-5                                                    | 0.807 (±0.215)             | 0.919 (±0.088)   | 98.12    | 0.05505  |
+| 13   | claude-sonnet-4-20250514                                 | 0.801 (±0.188)             | 0.905 (±0.136)   | 22.02    | 0.02056  |
+| 14   | claude-opus-4-20250514                                   | 0.789 (±0.220)             | 0.886 (±0.148)   | 29.55    | 0.09513  |
+| 15   | accounts/fireworks/models/llama4-maverick-instruct-basic | 0.772 (±0.203)             | 0.930 (±0.117)   | 16.02    | 0.00147  |
+| 16   | gemini-1.5-pro                                           | 0.767 (±0.309)             | 0.865 (±0.230)   | 24.77    | 0.01139  |
+| 17   | gemini-3-flash-preview                                   | 0.766 (±0.293)             | 0.858 (±0.210)   | 39.38    | 0.00969  |
+| 18   | gpt-4.1-mini                                             | 0.754 (±0.249)             | 0.803 (±0.193)   | 23.28    | 0.00347  |
+| 19   | accounts/fireworks/models/llama4-scout-instruct-basic    | 0.754 (±0.243)             | 0.942 (±0.063)   | 13.36    | 0.00087  |
+| 20   | gpt-4o                                                   | 0.752 (±0.269)             | 0.896 (±0.123)   | 28.87    | 0.01469  |
+| 21   | gpt-4o-mini                                              | 0.728 (±0.241)             | 0.850 (±0.128)   | 18.96    | 0.00609  |
+| 22   | claude-3-7-sonnet-20250219                               | 0.646 (±0.397)             | 0.758 (±0.297)   | 57.96    | 0.01730  |
+| 23   | gpt-4.1                                                  | 0.637 (±0.301)             | 0.787 (±0.185)   | 35.37    | 0.01498  |
+| 24   | google/gemma-3-27b-it                                    | 0.604 (±0.342)             | 0.788 (±0.297)   | 23.16    | 0.00020  |
+| 25   | ds4sd/SmolDocling-256M-preview                           | 0.603 (±0.292)             | 0.705 (±0.262)   | 507.74   | 0.00000  |
+| 26   | microsoft/phi-4-multimodal-instruct                      | 0.589 (±0.273)             | 0.820 (±0.197)   | 14.00    | 0.00045  |
+| 27   | qwen/qwen-2.5-vl-7b-instruct                             | 0.498 (±0.378)             | 0.630 (±0.445)   | 14.73    | 0.00056  |
 
 ## Citation
+
 If you use Lexoid in production or publications, please cite accordingly and acknowledge usage. We appreciate the support 🙏

@@ -8,9 +8,7 @@ import time
 from functools import wraps
 from typing import Dict, List, Optional, Tuple
 
-from loguru import logger
-from requests.exceptions import HTTPError
-
+import requests
 from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
     convert_image_to_pdf,
@@ -25,9 +23,13 @@ from lexoid.core.prompt_templates import (
 from lexoid.core.utils import (
     DEFAULT_LLM,
     DEFAULT_LOCAL_LM,
+    OLLAMA_BASE_URL,
+    OLLAMA_TIMEOUT,
     get_api_provider_for_model,
     get_file_type,
 )
+from loguru import logger
+from requests.exceptions import HTTPError
 
 
 def retry_on_error(func):
@@ -82,7 +84,7 @@ def retry_on_error(func):
 
 
 @retry_on_error
-def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
+def parse_llm_doc(path: str, **kwargs) -> Dict:
     mime_type = get_file_type(path)
     if not ("image" in mime_type or "pdf" in mime_type or "audio" in mime_type):
         raise ValueError(
@@ -109,6 +111,74 @@ def parse_llm_doc(path: str, **kwargs) -> List[Dict] | str:
     elif api_provider == "local":
         return parse_with_local_model(path, **kwargs)
     return parse_with_api(path, api=api_provider, **kwargs)
+
+
+def strip_data_url_prefix(image_url: str) -> str:
+    if ";base64," not in image_url:
+        return image_url
+    return image_url.split(";base64,", 1)[1]
+
+
+def build_ollama_prompt(
+    system_prompt: Optional[str], user_prompt: Optional[str]
+) -> str:
+    prompt_parts = [part for part in [system_prompt, user_prompt] if part]
+    return "\n\n".join(prompt_parts)
+
+
+def create_ollama_response(
+    model: str,
+    prompt: str,
+    image_url: Optional[str] = None,
+    temperature: float = 0.0,
+    max_tokens: int = 1024,
+) -> Dict:
+    import requests
+
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        },
+    }
+    if image_url:
+        payload["images"] = [strip_data_url_prefix(image_url)]
+
+    url = f"{OLLAMA_BASE_URL.rstrip('/')}/api/generate"
+    try:
+        response = requests.post(url, json=payload, timeout=OLLAMA_TIMEOUT)
+    except requests.RequestException as exc:
+        raise requests.RequestException(
+            f"Ollama transport error for model '{model}' at {url}: {exc}"
+        ) from exc
+
+    if not response.ok:
+        error_detail = ""
+        try:
+            error_detail = response.json().get("error", "")
+        except ValueError:
+            error_detail = response.text.strip()
+        detail_suffix = f": {error_detail}" if error_detail else ""
+        raise HTTPError(
+            f"Ollama request failed with status {response.status_code}{detail_suffix}"
+        )
+
+    result = response.json()
+    prompt_eval_count = result.get("prompt_eval_count", 0)
+    eval_count = result.get("eval_count", 0)
+    raw_response = result.get("response", "")
+    logger.debug(f"Ollama raw response ({eval_count} tokens): {raw_response[:300]!r}")
+    return {
+        "response": raw_response,
+        "usage": {
+            "input_tokens": prompt_eval_count,
+            "output_tokens": eval_count,
+            "total_tokens": prompt_eval_count + eval_count,
+        },
+    }
 
 
 def doctags_to_markdown_and_bboxes(
@@ -297,8 +367,8 @@ def doctags_to_markdown_and_bboxes(
 def parse_with_local_model(path: str, **kwargs) -> Dict:
     # Source: https://huggingface.co/ibm-granite/granite-docling-258M
     import torch
-    from transformers import AutoModelForVision2Seq, AutoProcessor
     from PIL import Image
+    from transformers import AutoModelForVision2Seq, AutoProcessor
 
     model_name = kwargs.get("model", DEFAULT_LOCAL_LM)
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -396,7 +466,7 @@ def parse_with_local_model(path: str, **kwargs) -> Dict:
     }
 
 
-def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
+def parse_with_gemini(path: str, **kwargs) -> Dict:
     # Check if the file is an image and convert to PDF if necessary
     mime_type, _ = mimetypes.guess_type(path)
 
@@ -419,8 +489,7 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
 
 def parse_image_with_gemini(
     base64_file: Optional[str], mime_type: str = "image/png", **kwargs
-) -> List[Dict] | str:
-    import requests
+) -> Dict:
 
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
@@ -582,15 +651,13 @@ def create_response(
             api_key=os.environ["ANTHROPIC_API_KEY"],
         ),
         "gemini": lambda: None,  # Gemini is handled separately
+        "ollama": lambda: None,
     }
     assert api in clients, f"Unsupported API: {api}"
 
     if api == "gemini":
-        if image_url and ";base64," in image_url:
-            image_url = image_url.split(";base64,")[1]
-        prompt = system_prompt
-        if user_prompt:
-            prompt += "\n\n" + user_prompt
+        if image_url:
+            image_url = strip_data_url_prefix(image_url)
         response = parse_image_with_gemini(
             base64_file=image_url,
             model=model,
@@ -602,6 +669,16 @@ def create_response(
             "response": response["raw"],
             "usage": response["token_usage"],
         }
+
+    if api == "ollama":
+        _instructions = build_ollama_prompt(system_prompt, user_prompt)
+        return create_ollama_response(
+            model=model,
+            prompt=_instructions,
+            image_url=image_url,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
 
     client = clients[api]()
 
@@ -689,7 +766,7 @@ def create_response(
     }
 
 
-def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
+def parse_with_api(path: str, api: str, **kwargs) -> Dict:
     """
     Parse documents (PDFs or images) using various vision model APIs.
 
@@ -708,7 +785,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
     # Process each page/image
     all_results = []
     for page_num, image_url in images:
-        if api == "openai":
+        if api in {"openai", "ollama"}:
             system_prompt = kwargs.get(
                 "system_prompt", PARSER_PROMPT.format(custom_instructions="")
             )
@@ -717,6 +794,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             system_prompt = kwargs.get("system_prompt", None)
             user_prompt = kwargs.get("user_prompt", LLAMA_PARSER_PROMPT)
 
+        default_max_tokens = 4096 if api == "ollama" else 1024
         response = create_response(
             api=api,
             model=kwargs["model"],
@@ -724,7 +802,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
             user_prompt=user_prompt,
             image_url=image_url,
             temperature=kwargs.get("temperature", 0.0),
-            max_tokens=kwargs.get("max_tokens", 1024),
+            max_tokens=kwargs.get("max_tokens", default_max_tokens),
         )
 
         # Get completion from selected API
@@ -736,10 +814,12 @@ def parse_with_api(path: str, api: str, **kwargs) -> List[Dict] | str:
 
         # Extract content between output tags if present
         result = page_text
-        if "<output>" in page_text:
-            result = page_text.split("<output>")[-1].strip()
-        if "</output>" in result:
-            result = result.split("</output>")[0].strip()
+        if "<output>" in page_text and "</output>" in page_text:
+            result = page_text.split("<output>", 1)[1].split("</output>", 1)[0].strip()
+        elif "<output>" in page_text:
+            result = page_text.split("<output>", 1)[1].strip()
+        elif "</output>" in page_text:
+            result = page_text.split("</output>", 1)[0].strip()
         all_results.append(
             (
                 page_num,

@@ -2,15 +2,13 @@ import json
 import os
 import re
 import tempfile
+import textwrap
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
 from functools import wraps
 from glob import glob
-import textwrap
 from time import time
 from typing import Dict, List, Optional, Type, Union
-
-from loguru import logger
 
 from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
@@ -45,6 +43,7 @@ from lexoid.core.utils import (
     router,
     split_pdf,
 )
+from loguru import logger
 
 
 class ParserType(Enum):
@@ -251,6 +250,16 @@ def parse(
 
     if type(parser_type) is str:
         parser_type = ParserType[parser_type]
+    if (
+        parser_type == ParserType.LLM_PARSE
+        and kwargs.get("api_provider") == "ollama"
+        and max_processes != 1
+    ):
+        logger.warning(
+            "Ollama local inference does not support Lexoid multiprocess fanout well. "
+            "Forcing max_processes=1."
+        )
+        max_processes = 1
     if (
         path.lower().endswith((".doc", ".docx"))
         and parser_type != ParserType.STATIC_PARSE

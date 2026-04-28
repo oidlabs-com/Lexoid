@@ -33,12 +33,12 @@ parse
    * ``api_cost_mapping`` (Union[dict, str]): Dictionary containing API cost details or the string path to a JSON file containing
      the cost details. Sample file available at ``tests/api_cost_mapping.json``
    * ``router_priority`` (str): What the routing strategy should prioritize. Options are ``"speed"`` and ``"accuracy"``. The router directs a file to either ``"STATIC_PARSE"`` or ``"LLM_PARSE"`` based on its type and the selected priority. If priority is "accuracy", it prefers LLM_PARSE unless the PDF has no images but contains embedded/hidden hyperlinks, in which case it uses ``STATIC_PARSE`` (because LLMs currently fail to parse hidden hyperlinks). If priority is "speed", it uses ``STATIC_PARSE`` for documents without images and ``LLM_PARSE`` for documents with images.
-   * ``api_provider`` (str): The API provider to use for LLM parsing. Options are ``gemini``, ``openai``, ``claude``, ``huggingface``, ``together``, ``openrouter``, and ``fireworks``. This parameter is only relevant when using LLM parsing.
+    * ``api_provider`` (str): The API provider to use for LLM parsing. Options are ``gemini``, ``openai``, ``claude``, ``huggingface``, ``together``, ``openrouter``, ``fireworks``, and ``ollama``. This parameter is only relevant when using LLM parsing. For Ollama, use an explicit provider selection such as ``api_provider="ollama"`` with a local model like ``gemma4:latest``.
    * ``return_bboxes`` (bool): Whether to return bounding box information for each text segment. Default is ``False``.
 
    Return value format:
    A dictionary containing a subset or all of the following keys:
-   
+
    *  ``raw``: Full markdown content as string
    * ``segments``: List of dictionaries with metadata and content of each segment. For PDFs, a segment denotes a page. For webpages, a segment denotes a section (a heading and its content).
    * ``title``: Title of the document
@@ -58,7 +58,7 @@ parse_with_schema
 
    :param path: Path to the PDF file.
    :param schema: JSON schema to which the parsed output should conform.
-   :param api: LLM API provider to use (``"gemini"``, ``"openai"``, ``"claude"``, ``"huggingface"``, ``"together"``, ``"openrouter"``, or ``"fireworks"``).
+    :param api: LLM API provider to use (``"gemini"``, ``"openai"``, ``"claude"``, ``"huggingface"``, ``"together"``, ``"openrouter"``, ``"fireworks"``, or ``"ollama"``).
    :param model: LLM model name.
    :param kwargs: Additional keyword arguments passed to the LLM (e.g., ``temperature``, ``max_tokens``).
    :return: A list where each element represents a page, which in turn contains a list of dictionaries conforming to the provided schema.
@@ -105,6 +105,15 @@ LLM-Based Parsing
     # Parse using Gemini 1.5 Pro
     result = parse("document.pdf", parser_type="LLM_PARSE", model="gemini-1.5-pro")
 
+    # Parse using a local Ollama model
+    result = parse(
+        "document.pdf",
+        parser_type="LLM_PARSE",
+        api_provider="ollama",
+        model="gemma4:latest",
+        max_processes=1,
+    )
+
 
 Static Parsing
 ^^^^^^^^^^^^^^
@@ -137,7 +146,7 @@ Parse with Schema
     ]
 
     pdf_path = "inputs/test_1.pdf"
-    result = parse_with_schema(path=pdf_path, schema=sample_schema, model="gpt-4o") 
+    result = parse_with_schema(path=pdf_path, schema=sample_schema, model="gpt-4o")
 
 Web Content
 ^^^^^^^^^^^
