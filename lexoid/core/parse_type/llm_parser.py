@@ -23,6 +23,7 @@ from lexoid.core.prompt_templates import (
 from lexoid.core.utils import (
     DEFAULT_LLM,
     DEFAULT_LOCAL_LM,
+    DEFAULT_MAX_IMAGE_DIMENSION,
     OLLAMA_BASE_URL,
     OLLAMA_TIMEOUT,
     get_api_provider_for_model,
@@ -386,7 +387,7 @@ def parse_with_docling(path: str, **kwargs) -> Dict:
         torch_dtype=torch.bfloat16 if device == "cuda" else torch.float32,
     ).to(device)
 
-    max_dimension = kwargs.get("max_image_dimension", 1500)
+    max_dimension = kwargs.get("max_image_dimension", DEFAULT_MAX_IMAGE_DIMENSION)
     images = convert_doc_to_base64_images(path, max_dimension=max_dimension)
     proc_images = [
         Image.open(io.BytesIO(base64.b64decode(image_b64.split(",")[1]))).convert("RGB")
@@ -473,8 +474,10 @@ def parse_with_docling(path: str, **kwargs) -> Dict:
     }
 
 
-def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
-    # Source: https://huggingface.co/PaddlePaddle/PaddleOCR-VL
+_PADDLEOCR_VL_PIPELINE_CACHE: Dict[Tuple, object] = {}
+
+
+def _get_paddleocr_vl_pipeline(pipeline_kwargs: Dict):
     try:
         from paddleocr import PaddleOCRVL
     except ImportError as e:
@@ -483,6 +486,22 @@ def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
             "Upgrade with: pip install -U 'paddleocr[doc-parser]'"
         ) from e
 
+    cache_key = tuple(sorted(pipeline_kwargs.items()))
+    if cache_key not in _PADDLEOCR_VL_PIPELINE_CACHE:
+        try:
+            _PADDLEOCR_VL_PIPELINE_CACHE[cache_key] = PaddleOCRVL(**pipeline_kwargs)
+        except RuntimeError as e:
+            raise RuntimeError(
+                "Failed to initialize PaddleOCRVL pipeline. "
+                "Install PaddleOCR with the doc-parser extras: "
+                "pip install -U 'paddleocr[doc-parser]'. "
+                "See https://paddlepaddle.github.io/PaddleOCR/main/version3.x/pipeline_usage/PaddleOCR-VL.html"
+            ) from e
+    return _PADDLEOCR_VL_PIPELINE_CACHE[cache_key]
+
+
+def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
+    # Source: https://huggingface.co/PaddlePaddle/PaddleOCR-VL
     model_name = kwargs.get("model", "")
     default_pipeline_version = (
         "v1.5" if model_name.lower().endswith("paddleocr-vl-1.5") else "v1"
@@ -492,15 +511,7 @@ def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
         "use_doc_orientation_classify": False,
         "use_doc_unwarping": False,
     }
-    try:
-        pipeline = PaddleOCRVL(**pipeline_kwargs)
-    except RuntimeError as e:
-        raise RuntimeError(
-            "Failed to initialize PaddleOCRVL pipeline. "
-            "Install PaddleOCR with the doc-parser extras: "
-            "pip install -U 'paddleocr[doc-parser]'. "
-            "See https://paddlepaddle.github.io/PaddleOCR/main/version3.x/pipeline_usage/PaddleOCR-VL.html"
-        ) from e
+    pipeline = _get_paddleocr_vl_pipeline(pipeline_kwargs)
 
     results = pipeline.predict(path)
 
@@ -845,7 +856,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> Dict:
         Dict: Dictionary containing parsed document data
     """
     logger.debug(f"Parsing with {api} API and model {kwargs['model']}")
-    max_dimension = kwargs.get("max_image_dimension", 1500)
+    max_dimension = kwargs.get("max_image_dimension", DEFAULT_MAX_IMAGE_DIMENSION)
     images = convert_doc_to_base64_images(path, max_dimension=max_dimension)
 
     # Process each page/image

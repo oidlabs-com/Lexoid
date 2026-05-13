@@ -29,6 +29,7 @@ from lexoid.core.prompt_templates import (
 )
 from lexoid.core.utils import (
     DEFAULT_LLM,
+    DEFAULT_MAX_IMAGE_DIMENSION,
     DEFAULT_STATIC_FRAMEWORK,
     bbox_router,
     create_sub_pdf,
@@ -298,7 +299,7 @@ def parse(
 
         if "image" in get_file_type(path):
             # Resize image if too large
-            max_dimension = kwargs.get("max_image_dimension", 1500)
+            max_dimension = kwargs.get("max_image_dimension", DEFAULT_MAX_IMAGE_DIMENSION)
             path = resize_image_if_needed(
                 path, max_dimension=max_dimension, tmpdir=temp_dir
             )
