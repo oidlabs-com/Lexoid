@@ -233,13 +233,13 @@ def app():
 )
 @click.option(
     "--pages-per-split",
-    type=int,
+    type=click.IntRange(min=1),
     default=4,
     help="Number of pages per chunk for processing (default: 4)",
 )
 @click.option(
     "--max-processes",
-    type=int,
+    type=click.IntRange(min=1),
     default=4,
     help="Maximum parallel processes (default: 4)",
 )
