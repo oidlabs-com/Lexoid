@@ -156,6 +156,20 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
 
     result["parser_used"] = parser_type
 
+    # Log page numbers that were parsed in this chunk
+    try:
+        pages = [
+            seg.get("metadata", {}).get("page")
+            for seg in result.get("segments", [])
+            if seg.get("metadata") and "page" in seg.get("metadata", {})
+        ]
+        if pages:
+            logger.debug(
+                f"Completed parsing pages: {pages} for file: {os.path.basename(path)}"
+            )
+    except Exception as e:
+        # Non-fatal: logging should not break parsing
+        logger.warning(f"Failed to log parsed page numbers: {e}")
     return_bboxes = kwargs.get("return_bboxes", False)
     has_bboxes = bool(result["segments"][0].get("bboxes"))
     bbox_framework = kwargs.get("bbox_framework", None)
@@ -299,7 +313,9 @@ def parse(
 
         if "image" in get_file_type(path):
             # Resize image if too large
-            max_dimension = kwargs.get("max_image_dimension", DEFAULT_MAX_IMAGE_DIMENSION)
+            max_dimension = kwargs.get(
+                "max_image_dimension", DEFAULT_MAX_IMAGE_DIMENSION
+            )
             path = resize_image_if_needed(
                 path, max_dimension=max_dimension, tmpdir=temp_dir
             )
