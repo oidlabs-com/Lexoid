@@ -18,27 +18,33 @@ from lexoid.core.utils import DEFAULT_LLM
 
 API_KEY_ENV_VARS = {
     "openai": "OPENAI_API_KEY",
-    "google": "GOOGLE_API_KEY",
+    "gemini": "GOOGLE_API_KEY",  # Use 'gemini' as provider name, GOOGLE_API_KEY for credentials
     "anthropic": "ANTHROPIC_API_KEY",
     "mistral": "MISTRAL_API_KEY",
     "together": "TOGETHER_API_KEY",
     "huggingface": "HUGGINGFACEHUB_API_TOKEN",
     "openrouter": "OPENROUTER_API_KEY",
     "fireworks": "FIREWORKS_API_KEY",
+    "local": None,  # Local models don't require an API key
 }
-API_PROVIDER_CHOICES = list(API_KEY_ENV_VARS.keys())
-
-OUTPUT_SEPARATOR = "\n" + "=" * 80
+API_PROVIDER_CHOICES = [k for k in API_KEY_ENV_VARS.keys() if k != "local"]
 
 
-def validate_input_file(path: str) -> Path:
-    """Validate that input file exists and is readable."""
+def validate_input_file(path: str) -> str:
+    """Validate that input is a file path or supported URL.
+
+    Returns the path/URL as a string. URLs (http://, https://) are passed through.
+    File paths are validated to exist and be readable.
+    """
+    if path.startswith(("http://", "https://")):
+        return path  # Pass URLs through as-is; downstream handles them
+
     file_path = Path(path).expanduser().resolve()
     if not file_path.exists():
         raise click.FileError(path, hint="File does not exist")
     if not file_path.is_file():
         raise click.UsageError(f"Path is not a file: {path}")
-    return file_path
+    return str(file_path)
 
 
 def validate_output_path(path: Optional[str]) -> Optional[Path]:
@@ -88,19 +94,38 @@ def ensure_api_key(api_provider: str, *, required: bool) -> bool:
 
 
 def infer_api_provider(model: str) -> str:
-    """Infer API provider from model name."""
+    """Infer API provider from model name.
+
+    Provider names must match those used in lexoid.core.utils.get_api_provider_for_model().
+    Raises ValueError if model is not recognized to match core library behavior.
+    """
     model_lower = model.lower()
-    if "gemini" in model_lower:
-        return "google"
-    elif "gpt" in model_lower:
+
+    # Match logic from lexoid.core.utils.get_api_provider_for_model
+    if model_lower.startswith("gemini"):
+        return "gemini"
+    if model_lower.startswith("gpt"):
         return "openai"
-    elif "claude" in model_lower:
-        return "anthropic"
-    elif "mistral" in model_lower:
-        return "mistral"
-    elif "llama" in model_lower or "firefunction" in model_lower:
+    if model_lower.startswith("meta-llama"):
+        if "turbo" in model_lower or model == "meta-llama/Llama-Vision-Free":
+            return "together"
+        return "huggingface"
+    if any(
+        model_lower.startswith(prefix) for prefix in ["microsoft", "google", "qwen"]
+    ):
+        return "openrouter"
+    if model_lower.startswith("accounts/fireworks"):
         return "fireworks"
-    return "unknown"
+    if model_lower.startswith("claude"):
+        return "anthropic"
+    if model_lower.startswith("mistral"):
+        return "mistral"
+    if "docling" in model_lower:
+        return "local"
+    if model_lower.startswith("paddlepaddle/paddleocr-vl"):
+        return "local"
+
+    raise ValueError(f"Unsupported model: {model}")
 
 
 def resolve_api_provider(model: str, api: Optional[str] = None) -> str:
@@ -135,26 +160,31 @@ def format_parse_output(result: dict, output_format: str) -> str:
 def write_output(
     output_path: Optional[Path], content: str, success_message: str
 ) -> None:
-    """Write output to a file or stdout."""
+    """Write output to a file or stdout.
+
+    When outputting to stdout, only the content is written to stdout (for clean piping).
+    Status messages go to stderr.
+    """
     if output_path:
         output_path.write_text(content, encoding="utf-8")
-        click.secho(f"✅ {success_message} Output saved to: {output_path}", fg="green")
+        click.secho(
+            f"✅ {success_message} Output saved to: {output_path}", fg="green", err=True
+        )
         return
 
-    click.echo(OUTPUT_SEPARATOR)
+    # Write only content to stdout for clean piping; status to stderr
     click.echo(content)
-    click.echo("=" * 80)
 
 
-def show_parse_summary(result: dict, output_format: str) -> None:
-    """Display parse metadata for markdown output."""
-    if output_format != "markdown":
+def show_parse_summary(result: dict, output_format: str, to_file: bool = False) -> None:
+    """Display parse metadata for markdown output to stderr (for piping)."""
+    if output_format != "markdown" or to_file:
         return
 
     if result.get("token_usage"):
-        click.echo(f"\n📊 Token Usage: {result['token_usage']}")
+        click.echo(f"\n📊 Token Usage: {result['token_usage']}", err=True)
     if "parsers_used" in result:
-        click.echo(f"🔧 Parsers Used: {result['parsers_used']}")
+        click.echo(f"🔧 Parsers Used: {result['parsers_used']}", err=True)
 
 
 def handle_cli_error(error: Exception, verbose: bool) -> None:
@@ -178,8 +208,8 @@ def app():
     "--input",
     "-i",
     required=True,
-    type=click.Path(exists=True, file_okay=True, dir_okay=False),
-    help="Path to input file (PDF, image, HTML, DOCX, XLSX, PPTX, or URL)",
+    type=str,
+    help="Path to input file (PDF, image, HTML, DOCX, XLSX, PPTX) or URL (http://, https://)",
 )
 @click.option(
     "--output",
@@ -224,7 +254,7 @@ def app():
     "output_format",
     type=click.Choice(["markdown", "json"]),
     default="markdown",
-    help="Output format: markdown (default) or full JSON with metadata",
+    help="Output format: markdown (default, text content only) or full JSON with metadata",
 )
 @click.option(
     "--verbose",
@@ -252,8 +282,13 @@ def parse(
 
         parser_enum = ParserType[parser_type.upper()]
 
+        api_provider = None
         if parser_enum in (ParserType.LLM_PARSE, ParserType.AUTO):
-            api_provider = resolve_api_provider(model)
+            try:
+                api_provider = resolve_api_provider(model)
+            except ValueError as e:
+                raise click.ClickException(str(e))
+
             if not ensure_api_key(api_provider, required=False):
                 click.secho(
                     f"⚠️  Warning: API key for {api_provider.upper()} not found",
@@ -270,22 +305,32 @@ def parse(
                         f"Please set {key_name} environment variable."
                     )
 
-        click.echo("🔄 Parsing document...")
+        click.echo("🔄 Parsing document...", err=True)
         kwargs = {
             "pages_per_split": pages_per_split,
             "max_processes": max_processes,
             "model": model,
         }
+        if api_provider:
+            kwargs["api_provider"] = api_provider
         if framework:
             kwargs["framework"] = framework
 
-        result = api_parse(str(input_path), parser_enum, **kwargs)
+        try:
+            result = api_parse(input_path, parser_enum, **kwargs)
+        except ValueError as e:
+            raise click.ClickException(str(e))
+        except Exception as e:
+            # Re-raise click exceptions as-is, convert others
+            if isinstance(e, click.ClickException):
+                raise
+            raise click.ClickException(f"Parsing failed: {str(e)}")
 
         output_content = format_parse_output(result, output_format)
 
         write_output(output_path, output_content, "Successfully parsed!")
 
-        show_parse_summary(result, output_format)
+        show_parse_summary(result, output_format, to_file=output_path is not None)
 
     except click.ClickException:
         raise
@@ -298,8 +343,8 @@ def parse(
     "--input",
     "-i",
     required=True,
-    type=click.Path(exists=True, file_okay=True, dir_okay=False),
-    help="Path to input file (PDF, image, HTML, DOCX, XLSX, PPTX, or URL)",
+    type=str,
+    help="Path to input file (PDF, image, HTML, DOCX, XLSX, PPTX) or URL (http://, https://)",
 )
 @click.option(
     "--schema",
@@ -317,8 +362,8 @@ def parse(
 @click.option(
     "--model",
     "-m",
-    default="gpt-4o-mini",
-    help="LLM model to use (default: gpt-4o-mini)",
+    default=DEFAULT_LLM,
+    help=f"LLM model to use (default: {DEFAULT_LLM})",
 )
 @click.option(
     "--api",
@@ -328,8 +373,9 @@ def parse(
 )
 @click.option(
     "--example-schema",
-    is_flag=True,
-    help="Provide example data conforming to schema",
+    type=str,
+    default=None,
+    help="Example data conforming to schema (JSON string or file path); enables example-based extraction",
 )
 @click.option(
     "--fill-single-schema",
@@ -360,18 +406,34 @@ def schema(
         output_path = validate_output_path(output)
         schema_dict = load_schema_definition(schema)
 
-        api = resolve_api_provider(model, api)
+        try:
+            api = resolve_api_provider(model, api)
+        except ValueError as e:
+            raise click.ClickException(str(e))
+
         ensure_api_key(api, required=True)
 
-        click.echo("🔄 Extracting structured data...")
-        result = api_parse_with_schema(
-            str(input_path),
-            schema_dict,
-            api=api,
-            model=model,
-            example_schema=example_schema,
-            fill_single_schema=fill_single_schema,
-        )
+        # Load example schema if provided
+        example_data = None
+        if example_schema:
+            example_data = load_schema_definition(example_schema)
+
+        click.echo("🔄 Extracting structured data...", err=True)
+        try:
+            result = api_parse_with_schema(
+                input_path,
+                schema_dict,
+                api=api,
+                model=model,
+                example_schema=example_data,
+                fill_single_schema=fill_single_schema,
+            )
+        except ValueError as e:
+            raise click.ClickException(str(e))
+        except Exception as e:
+            if isinstance(e, click.ClickException):
+                raise
+            raise click.ClickException(f"Schema extraction failed: {str(e)}")
 
         output_json = json.dumps(result, indent=2, ensure_ascii=False)
         write_output(output_path, output_json, "Successfully extracted!")
@@ -387,8 +449,8 @@ def schema(
     "--input",
     "-i",
     required=True,
-    type=click.Path(exists=True, file_okay=True, dir_okay=False),
-    help="Path to input file (PDF, image, HTML, DOCX, XLSX, PPTX, or URL)",
+    type=str,
+    help="Path to input file (PDF, image, HTML, DOCX, XLSX, PPTX) or URL (http://, https://)",
 )
 @click.option(
     "--output",
@@ -400,8 +462,8 @@ def schema(
 @click.option(
     "--model",
     "-m",
-    default="gpt-4o-mini",
-    help="LLM model to use (default: gpt-4o-mini)",
+    default=DEFAULT_LLM,
+    help=f"LLM model to use (default: {DEFAULT_LLM})",
 )
 @click.option(
     "--api",
@@ -423,11 +485,22 @@ def latex(input, output, model, api, verbose):
         input_path = validate_input_file(input)
         output_path = validate_output_path(output)
 
-        api = resolve_api_provider(model, api)
+        try:
+            api = resolve_api_provider(model, api)
+        except ValueError as e:
+            raise click.ClickException(str(e))
+
         ensure_api_key(api, required=True)
 
-        click.echo("🔄 Converting to LaTeX...")
-        result = api_parse_to_latex(str(input_path), api=api, model=model)
+        click.echo("🔄 Converting to LaTeX...", err=True)
+        try:
+            result = api_parse_to_latex(input_path, api=api, model=model)
+        except ValueError as e:
+            raise click.ClickException(str(e))
+        except Exception as e:
+            if isinstance(e, click.ClickException):
+                raise
+            raise click.ClickException(f"LaTeX conversion failed: {str(e)}")
 
         write_output(output_path, result, "Successfully converted!")
 
