@@ -229,7 +229,7 @@ lexoid schema --help
 
 - `--schema, -s`: JSON schema (file path or inline JSON, required)
 - `--model, -m`: LLM model (default: gpt-4o-mini)
-- `--api`: API provider - openai, google, anthropic, etc. (auto-detected if not specified)
+- `--api`: API provider - openai, gemini, anthropic, etc. (auto-detected if not specified)
 - `--example-schema`: Provide example data for the schema
 - `--fill-single-schema`: Auto-fill single schemas
 
