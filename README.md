@@ -117,6 +117,131 @@ print(parsed_md)
 - max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
 - \*\*kwargs: Additional arguments for the parser.
 
+## Command Line Usage
+
+Lexoid provides a command-line interface for document parsing without writing Python code.
+
+### Installation
+
+The CLI is automatically available after installing Lexoid:
+
+```bash
+pip install lexoid
+lexoid --help
+```
+
+Alternatively, use with Python module syntax:
+
+```bash
+python -m lexoid --help
+```
+
+### Parse Documents
+
+Convert documents to markdown or JSON:
+
+```bash
+# Parse to stdout (default markdown)
+lexoid parse --input document.pdf
+
+# Save to file
+lexoid parse --input document.pdf --output output.md
+
+# Output as JSON (includes metadata, segments, token usage)
+lexoid parse --input document.pdf --format json --output result.json
+
+# Use specific parser (STATIC_PARSE, LLM_PARSE, or AUTO)
+lexoid parse --input document.pdf --parser-type STATIC_PARSE
+
+# Use specific LLM model
+lexoid parse --input document.pdf --model gpt-4o
+
+# Enable verbose logging
+lexoid parse --input document.pdf --verbose
+```
+
+### Extract Structured Data with JSON Schema
+
+Extract data conforming to a JSON schema:
+
+```bash
+# Inline schema
+lexoid schema \
+  --input document.pdf \
+  --schema '{"type": "object", "properties": {"title": {"type": "string"}}}' \
+  --output result.json
+
+# Schema from file
+lexoid schema \
+  --input document.pdf \
+  --schema schema.json \
+  --output result.json
+
+# Specify LLM provider
+lexoid schema \
+  --input document.pdf \
+  --schema schema.json \
+  --api openai \
+  --model gpt-4o
+```
+
+### Convert to LaTeX
+
+Convert documents to LaTeX format:
+
+```bash
+# Convert to stdout
+lexoid latex --input document.pdf
+
+# Save to file
+lexoid latex --input document.pdf --output output.tex
+
+# Use specific model
+lexoid latex --input document.pdf --model gpt-4o
+```
+
+### Command-line Options
+
+#### Common Options
+
+- `--input, -i`: Input file path (required) - Supports PDF, images, HTML, DOCX, XLSX, PPTX, or URLs
+- `--output, -o`: Output file path (optional) - If not specified, output is printed to stdout
+- `--verbose, -v`: Enable detailed logging
+
+#### Parse Command
+
+```
+lexoid parse --help
+```
+
+- `--parser-type, -p`: Parser type - `AUTO` (default), `LLM_PARSE`, or `STATIC_PARSE`
+- `--model, -m`: LLM model name (default: gemini-2.5-flash)
+- `--pages-per-split`: Pages per chunk (default: 4)
+- `--max-processes`: Parallel processes (default: 4)
+- `--framework`: Static parser framework - `pdfplumber` or `paddleocr`
+- `--format`: Output format - `markdown` (default, JSON with only text content) or `json` (full result with metadata, segments, token usage)
+
+#### Schema Command
+
+```
+lexoid schema --help
+```
+
+- `--schema, -s`: JSON schema (file path or inline JSON, required)
+- `--model, -m`: LLM model (default: gpt-4o-mini)
+- `--api`: API provider - openai, google, anthropic, etc. (auto-detected if not specified)
+- `--example-schema`: Provide example data for the schema
+- `--fill-single-schema`: Auto-fill single schemas
+
+#### LaTeX Command
+
+```
+lexoid latex --help
+```
+
+- `--model, -m`: LLM model (default: gpt-4o-mini)
+- `--api`: API provider (auto-detected if not specified)
+
 ## Supported API Providers
 
 - Google
