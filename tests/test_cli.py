@@ -5,8 +5,6 @@ import subprocess
 import sys
 import tempfile
 
-import lexoid.cli as cli
-from click.testing import CliRunner
 import pytest
 
 

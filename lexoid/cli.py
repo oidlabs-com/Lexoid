@@ -264,6 +264,12 @@ def app():
     is_flag=True,
     help="Enable verbose logging",
 )
+@click.option(
+    "--api",
+    type=click.Choice(API_PROVIDER_CHOICES, case_sensitive=False),
+    default=None,
+    help="API provider override (auto-detected from model if not specified)",
+)
 def parse(
     input,
     output,
@@ -274,6 +280,7 @@ def parse(
     framework,
     output_format,
     verbose,
+    api,
 ):
     """Parse document and extract markdown content."""
     configure_logging(verbose)
@@ -285,9 +292,9 @@ def parse(
         parser_enum = ParserType[parser_type.upper()]
 
         api_provider = None
-        if parser_enum in (ParserType.LLM_PARSE, ParserType.AUTO):
+        if parser_enum == ParserType.LLM_PARSE:
             try:
-                api_provider = resolve_api_provider(model)
+                api_provider = resolve_api_provider(model, api)
             except ValueError as e:
                 raise click.ClickException(str(e))
 
@@ -297,14 +304,23 @@ def parse(
                     fg="yellow",
                     err=True,
                 )
-                if parser_enum == ParserType.LLM_PARSE:
-                    key_name = (
-                        api_key_env_var(api_provider)
-                        or f"{api_provider.upper()}_API_KEY"
-                    )
-                    raise click.ClickException(
-                        f"API key required for {api_provider.upper()}. "
-                        f"Please set {key_name} environment variable."
+                key_name = (
+                    api_key_env_var(api_provider) or f"{api_provider.upper()}_API_KEY"
+                )
+                raise click.ClickException(
+                    f"API key required for {api_provider.upper()}. "
+                    f"Please set {key_name} environment variable."
+                )
+
+        elif parser_enum == ParserType.AUTO:
+            if api:
+                api_provider = api
+                # warn if API key missing but do not fail here; core may choose STATIC_PARSE
+                if not ensure_api_key(api_provider, required=False):
+                    click.secho(
+                        f"⚠️  Warning: API key for {api_provider.upper()} not found",
+                        fg="yellow",
+                        err=True,
                     )
 
         click.echo("🔄 Parsing document...", err=True)
