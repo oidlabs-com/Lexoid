@@ -335,22 +335,17 @@ def test_latex_invalid_model():
         ("meta-llama/Llama-3.1-405B-Instruct-Turbo", "together"),
     ],
 )
-def test_parse_known_models(model, expected_provider):
-    """Test that known models are recognized correctly."""
-    # Test with STATIC_PARSE to avoid needing API keys
-    result = run_lexoid(
-        "parse",
-        "--input",
-        "examples/inputs/test_1.pdf",
-        "--model",
-        model,
-        "--parser-type",
-        "STATIC_PARSE",
-        "--framework",
-        "pdfplumber",
-        "--format",
-        "markdown",
-    )
-    # Should succeed without errors about model validation
-    assert result.returncode == 0
-    assert "Unsupported model" not in result.stderr
+def test_model_provider_inference(model, expected_provider):
+    """Test that model to provider mapping is correct."""
+    from lexoid.cli import infer_api_provider
+
+    provider = infer_api_provider(model)
+    assert provider == expected_provider
+
+
+def test_model_inference_with_invalid_model():
+    """Test that invalid models raise ValueError."""
+    from lexoid.cli import infer_api_provider
+
+    with pytest.raises(ValueError, match="Unsupported model"):
+        infer_api_provider("invalid-model-xyz")
