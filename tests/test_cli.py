@@ -5,6 +5,8 @@ import subprocess
 import sys
 import tempfile
 
+import lexoid.cli as cli
+from click.testing import CliRunner
 import pytest
 
 
@@ -28,8 +30,14 @@ def run_lexoid_module(*args):
             "parse",
             ["Parse document", "--input", "--output", "--parser-type", "--model"],
         ),
-        ("schema", ["Extract structured data", "--input", "--schema"]),
-        ("latex", ["Convert document", "--input"]),
+        (
+            "schema",
+            ["Extract structured data", "--input", "--schema", "gpt-4o-mini", "ollama"],
+        ),
+        (
+            "latex",
+            ["Convert document", "--input", "gpt-4o-mini", "ollama"],
+        ),
     ],
 )
 def test_help_commands(command, expected):

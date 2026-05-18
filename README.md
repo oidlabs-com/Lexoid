@@ -219,7 +219,7 @@ lexoid parse --help
 - `--pages-per-split`: Pages per chunk (default: 4)
 - `--max-processes`: Parallel processes (default: 4)
 - `--framework`: Static parser framework - `pdfplumber` or `paddleocr`
-- `--format`: Output format - `markdown` (default, JSON with only text content) or `json` (full result with metadata, segments, token usage)
+- `--format`: Output format - `markdown` (default, plain markdown text) or `json` (full result with metadata, segments, token usage)
 
 #### Schema Command
 
@@ -229,7 +229,7 @@ lexoid schema --help
 
 - `--schema, -s`: JSON schema (file path or inline JSON, required)
 - `--model, -m`: LLM model (default: gpt-4o-mini)
-- `--api`: API provider - openai, gemini, anthropic, etc. (auto-detected if not specified)
+- `--api`: API provider - openai, gemini, anthropic, ollama, etc. (auto-detected if not specified)
 - `--example-schema`: Provide example data for the schema
 - `--fill-single-schema`: Auto-fill single schemas
 
@@ -240,7 +240,7 @@ lexoid latex --help
 ```
 
 - `--model, -m`: LLM model (default: gpt-4o-mini)
-- `--api`: API provider (auto-detected if not specified)
+- `--api`: API provider - openai, gemini, anthropic, ollama, etc. (auto-detected if not specified)
 
 ## Supported API Providers
 

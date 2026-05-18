@@ -25,9 +25,11 @@ API_KEY_ENV_VARS = {
     "huggingface": "HUGGINGFACEHUB_API_TOKEN",
     "openrouter": "OPENROUTER_API_KEY",
     "fireworks": "FIREWORKS_API_KEY",
+    "ollama": None,
     "local": None,  # Local models don't require an API key
 }
 API_PROVIDER_CHOICES = [k for k in API_KEY_ENV_VARS.keys() if k != "local"]
+DEFAULT_SCHEMA_LLM = "gpt-4o-mini"
 
 
 def validate_input_file(path: str) -> str:
@@ -254,7 +256,7 @@ def app():
     "output_format",
     type=click.Choice(["markdown", "json"]),
     default="markdown",
-    help="Output format: markdown (default, text content only) or full JSON with metadata",
+    help="Output format: markdown (default, plain markdown text) or json (full result with metadata)",
 )
 @click.option(
     "--verbose",
@@ -362,12 +364,12 @@ def parse(
 @click.option(
     "--model",
     "-m",
-    default=DEFAULT_LLM,
-    help=f"LLM model to use (default: {DEFAULT_LLM})",
+    default=DEFAULT_SCHEMA_LLM,
+    help=f"LLM model to use (default: {DEFAULT_SCHEMA_LLM})",
 )
 @click.option(
     "--api",
-    type=click.Choice(API_PROVIDER_CHOICES),
+    type=click.Choice(API_PROVIDER_CHOICES, case_sensitive=False),
     default=None,
     help="API provider (auto-detected from model if not specified)",
 )
@@ -462,12 +464,12 @@ def schema(
 @click.option(
     "--model",
     "-m",
-    default=DEFAULT_LLM,
-    help=f"LLM model to use (default: {DEFAULT_LLM})",
+    default=DEFAULT_SCHEMA_LLM,
+    help=f"LLM model to use (default: {DEFAULT_SCHEMA_LLM})",
 )
 @click.option(
     "--api",
-    type=click.Choice(API_PROVIDER_CHOICES),
+    type=click.Choice(API_PROVIDER_CHOICES, case_sensitive=False),
     default=None,
     help="API provider (auto-detected from model if not specified)",
 )
