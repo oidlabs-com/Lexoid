@@ -36,9 +36,13 @@ parse
    :param path: File path or URL to parse.
    :param parser_type: Parser type to use (``"LLM_PARSE"``, ``"STATIC_PARSE"``, or ``"AUTO"``). Default: ``"AUTO"``.
    :param pages_per_split: Number of pages per chunk for processing. Default: ``4``.
-   :param max_processes: Maximum number of parallel processes. Default: ``4``. Automatically forced to ``1`` when ``api_provider="ollama"``.
+   :param max_processes: Maximum number of parallel processes. Default: ``4``. Automatically forced to ``1`` when ``parser_type="LLM_PARSE"`` and ``api_provider="ollama"``.
    :param kwargs: Additional keyword arguments (see below).
-   :return: Dictionary containing parsed document data (see "Return value format" below).
+
+   Automatic input handling:
+
+   * ``.doc`` / ``.docx`` inputs with any ``parser_type`` other than ``STATIC_PARSE`` are first converted to PDF (``as_pdf`` is forced to ``True``).
+   * ``.xlsx`` and ``.pptx`` inputs with ``parser_type="LLM_PARSE"`` are silently switched to ``STATIC_PARSE`` (a warning is logged) because LLM parsing is not supported for these formats.
 
    Additional keyword arguments:
 
@@ -63,7 +67,7 @@ parse
 
      - ``"speed"`` (default): Uses ``STATIC_PARSE`` for PDFs without images, else ``LLM_PARSE``.
      - ``"accuracy"``: Prefers ``LLM_PARSE``, except for PDFs with no images but with embedded/hidden hyperlinks (uses ``STATIC_PARSE`` since LLMs miss hidden links).
-     - ``"cost"``: Tries PaddleOCR first; if the extracted character count is below ``character_threshold``, returns it; otherwise falls back to ``LLM_PARSE``.
+     - ``"cost"``: For PDFs that contain images, tries PaddleOCR first; if the extracted character count is below ``character_threshold`` the PaddleOCR result is returned, otherwise the document is re-parsed with ``LLM_PARSE``. PDFs without images, and non-PDF inputs, fall back to the same routing as ``"speed"``.
    * ``character_threshold`` (int): Minimum character count for a ``router_priority="cost"`` STATIC_PARSE result to be accepted. Default: ``100``.
    * ``autoselect_llm`` (bool): When ``parser_type="AUTO"``, runs the ML-based ``DocumentRankedLLMSelector`` to choose the best LLM for the input document. Default: ``False``.
    * ``retry_on_fail`` (bool): When ``True`` (default), automatically retries with the alternate parser type / framework on failure.
@@ -71,30 +75,36 @@ parse
    * ``bbox_framework`` (str): Framework used for bounding box extraction when ``return_bboxes=True``. One of ``"auto"`` (default — chooses ``paddleocr`` or ``pdfplumber`` based on file content), ``"pdfplumber"``, or ``"paddleocr"``.
 
    Return value format:
-   A dictionary containing a subset or all of the following keys:
+   A dictionary with the following keys. Keys marked *(optional)* are only present in specific configurations; all others are always present (and may hold an empty string / list / zeroed dict).
 
    * ``raw``: Full markdown content as a string.
-   * ``segments``: List of dictionaries with per-segment ``metadata`` (e.g., ``page``) and ``content``. For PDFs, a segment is a page; for webpages, a segment is a section (heading and its content). When ``return_bboxes=True``, each segment also has a ``bboxes`` key.
-   * ``title``: Title of the document.
-   * ``url``: Original URL if applicable.
-   * ``parent_title``: Title of the parent document, if recursively parsed.
-   * ``recursive_docs``: List of dictionaries for recursively-parsed sub-documents (when ``depth > 1``).
-   * ``token_usage``: Dictionary with ``input``, ``output``, ``total``, and ``llm_page_count`` token statistics.
-   * ``token_cost``: Estimated cost per token category (only when ``api_cost_mapping`` is supplied and contains an entry for the resolved model).
-   * ``parsers_used``: List of parser names actually used for each chunk (e.g., ``["LLM_PARSE", "STATIC_PARSE"]``).
-   * ``pdf_path``: Path to the intermediate PDF generated when ``as_pdf=True`` and ``save_dir`` is specified.
-   * ``error``: Present only when an unrecoverable error occurred (parsing returned a fallback empty result).
+   * ``segments``: List of dictionaries with per-segment ``metadata`` (e.g., ``page``) and ``content``. For PDFs, a segment is a page; for webpages, a segment is a section (heading and its content). When ``return_bboxes=True``, each segment additionally carries a ``bboxes`` key (a list of ``(text, [x0, top, x1, bottom])`` tuples normalized to ``[0, 1]``).
+   * ``title``: Title of the document (defaults to the input file's basename).
+   * ``url``: Original URL if the input was a URL, otherwise an empty string.
+   * ``parent_title``: Title of the parent document when this result was produced by recursive crawling; otherwise an empty string.
+   * ``recursive_docs``: List of recursively-parsed sub-documents. Always present; empty unless ``depth > 1``.
+   * ``token_usage``: Dictionary with ``input``, ``output``, ``total``, and ``llm_page_count`` token statistics. Counts are zero when only ``STATIC_PARSE`` ran.
+   * ``parsers_used``: List of parser names that actually ran, one entry per chunk (e.g., ``["LLM_PARSE", "STATIC_PARSE"]``).
+   * ``token_cost`` *(optional)*: Estimated cost broken down by token category. Only present when ``api_cost_mapping`` is supplied and contains an entry for the resolved model.
+   * ``pdf_path`` *(optional)*: Path to the intermediate PDF generated when ``as_pdf=True``. To keep the file readable after ``parse()`` returns, also pass ``save_dir`` — otherwise the PDF is written inside a temporary directory that is removed on return.
 
 
 parse_with_schema
 ^^^^^^^^^^^^^^^^^
 
-.. py:function:: lexoid.api.parse_with_schema(path: str, schema: Union[Dict, Type], api: Optional[str] = None, model: str = "gpt-4o-mini", example_schema: Optional[Dict] = None, alternate_keys: Optional[Dict] = None, fill_single_schema: bool = False, **kwargs) -> List[List[Dict]]
+.. py:function:: lexoid.api.parse_with_schema(path: str, schema: Union[Dict, Type], api: Optional[str] = None, model: str = "gpt-4o-mini", example_schema: Optional[Dict] = None, alternate_keys: Optional[Dict] = None, fill_single_schema: bool = False, **kwargs) -> List
 
-   Parse a PDF (or image) using an LLM to generate structured output
-   conforming to a given schema. The schema can be a plain ``dict``, a
-   Python ``dataclass``, or a Pydantic ``BaseModel`` (all are converted to
-   JSON Schema internally).
+   Parse a document with an LLM to generate structured output conforming
+   to a given schema. The schema can be a plain ``dict``, a Python
+   ``dataclass``, or a Pydantic ``BaseModel`` (all are converted to JSON
+   Schema internally).
+
+   In the default per-page mode, only PDF and image inputs are accepted
+   (each page is rendered to an image and sent to the LLM together with
+   the schema prompt). When ``fill_single_schema=True``, the document is
+   first parsed with :py:func:`parse` and the resulting markdown is sent
+   to the LLM, so the broader set of file types supported by ``parse()``
+   (DOCX, HTML, URLs, etc.) becomes available.
 
    :param path: Path to the file to parse.
    :param schema: ``dict``, ``dataclass``, or Pydantic ``BaseModel`` describing the desired output.
@@ -104,12 +114,20 @@ parse_with_schema
    :param alternate_keys: Optional mapping of alternate key names that may appear in the document — helps the model match synonyms.
    :param fill_single_schema: When ``True``, the entire document is parsed once and the whole content is used to produce a single instance of the schema (rather than one instance per page).
    :param kwargs: Additional keyword arguments (e.g., ``temperature``, ``max_tokens``).
-   :return: A list of dictionaries — one per page when ``fill_single_schema=False``, or a single-element list when ``fill_single_schema=True``. Each entry conforms to the provided schema.
 
    Additional keyword arguments:
 
    * ``temperature`` (float): Sampling temperature for LLM generation. Default: ``0.0``.
    * ``max_tokens`` (int): Maximum number of tokens to generate. Default: ``1024``.
+
+   Return value format:
+
+   The function returns a Python list of the JSON values parsed from the model. The exact shape depends on the mode and on the schema:
+
+   * **Default (per-page) mode** — one entry per page, in page order. Each entry is the JSON value the model produced for that page. If the schema describes a single record, expect one ``dict`` per page; if the schema describes multiple records per page (e.g., table rows), expect a ``list`` of ``dict``\ s per page. Concretely, indexing follows ``result[page_index][record_index]`` when each page contains multiple records.
+   * **``fill_single_schema=True``** — a single-element list whose lone element is the JSON value the model produced for the whole document (typically a single ``dict``).
+
+   Because the shape is driven by the model's output, callers that need to support both single-record and multi-record schemas should normalize the per-page entries themselves (e.g., wrap ``dict`` entries in a one-element ``list``).
 
 
 parse_to_latex

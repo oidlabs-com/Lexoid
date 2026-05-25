@@ -43,7 +43,7 @@ API keys by provider:
 Four entry points in `lexoid.api`:
 
 - `parse(path, parser_type="AUTO", pages_per_split=4, max_processes=4, **kwargs)` — main function. Returns a dict.
-- `parse_with_schema(path, schema, api=None, model="gpt-4o-mini", **kwargs)` — structured JSON extraction. Returns a list of dicts.
+- `parse_with_schema(path, schema, api=None, model="gpt-4o-mini", **kwargs)` — structured JSON extraction. Returns a Python list whose shape depends on the mode and the model's output (see "Schema return shape" below).
 - `parse_to_latex(path, api=None, model="gpt-4o-mini", **kwargs)` — returns a LaTeX string.
 - `parse_chunk(path, parser_type, **kwargs)` — low-level single-chunk parser; users rarely need this.
 
@@ -54,18 +54,20 @@ Four entry points in `lexoid.api`:
 ```python
 {
     "raw": str,                  # full markdown
-    "segments": [                # one dict per page / section
-        {"metadata": {"page": int}, "content": str, "bboxes": [...]},
+    "segments": [                # one dict per page / section; always present (may be empty)
+        # bboxes is included only when return_bboxes=True
+        {"metadata": {"page": int}, "content": str, "bboxes": [(text, [x0, top, x1, bottom]), ...]},
         ...
     ],
     "title": str,
-    "url": str,                  # if input was a URL
-    "parent_title": str,         # set on recursive sub-docs
-    "recursive_docs": [...],     # populated when depth > 1
-    "token_usage": {"input": int, "output": int, "total": int, "llm_page_count": int},
-    "token_cost": {...},         # only when api_cost_mapping is supplied
+    "url": str,                  # input URL or "" if input was a local file
+    "parent_title": str,         # parent doc title when recursive; "" otherwise
+    "recursive_docs": [...],     # always present; empty unless depth > 1
+    "token_usage": {"input": int, "output": int, "total": int, "llm_page_count": int},  # zeros under STATIC_PARSE only
     "parsers_used": [str, ...],  # which parser ran per chunk
-    "pdf_path": str,             # only when as_pdf=True and save_dir is set
+    # --- optional keys below ---
+    "token_cost": {...},         # only when api_cost_mapping is supplied
+    "pdf_path": str,             # only when as_pdf=True; file is removed unless save_dir is also set
 }
 ```
 
@@ -131,6 +133,23 @@ parse("doc.pdf", parser_type="LLM_PARSE",
 
 ### Schema-based structured extraction
 
+#### Schema return shape
+
+`parse_with_schema` returns a Python `list`. The exact shape depends on
+the mode and on what JSON the model emits:
+
+- **Default (per-page) mode** — one entry per page. Each entry is the JSON
+  the model returned for that page: a single `dict` for single-record
+  schemas, or a `list` of `dict`s for multi-record schemas (e.g., a page
+  of table rows). Index as `result[page_index]` for the page's value, and
+  `result[page_index][record_index]` when each page has multiple records.
+- **`fill_single_schema=True`** — a single-element list whose element is
+  the JSON for the whole document (typically one `dict`).
+
+If you need to support both single- and multi-record schemas in the same
+code path, normalize the per-page entries yourself (e.g., wrap a `dict`
+in `[dict]`).
+
 ```python
 from lexoid.api import parse_with_schema
 from pydantic import BaseModel
@@ -139,10 +158,13 @@ class Invoice(BaseModel):
     invoice_number: str
     total: float
 
-# Per-page list of filled schemas
+# Per-page extraction. `pages` is a list with one entry per page;
+# each entry is whatever JSON the model returned for that page.
 pages = parse_with_schema("invoice.pdf", schema=Invoice, model="gpt-4o-mini")
+# e.g., pages[0] -> {"invoice_number": "...", "total": ...}
+#       pages[0][0] -> first record if the model returned a list per page
 
-# Single instance for the whole document
+# Single instance for the whole document — returns a one-element list.
 [full] = parse_with_schema("contract.pdf", schema=Invoice,
                            model="gpt-4o", fill_single_schema=True)
 
@@ -230,7 +252,7 @@ print(result["token_cost"])  # {"input": ..., "output": ..., "input-image": ...,
 | `temperature`           | LLM sampling temperature (default `0.0`).                               |
 | `max_tokens`            | LLM output token limit (default `1024`, `4096` for Ollama).             |
 | `pages_per_split`       | Pages per parallel chunk.                                               |
-| `max_processes`         | Parallel workers (forced to 1 for Ollama).                              |
+| `max_processes`         | Parallel workers (forced to 1 when `parser_type="LLM_PARSE"` and `api_provider="ollama"`). |
 | `page_nums`             | Specific 1-indexed pages to parse (PDFs only).                          |
 | `depth`                 | Recursive URL parsing depth.                                            |
 | `as_pdf`                | Convert input to PDF before parsing.                                    |
@@ -251,7 +273,7 @@ print(result["token_cost"])  # {"input": ..., "output": ..., "input-image": ...,
 - The result dict has non-empty `raw`. Empty `raw` with an `error` key means a recoverable failure occurred and Lexoid returned a stub.
 - For LLM_PARSE, `token_usage["total"]` is non-zero — zero suggests the API call silently failed.
 - For multi-page PDFs, `len(result["segments"])` matches the expected page count (or `len(page_nums)` if used).
-- For `parse_with_schema`, each returned dict actually matches the schema keys — the LLM can drift; consider `example_schema` to anchor it.
+- For `parse_with_schema`, each per-page entry may be a `dict` or a `list` of `dict`s depending on the schema and the model. Check the type before indexing, and verify that the keys actually match the schema — the LLM can drift; pass `example_schema` to anchor it.
 
 ## See also
 

@@ -64,7 +64,11 @@ You can modify the ``test_attributes`` list in the ``main()`` function to test d
 * ``model``: Test different LLM models
 * ``framework``: Test different static parsing frameworks (``pdfplumber``, ``pdfminer``, ``paddleocr``)
 * ``pages_per_split``: Adjust document chunking
-* ``max_threads``: Number of parallel workers (mapped to ``max_processes`` in the public :py:func:`lexoid.api.parse` API)
+
+.. note::
+
+   The benchmark harness currently hard-codes ``max_processes=1`` when calling :py:func:`lexoid.api.parse`, so configurations under the ``max_threads`` sweep knob in ``benchmark.py`` do not actually change
+   ``parse()``'s parallelism. To benchmark parallelism, edit ``tests/benchmark.py`` to forward the sweep value to ``max_processes``.
 
 Benchmark Results
 -----------------
