@@ -75,16 +75,16 @@ parse
    * ``bbox_framework`` (str): Framework used for bounding box extraction when ``return_bboxes=True``. One of ``"auto"`` (default — chooses ``paddleocr`` or ``pdfplumber`` based on file content), ``"pdfplumber"``, or ``"paddleocr"``.
 
    Return value format:
-   A dictionary with the following keys. Keys marked *(optional)* are only present in specific configurations; all others are always present (and may hold an empty string / list / zeroed dict).
+   A dictionary with the following keys. Keys marked *(optional)* are only present in specific configurations; the others are present on the standard parsing path (and may hold an empty string / list / zeroed dict).
 
    * ``raw``: Full markdown content as a string.
    * ``segments``: List of dictionaries with per-segment ``metadata`` (e.g., ``page``) and ``content``. For PDFs, a segment is a page; for webpages, a segment is a section (heading and its content). When ``return_bboxes=True``, each segment additionally carries a ``bboxes`` key (a list of ``(text, [x0, top, x1, bottom])`` tuples normalized to ``[0, 1]``).
    * ``title``: Title of the document (defaults to the input file's basename).
    * ``url``: Original URL if the input was a URL, otherwise an empty string.
    * ``parent_title``: Title of the parent document when this result was produced by recursive crawling; otherwise an empty string.
-   * ``recursive_docs``: List of recursively-parsed sub-documents. Always present; empty unless ``depth > 1``.
-   * ``token_usage``: Dictionary with ``input``, ``output``, ``total``, and ``llm_page_count`` token statistics. Counts are zero when only ``STATIC_PARSE`` ran.
-   * ``parsers_used``: List of parser names that actually ran, one entry per chunk (e.g., ``["LLM_PARSE", "STATIC_PARSE"]``).
+   * ``recursive_docs``: List of recursively-parsed sub-documents. Empty unless ``depth > 1``.
+   * ``token_usage`` *(optional)*: Dictionary with ``input``, ``output``, ``total``, and ``llm_page_count`` token statistics. Counts are zero when only ``STATIC_PARSE`` ran. **Absent on the HTML/recursive-URL path** — when ``path`` is a URL that is not a supported file-typed URL (e.g., ``.pdf``/image) and ``as_pdf`` is not set, ``parse()`` returns the output of ``recursive_read_html`` directly, which does not include this key.
+   * ``parsers_used`` *(optional)*: List of parser names that actually ran, one entry per chunk (e.g., ``["LLM_PARSE", "STATIC_PARSE"]``). **Absent on the HTML/recursive-URL path** for the same reason as ``token_usage``.
    * ``token_cost`` *(optional)*: Estimated cost broken down by token category. Only present when ``api_cost_mapping`` is supplied and contains an entry for the resolved model.
    * ``pdf_path`` *(optional)*: Path to the intermediate PDF generated when ``as_pdf=True``. To keep the file readable after ``parse()`` returns, also pass ``save_dir`` — otherwise the PDF is written inside a temporary directory that is removed on return.
 
@@ -124,7 +124,7 @@ parse_with_schema
 
    The function returns a Python list of the JSON values parsed from the model. The exact shape depends on the mode and on the schema:
 
-   * **Default (per-page) mode** — one entry per page, in page order. Each entry is the JSON value the model produced for that page. If the schema describes a single record, expect one ``dict`` per page; if the schema describes multiple records per page (e.g., table rows), expect a ``list`` of ``dict``\ s per page. Concretely, indexing follows ``result[page_index][record_index]`` when each page contains multiple records.
+   * **Default (per-page) mode** — one entry per page, in page order. Each entry is the JSON value the model produced for that page. If the schema describes a single record, expect one ``dict`` per page; if the schema describes multiple records per page (e.g., table rows), expect a ``list`` of ``dict``\s per page. Concretely, indexing follows ``result[page_index][record_index]`` when each page contains multiple records.
    * **``fill_single_schema=True``** — a single-element list whose lone element is the JSON value the model produced for the whole document (typically a single ``dict``).
 
    Because the shape is driven by the model's output, callers that need to support both single-record and multi-record schemas should normalize the per-page entries themselves (e.g., wrap ``dict`` entries in a one-element ``list``).

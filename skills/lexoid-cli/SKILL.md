@@ -22,7 +22,8 @@ Before invoking, confirm:
 1. `lexoid` is installed (`lexoid --help` or `python -m lexoid --help`). If not, run `pip install lexoid`.
 2. For LLM-based commands, the relevant API key env var is set:
    - `GOOGLE_API_KEY` (Gemini, default), `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `MISTRAL_API_KEY`, `HUGGINGFACEHUB_API_TOKEN`, `TOGETHER_API_KEY`, `OPENROUTER_API_KEY`, `FIREWORKS_API_KEY`.
-   - Ollama / local backends need no key but need a running server / pulled model.
+   - Ollama needs no key, but needs `ollama serve` running at `OLLAMA_BASE_URL` (default `http://localhost:11434`) and the target model pulled (`ollama pull <model>`).
+   - Local backends (SmolDocling/granite-docling, PaddleOCR-VL) need no key and no server — they run in-process; the first call downloads weights from Hugging Face.
 3. For Linux DOCX → PDF, LibreOffice (`lowriter`) must be installed.
 
 ## Commands

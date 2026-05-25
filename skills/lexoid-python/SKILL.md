@@ -21,7 +21,8 @@ Before writing code, confirm:
 1. `lexoid` is installed (`pip install lexoid`).
 2. Required API key env vars are set for the chosen provider (see below).
 3. For Linux DOCX → PDF conversion, LibreOffice (`lowriter`) is on PATH.
-4. For Ollama / local LLMs, the server is running and the target model is pulled.
+4. For `api_provider="ollama"`: an `ollama serve` process is running at `OLLAMA_BASE_URL` (default `http://localhost:11434`) and the target model has been pulled with `ollama pull <model>`.
+5. For `api_provider="local"` (SmolDocling/granite-docling, PaddleOCR-VL): **no server needed** — these models run in-process via `transformers` / PaddleOCR. The first call downloads weights from Hugging Face, so the host needs network access (or pre-cached weights) and enough disk/RAM/GPU for the chosen model.
 
 API keys by provider:
 
@@ -54,7 +55,7 @@ Four entry points in `lexoid.api`:
 ```python
 {
     "raw": str,                  # full markdown
-    "segments": [                # one dict per page / section; always present (may be empty)
+    "segments": [                # one dict per page / section; may be empty
         # bboxes is included only when return_bboxes=True
         {"metadata": {"page": int}, "content": str, "bboxes": [(text, [x0, top, x1, bottom]), ...]},
         ...
@@ -62,14 +63,23 @@ Four entry points in `lexoid.api`:
     "title": str,
     "url": str,                  # input URL or "" if input was a local file
     "parent_title": str,         # parent doc title when recursive; "" otherwise
-    "recursive_docs": [...],     # always present; empty unless depth > 1
-    "token_usage": {"input": int, "output": int, "total": int, "llm_page_count": int},  # zeros under STATIC_PARSE only
-    "parsers_used": [str, ...],  # which parser ran per chunk
+    "recursive_docs": [...],     # empty unless depth > 1
     # --- optional keys below ---
+    "token_usage": {"input": int, "output": int, "total": int, "llm_page_count": int},
+        # zeros under STATIC_PARSE-only; ABSENT on the HTML/recursive-URL path
+        # (URL input that isn't a file-typed URL and as_pdf is not set)
+    "parsers_used": [str, ...],  # ABSENT on the HTML/recursive-URL path (same condition)
     "token_cost": {...},         # only when api_cost_mapping is supplied
     "pdf_path": str,             # only when as_pdf=True; file is removed unless save_dir is also set
 }
 ```
+
+For URL inputs that resolve to HTML (no `.pdf`/image extension, and
+`as_pdf=False`), `parse()` short-circuits to `recursive_read_html()`,
+which returns only `raw`, `segments`, `title`, `url`, `parent_title`,
+and `recursive_docs`. Code that always reads `result["token_usage"]` or
+`result["parsers_used"]` will `KeyError` on that path — use `.get(...)`
+or guard with `if "token_usage" in result`.
 
 ## Common recipes
 
