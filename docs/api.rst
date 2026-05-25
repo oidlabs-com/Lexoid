@@ -80,7 +80,7 @@ parse
    * ``parent_title``: Title of the parent document, if recursively parsed.
    * ``recursive_docs``: List of dictionaries for recursively-parsed sub-documents (when ``depth > 1``).
    * ``token_usage``: Dictionary with ``input``, ``output``, ``total``, and ``llm_page_count`` token statistics.
-   * ``token_cost``: Estimated cost per token category (only when ``api_cost_mapping`` is supplied).
+   * ``token_cost``: Estimated cost per token category (only when ``api_cost_mapping`` is supplied and contains an entry for the resolved model).
    * ``parsers_used``: List of parser names actually used for each chunk (e.g., ``["LLM_PARSE", "STATIC_PARSE"]``).
    * ``pdf_path``: Path to the intermediate PDF generated when ``as_pdf=True`` and ``save_dir`` is specified.
    * ``error``: Present only when an unrecoverable error occurred (parsing returned a fallback empty result).
