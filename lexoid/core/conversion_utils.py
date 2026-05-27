@@ -3,9 +3,10 @@ import dataclasses
 import io
 import mimetypes
 import os
+import shutil
 import subprocess
 import sys
-from typing import Any, Dict, List, Tuple, Type, Union, get_args, get_origin
+from typing import Any, Dict, List, Optional, Tuple, Type, Union, get_args, get_origin
 
 import cv2
 import docx2pdf
@@ -161,31 +162,94 @@ def save_webpage_as_pdf(url: str, output_path: str) -> str:
     return output_path
 
 
+def _is_valid_pdf(path: str) -> bool:
+    """Check that the file exists and starts with a PDF header."""
+    if not os.path.isfile(path):
+        return False
+    try:
+        with open(path, "rb") as f:
+            return f.read(5) == b"%PDF-"
+    except Exception:
+        return False
+
+
+def _find_soffice_binary() -> Optional[str]:
+    """Locate the LibreOffice binary on the system."""
+    candidates = ["soffice", "lowriter"]
+
+    if sys.platform == "darwin":
+        candidates.extend(
+            [
+                "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+            ]
+        )
+    elif sys.platform == "win32":
+        candidates.extend(
+            [
+                os.path.expandvars(r"%ProgramFiles%\LibreOffice\program\soffice.exe"),
+                os.path.expandvars(r"%ProgramFiles(x86)%\LibreOffice\program\soffice.exe"),
+            ]
+        )
+
+    for candidate in candidates:
+        if shutil.which(candidate) or os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _convert_with_soffice(input_path: str, output_dir: str) -> str:
+    """Convert a document to PDF using LibreOffice."""
+    binary = _find_soffice_binary()
+    if not binary:
+        raise RuntimeError(
+            "LibreOffice is not installed. Install it or ensure docx2pdf works."
+        )
+
+    subprocess.run(
+        [
+            binary,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            output_dir,
+            input_path,
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+    return os.path.join(
+        output_dir,
+        os.path.splitext(os.path.basename(input_path))[0] + ".pdf",
+    )
+
+
 def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
+    # Resolve to absolute paths — docx2pdf / COM / AppleScript require them
+    input_path = os.path.abspath(input_path)
+    temp_dir = os.path.abspath(temp_dir)
+
     temp_path = os.path.join(
         temp_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
     )
 
-    # Convert the document to PDF
-    # docx2pdf is not supported in linux. Use LibreOffice in linux instead.
-    # May need to install LibreOffice if not already installed.
-    if "linux" in sys.platform.lower():
-        subprocess.run(
-            [
-                "lowriter",
-                "--headless",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                temp_dir,
-                input_path,
-            ],
-            check=True,
-        )
+    if sys.platform.startswith("linux"):
+        temp_path = _convert_with_soffice(input_path, temp_dir)
     else:
-        docx2pdf.convert(input_path, temp_path)
+        try:
+            docx2pdf.convert(input_path, temp_path)
+        except Exception:
+            logger.warning(
+                "docx2pdf failed, falling back to LibreOffice for conversion"
+            )
+            temp_path = _convert_with_soffice(input_path, temp_dir)
 
-    # Return the path of the converted PDF
+    if not _is_valid_pdf(temp_path):
+        raise RuntimeError(
+            f"PDF conversion produced an invalid or missing file: {temp_path}"
+        )
+
     return temp_path
 
 

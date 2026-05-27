@@ -26,17 +26,17 @@ models = [
 @pytest.mark.parametrize("model", models)
 async def test_llm_parse(model):
     input_data = "examples/inputs/test_1.pdf"
-    expected_ouput_path = "examples/outputs/test_1.md"
+    expected_output_path = "examples/outputs/test_1.md"
     config = {"parser_type": "LLM_PARSE", "model": model, "verbose": True}
     result = parse(input_data, **config)["raw"]
     assert isinstance(result, str)
 
     # Compare the result with the expected output
-    expected_ouput = open(expected_ouput_path, "r").read()
+    expected_output = open(expected_output_path, "r").read()
     # save the result to a file
     with open(f"{output_dir}/input_table_{model.replace('/', '_')}.md", "w") as f:
         f.write(result)
-    score = calculate_similarities(result, expected_ouput)["sequence_matcher"]
+    score = calculate_similarities(result, expected_output)["sequence_matcher"]
     assert round(score, 3) > 0.75
 
 
@@ -44,18 +44,18 @@ async def test_llm_parse(model):
 @pytest.mark.parametrize("model", models)
 async def test_jpg_parse(model):
     input_data = "examples/inputs/test_4.jpg"
-    expected_ouput_path = "examples/outputs/test_4.md"
+    expected_output_path = "examples/outputs/test_4.md"
     config = {"parser_type": "LLM_PARSE", "model": model}
     result = parse(input_data, **config)["raw"]
     assert isinstance(result, str)
 
     # Compare the result with the expected output
-    expected_ouput = open(expected_ouput_path, "r").read()
+    expected_output = open(expected_output_path, "r").read()
     # save the result to a file
     m_name = model.replace("/", "_")
     with open(f"{output_dir}/input_image_{m_name}.md", "w") as f:
         f.write(result)
-    score = calculate_similarities(result, expected_ouput)["sequence_matcher"]
+    score = calculate_similarities(result, expected_output)["sequence_matcher"]
     assert round(score, 3) > 0.8
 
 
