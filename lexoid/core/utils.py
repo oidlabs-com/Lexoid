@@ -13,7 +13,6 @@ import pikepdf
 import requests
 from bs4 import BeautifulSoup
 from Levenshtein import distance
-from lexoid.core.llm_selector import DocumentRankedLLMSelector
 from loguru import logger
 from markdown import markdown
 from markdownify import markdownify as md
@@ -22,7 +21,10 @@ from matplotlib import pyplot as plt
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 DEFAULT_LLM = os.getenv("DEFAULT_LLM", "gemini-2.5-flash")
 DEFAULT_LOCAL_LM = os.getenv("DEFAULT_LOCAL_LM", "ds4sd/SmolDocling-256M-preview")
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 DEFAULT_STATIC_FRAMEWORK = os.getenv("DEFAULT_STATIC_FRAMEWORK", "pdfplumber")
+DEFAULT_MAX_IMAGE_DIMENSION = int(os.getenv("DEFAULT_MAX_IMAGE_DIMENSION", "1000"))
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
@@ -61,7 +63,9 @@ def get_file_type(path: str) -> str:
 
 
 def resize_image_if_needed(
-    path: str, max_dimension: int = 1500, tmpdir: Optional[str] = None
+    path: str,
+    max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
+    tmpdir: Optional[str] = None,
 ) -> str:
     """Resize image if its dimensions exceed max_dimension."""
     from PIL import Image
@@ -496,6 +500,8 @@ def get_api_provider_for_model(model: str) -> str:
         return "mistral"
     if "docling" in model.lower():
         return "local"
+    if model.lower().startswith("paddlepaddle/paddleocr-vl"):
+        return "local"
     raise ValueError(f"Unsupported model: {model}")
 
 
@@ -531,6 +537,8 @@ def router(path: str, priority: str = "speed", autoselect_llm: bool = False) -> 
     """
     model_name = None
     if autoselect_llm:
+        from lexoid.core.llm_selector import DocumentRankedLLMSelector
+
         logger.debug("Autoselecting LLM for parsing.")
         model_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "model_data"

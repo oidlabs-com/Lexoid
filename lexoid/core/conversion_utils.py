@@ -12,12 +12,15 @@ import cv2
 import docx2pdf
 import numpy as np
 import pypdfium2 as pdfium
+from lexoid.core.utils import DEFAULT_MAX_IMAGE_DIMENSION
 from loguru import logger
 from PIL import Image
 
 
 def convert_pdf_page_to_base64(
-    pdf_document: pdfium.PdfDocument, page_number: int, max_dimension: int = 1500
+    pdf_document: pdfium.PdfDocument,
+    page_number: int,
+    max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION,
 ) -> str:
     """Convert a PDF page to a base64-encoded PNG string."""
     page = pdf_document[page_number]
@@ -43,14 +46,14 @@ def convert_pdf_page_to_base64(
 
 
 def convert_doc_to_base64_images(
-    path: str, max_dimension: int = 1500
+    path: str, max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION
 ) -> List[Tuple[int, str]]:
     """
     Converts a document (PDF or image) to a base64 encoded string.
 
     Args:
         path (str): Path to the document.
-        max_dimension (int): Maximum dimension (width or height) for the output images. Default is 1500.
+        max_dimension (int): Maximum dimension (width or height) for the output images.
 
     Returns:
         List[Tuple[int, str]]: A list of tuples where each tuple contains the page number

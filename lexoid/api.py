@@ -2,15 +2,13 @@ import json
 import os
 import re
 import tempfile
+import textwrap
 from concurrent.futures import ProcessPoolExecutor
 from enum import Enum
 from functools import wraps
 from glob import glob
-import textwrap
 from time import time
 from typing import Dict, List, Optional, Type, Union
-
-from loguru import logger
 
 from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
@@ -31,6 +29,7 @@ from lexoid.core.prompt_templates import (
 )
 from lexoid.core.utils import (
     DEFAULT_LLM,
+    DEFAULT_MAX_IMAGE_DIMENSION,
     DEFAULT_STATIC_FRAMEWORK,
     bbox_router,
     create_sub_pdf,
@@ -45,6 +44,7 @@ from lexoid.core.utils import (
     router,
     split_pdf,
 )
+from loguru import logger
 
 
 class ParserType(Enum):
@@ -159,6 +159,20 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
 
     result["parser_used"] = parser_type
 
+    # Log page numbers that were parsed in this chunk
+    try:
+        pages = [
+            seg.get("metadata", {}).get("page")
+            for seg in result.get("segments", [])
+            if seg.get("metadata") and "page" in seg.get("metadata", {})
+        ]
+        if pages:
+            logger.debug(
+                f"Completed parsing pages: {pages} for file: {os.path.basename(path)}"
+            )
+    except Exception as e:
+        # Non-fatal: logging should not break parsing
+        logger.warning(f"Failed to log parsed page numbers: {e}")
     return_bboxes = kwargs.get("return_bboxes", False)
     has_bboxes = bool(
         result["segments"] and result["segments"][0].get("bboxes")
@@ -257,6 +271,16 @@ def parse(
     if type(parser_type) is str:
         parser_type = ParserType[parser_type]
     if (
+        parser_type == ParserType.LLM_PARSE
+        and kwargs.get("api_provider") == "ollama"
+        and max_processes != 1
+    ):
+        logger.warning(
+            "Ollama local inference does not support Lexoid multiprocess fanout well. "
+            "Forcing max_processes=1."
+        )
+        max_processes = 1
+    if (
         path.lower().endswith((".doc", ".docx"))
         and parser_type != ParserType.STATIC_PARSE
     ):
@@ -294,7 +318,9 @@ def parse(
 
         if "image" in get_file_type(path):
             # Resize image if too large
-            max_dimension = kwargs.get("max_image_dimension", 1500)
+            max_dimension = kwargs.get(
+                "max_image_dimension", DEFAULT_MAX_IMAGE_DIMENSION
+            )
             path = resize_image_if_needed(
                 path, max_dimension=max_dimension, tmpdir=temp_dir
             )

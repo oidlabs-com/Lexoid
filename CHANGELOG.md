@@ -233,3 +233,17 @@
 
 ### Changed
 * Updated benchmark with Gemini 3 and GPT 5.2
+
+## [0.1.21]
+
+### Added
+* Lexoid CLI for parsing documents from the terminal
+* Support for PaddleOCR-VL models
+* Support for Ollama models for local parsing
+
+### Changed
+* Set default LLM to `gemini-2.5-flash`
+
+### Fixed
+* Replaced MD5 hashing with SHA-256
+* Miscellaneous minor bug fixes

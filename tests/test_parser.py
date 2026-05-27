@@ -6,9 +6,8 @@ import os
 import pytest
 from benchmark_utils import calculate_similarities
 from dotenv import load_dotenv
-from loguru import logger
-
 from lexoid.api import parse, parse_with_schema
+from loguru import logger
 
 load_dotenv()
 output_dir = "tests/outputs"
@@ -92,7 +91,7 @@ async def test_static_parse_images():
 )
 async def test_url_detection_auto_routing(sample):
     patterns = ["http", "https", "www"]
-    model_type = "gemini-1.5-pro"
+    model_type = "gemini-2.5-pro"
     config = {"parser_type": "AUTO", "model": model_type, "verbose": True}
     result = parse(sample, **config)["raw"]
     assert isinstance(result, str)
@@ -483,3 +482,30 @@ async def test_audio_parse():
     path = "examples/inputs/audio/harvard.wav"
     parsed_md = parse(path, parser_type="LLM_PARSE", model="gemini-2.5-flash")["raw"]
     assert "zestful food is the hot cross bun" in parsed_md
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "input_file,expected_keywords",
+    [
+        ("examples/inputs/costco_bill.jpg", ["costco"]),
+        ("examples/inputs/test_1.pdf", ["Blind", "Low Vision", "Results"]),
+    ],
+)
+async def test_ollama_parse_integration(input_file: str, expected_keywords: list):
+    if not os.getenv("RUN_OLLAMA_TESTS"):
+        pytest.skip("RUN_OLLAMA_TESTS is not enabled")
+
+    result = parse(
+        input_file,
+        parser_type="LLM_PARSE",
+        api_provider="ollama",
+        model="gemma4:latest",
+        max_processes=1,
+        max_image_dimension=1024,
+    )
+    assert isinstance(result["raw"], str)
+    logger.info(f"Ollama parse result: {result['raw'][:100]}")
+    assert result["raw"].strip()
+    for keyword in expected_keywords:
+        assert keyword.lower() in result["raw"].lower()

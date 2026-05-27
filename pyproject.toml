@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.21.dev0"
+version = "0.1.21"
 description = ""
 authors = []
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-google-generativeai = "^0.8.1"
+click = "^8.0.0"
 openai = "^2.18.0"
 pikepdf = "^9.3.0"
 pdfplumber = "^0.11.4"
@@ -36,7 +36,7 @@ transformers = "^4.51.3"
 torch = "^2.7.0"
 scikit-learn = "^1.7.1"
 scikit-image = "^0.25.2"
-paddleocr = "^3.2.0"
+paddleocr = {version = "^3.3.0", extras = ["doc-parser"]}
 matplotlib = "^3.10.6"
 paddlepaddle = "3.2.2"
 levenshtein = "^0.27.1"
@@ -53,6 +53,9 @@ pytest = "^8.3.2"
 sphinx = "^8.1.3"
 pydata-sphinx-theme = "^0.16.1"
 docutils = "^0.21.2"
+
+[tool.poetry.scripts]
+lexoid = "lexoid.cli:app"
 
 [build-system]
 requires = ["poetry-core", "wheel"]
