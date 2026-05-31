@@ -39,6 +39,24 @@ API keys by provider:
 | `ollama`     | none (uses `OLLAMA_BASE_URL`) |
 | `local`      | none                          |
 
+### Loading API keys from `.env`
+
+Lexoid reads API keys from the process environment; it does **not** load a `.env` file on its own. When keys live in a project `.env`, load them before calling any LLM-based API (`LLM_PARSE`, `parse_with_schema`, `parse_to_latex`, or `AUTO` when it routes to an LLM). `python-dotenv` ships as a Lexoid dependency, so it is already available:
+
+```python
+from dotenv import load_dotenv
+
+# Loads .env from the current dir (or a parent) into os.environ if the file
+# exists; a no-op that returns False when no .env is found. Existing env vars
+# are not overwritten unless override=True is passed.
+load_dotenv()
+
+from lexoid.api import parse
+result = parse("document.pdf", parser_type="LLM_PARSE", model="gpt-4o")
+```
+
+Call `load_dotenv()` once at program/notebook startup, before the first `parse(...)` call. If the keys are already exported in the environment, this step is unnecessary (and harmless).
+
 ## Public API
 
 Four entry points in `lexoid.api`:

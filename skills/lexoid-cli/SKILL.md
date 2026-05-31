@@ -26,6 +26,21 @@ Before invoking, confirm:
    - Local backends (SmolDocling/granite-docling, PaddleOCR-VL) need no key and no server — they run in-process; the first call downloads weights from Hugging Face.
 3. For Linux DOCX → PDF, LibreOffice (`lowriter`) must be installed.
 
+### Loading API keys from `.env`
+
+API keys are commonly stored in a `.env` file at the project root rather than exported in the shell. The `lexoid` CLI does **not** auto-load `.env`, so for any LLM-based command (`LLM_PARSE`, `schema`, `latex`, or `AUTO` when it routes to an LLM) you must load it yourself.
+
+**Always load `.env` in a subshell so the keys never leak into the surrounding environment** — the parentheses scope the `export`s to that one command, restoring the environment to its previous state automatically afterward. Guard the source with `[ -f .env ]` so the command still runs (using already-exported keys) when no `.env` is present:
+
+```bash
+# Load .env for this command only (if it exists); env is reset to its prior state on exit
+( set -a; [ -f .env ] && . ./.env; set +a; lexoid parse --input document.pdf --parser-type LLM_PARSE --model gpt-4o )
+```
+
+Do **not** run a bare `set -a; . ./.env; set +a` in the parent shell — that persists secrets into the session.
+
+**The examples in the rest of this skill are written as plain `lexoid …` for readability.** Apply the wrapper above to any LLM-based command (`LLM_PARSE`, `schema`, `latex`, or `AUTO` when it routes to an LLM). If your keys are already exported in the environment, run the commands as-is.
+
 ## Commands
 
 ### `lexoid parse` — Markdown / JSON output
@@ -42,13 +57,13 @@ lexoid parse --input document.pdf --output output.md
 # Full result as JSON (includes per-page segments, token usage, parsers_used)
 lexoid parse --input document.pdf --format json --output result.json
 
+# Explicit LLM parsing (forces an LLM regardless of routing). LLM-based: load .env first.
+lexoid parse --input document.pdf --parser-type LLM_PARSE --model gpt-4o
+lexoid parse --input document.pdf --parser-type LLM_PARSE --model claude-3-5-sonnet-20241022
+lexoid parse --input scanned.pdf --parser-type LLM_PARSE --model mistral-ocr-latest
+
 # Force static parsing (no LLM, no API key needed for PDFs)
 lexoid parse --input document.pdf --parser-type STATIC_PARSE --framework pdfplumber
-
-# LLM parsing with a specific model
-lexoid parse --input document.pdf --model gpt-4o
-lexoid parse --input document.pdf --model claude-3-5-sonnet-20241022
-lexoid parse --input scanned.pdf --model mistral-ocr-latest
 
 # Parse a URL
 lexoid parse --input https://example.com --output page.md
@@ -62,6 +77,8 @@ Key flags: `--parser-type` (`AUTO`/`LLM_PARSE`/`STATIC_PARSE`), `--model`, `--fr
 ### `lexoid schema` — Structured extraction
 
 Extract data conforming to a JSON schema. Schema can be a file path or inline JSON.
+
+All `schema` commands are LLM-based — load `.env` first (see "Loading API keys from .env") unless keys are already exported.
 
 ```bash
 # Inline schema
@@ -87,6 +104,8 @@ Defaults: model `gpt-4o-mini`. The provider is auto-detected from the model name
 
 Convert a document to a self-contained LaTeX source.
 
+LaTeX conversion is LLM-based — load `.env` first (see "Loading API keys from .env") unless keys are already exported.
+
 ```bash
 lexoid latex --input paper.pdf --output paper.tex
 lexoid latex --input paper.pdf --model gpt-4o
@@ -103,14 +122,16 @@ lexoid parse --input report.pdf --format json | jq '.token_usage'
 
 ## Common patterns
 
-- **Cheap path first**: try `--parser-type STATIC_PARSE --framework pdfplumber` for native-text PDFs. Fall back to `--parser-type LLM_PARSE` for scans, tables-heavy pages, or hand-written content.
-- **Scanned PDFs / images**: use `--framework paddleocr` (no API key) or an LLM model with vision.
+- **Default to `AUTO`**: with no `--parser-type`, the CLI uses `AUTO`, which inspects the document and routes to the best parser (often an LLM for scans, charts, or complex tables). This is the right choice unless the user asks otherwise.
+- **`STATIC_PARSE` is opt-in, not the default**: choose it when the user explicitly wants no API calls / no cost, or you know the input is a clean native-text PDF. It returns empty output on scanned/image-only pages, so it is not a safe first guess for unknown documents.
+- **`LLM_PARSE` for quality**: force it with `--parser-type LLM_PARSE --model <model>` for scans, chart/figure-heavy pages, or messy tables where layout fidelity matters.
+- **Scanned PDFs / images**: use `--parser-type STATIC_PARSE --framework paddleocr` (no API key) or an LLM model with vision.
 - **Batch**: drive the CLI from a shell loop (`for f in inputs/*.pdf; do lexoid parse -i "$f" -o "out/${f%.pdf}.md"; done`).
 - **Debug**: add `--verbose` to surface loguru logs to stderr.
 
 ## Failure modes to watch for
 
-- Missing API key → CLI raises a clean error naming the env var. Set it and retry.
+- Missing API key → CLI raises a clean error naming the env var. The CLI does not auto-load `.env`; load it via the subshell wrapper (see "Loading API keys from .env") and retry.
 - DOCX on Linux without LibreOffice installed → conversion to PDF fails. Install `libreoffice`.
 - `--model` and `--api` mismatch → use `--api` only to override an auto-inferred provider (e.g., to send a model through OpenRouter).
 - Ollama: must run `ollama serve` and `ollama pull <model>` first; the CLI does not start the server.
