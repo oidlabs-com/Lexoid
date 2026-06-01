@@ -1,6 +1,9 @@
+import hashlib
+import json
+import multiprocessing as mp
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from glob import glob
 from pathlib import Path
 from statistics import mean, stdev
@@ -14,11 +17,63 @@ from benchmark_utils import calculate_similarities, METRIC_NAMES
 
 load_dotenv()
 
+# When set, each parse() call runs in a fresh subprocess so framework memory
+# (PaddlePaddle allocator pools, CUDA caches, etc.) is reclaimed between files.
+# Required for PaddleOCR-VL benchmarks on memory-constrained machines.
+ISOLATE_PARSE = os.environ.get("BENCHMARK_ISOLATE", "0") == "1"
+
+
+def _parse_worker(input_path: str, parse_kwargs: Dict, queue: mp.Queue) -> None:
+    try:
+        from lexoid.api import parse as _parse
+
+        result = _parse(input_path, **parse_kwargs)
+        queue.put(
+            {
+                "raw": result["raw"],
+                "token_cost": result.get("token_cost", {"total": 0.0}),
+                "token_usage": result.get("token_usage", {}),
+            }
+        )
+    except Exception as e:
+        import traceback
+
+        queue.put(
+            {
+                "error": f"{type(e).__name__}: {e}",
+                "traceback": traceback.format_exc(),
+            }
+        )
+
+
+def _parse_isolated(input_path: str, parse_kwargs: Dict) -> Dict:
+    """Run parse() in a fresh subprocess and return the result dict."""
+    ctx = mp.get_context("spawn")
+    queue: mp.Queue = ctx.Queue()
+    proc = ctx.Process(target=_parse_worker, args=(input_path, parse_kwargs, queue))
+    proc.start()
+    proc.join()
+    if proc.exitcode != 0 and queue.empty():
+        raise RuntimeError(
+            f"Subprocess crashed (exitcode={proc.exitcode}) while parsing {input_path}"
+        )
+    result = queue.get()
+    if "error" in result:
+        tb = result.get("traceback", "")
+        if tb:
+            print("\n--- Subprocess traceback ---\n" + tb, flush=True)
+        raise RuntimeError(result["error"])
+    return result
+
+
 config_options = {
     "parser_type": ["LLM_PARSE", "STATIC_PARSE", "AUTO"],
     "model": [
         # # Google models
-        "gemini-3-flash-preview",
+        # "gemini-3.5-flash",
+        "gemini-3.1-pro-preview",
+        # "gemini-3.1-flash-lite",
+        # "gemini-3-flash-preview",
         # "gemini-3-pro-preview",
         # "gemini-3-pro-image-preview",
         # "gemini-2.5-flash",
@@ -35,6 +90,12 @@ config_options = {
         # "claude-3-7-sonnet-20250219",
         # "claude-3-5-sonnet-20241022",
         # # OpenAI models
+        # "gpt-5.5",
+        # "gpt-5.5-pro",
+        # "gpt-5.4",
+        # "gpt-5.4-mini",
+        # "gpt-5.4-nano",
+        # "gpt-5.4-pro",
         # "gpt-5.2",
         # "gpt-5",
         # "gpt-5-mini",
@@ -56,6 +117,8 @@ config_options = {
         # Local model
         # "ds4sd/SmolDocling-256M-preview",
         # "ibm-granite/granite-docling-258M",
+        # "PaddlePaddle/PaddleOCR-VL",
+        # "PaddlePaddle/PaddleOCR-VL-1.5",
     ],
     "framework": ["pdfminer", "pdfplumber"],
     "pages_per_split": [1, 2, 4, 8],
@@ -74,7 +137,45 @@ class BenchmarkResult:
     std_similarity: Optional[Dict] = None
     execution_time: Optional[List[float]] = None
     cost: Optional[List[float]] = None
+    # Per-iteration token usage dicts ({"input", "output", "total"}). Saved to
+    # the progress cache so cost can be recomputed later even if pricing was
+    # missing (or zero) at run time.
+    token_usage: Optional[List[Dict]] = None
     error: Optional[str] = None
+
+
+def _cache_key(input_path: str, config: Dict) -> str:
+    """Deterministic filename for caching a (config, input_file) result."""
+    payload = json.dumps(
+        {"input": os.path.basename(input_path), "config": config},
+        sort_keys=True,
+        default=str,
+    )
+    digest = hashlib.sha1(payload.encode()).hexdigest()[:12]
+    return f"{Path(input_path).stem}_{digest}.json"
+
+
+def _load_cached_result(
+    cache_dir: str, input_path: str, config: Dict
+) -> Optional[BenchmarkResult]:
+    path = os.path.join(cache_dir, _cache_key(input_path, config))
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r") as fp:
+            data = json.load(fp)
+    except (json.JSONDecodeError, OSError):
+        return None
+    return BenchmarkResult(**data)
+
+
+def _save_cached_result(
+    cache_dir: str, input_path: str, result: BenchmarkResult
+) -> None:
+    os.makedirs(cache_dir, exist_ok=True)
+    path = os.path.join(cache_dir, _cache_key(input_path, result.config))
+    with open(path, "w") as fp:
+        json.dump(asdict(result), fp, indent=2, default=str)
 
 
 def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, str]]:
@@ -109,62 +210,78 @@ def run_benchmark_config(
     iterations: int = 1,
 ) -> BenchmarkResult:
     """Run a single benchmark configuration for a specified number of iterations."""
+    # Ensure parser_type is set on config before we compute the cache key,
+    # so cache lookups are consistent across runs.
+    config["parser_type"] = config.get(
+        "parser_type",
+        (
+            "LLM_PARSE"
+            if "model" in config
+            else ("STATIC_PARSE" if "framework" in config else "AUTO")
+        ),
+    )
+
+    cache_dir = os.path.join(output_save_dir, "progress") if output_save_dir else None
+    if cache_dir:
+        cached = _load_cached_result(cache_dir, input_path, config)
+        if cached is not None and cached.error is None:
+            print(
+                f"  [cached] {Path(input_path).name} — skipping (found prior successful result)"
+            )
+            return cached
+
     similarities = []
     execution_times = []
     costs = []
+    token_usages = []
     error = None
 
     for _ in range(iterations):
-        try:
-            start_time = time.time()
-            config["parser_type"] = config.get(
-                "parser_type",
-                (
-                    "LLM_PARSE"
-                    if "model" in config
-                    else ("STATIC_PARSE" if "framework" in config else "AUTO")
-                ),
-            )
-            result = parse(
-                input_path,
-                pages_per_split=1,
-                api_cost_mapping="tests/api_cost_mapping.json",
-                max_processes=1,
-                **config,
-            )
-            execution_time = time.time() - start_time
+        # DEBUG: try/except removed so the full RecursionError traceback propagates.
+        start_time = time.time()
+        parse_kwargs = {
+            "pages_per_split": 1,
+            "api_cost_mapping": "tests/api_cost_mapping.json",
+            "max_processes": 1,
+            **config,
+        }
+        if ISOLATE_PARSE:
+            result = _parse_isolated(input_path, parse_kwargs)
+        else:
+            result = parse(input_path, **parse_kwargs)
+        execution_time = time.time() - start_time
 
-            if output_save_dir:
-                filename = (
-                    f"{Path(input_path).stem}_"
-                    + ", ".join(
-                        [
-                            f"{key}={str(value).replace('/', '_')}"
-                            for key, value in config.items()
-                        ]
-                    )
-                    + f"{int(start_time)}.md"
+        if output_save_dir:
+            filename = (
+                f"{Path(input_path).stem}_"
+                + ", ".join(
+                    [
+                        f"{key}={str(value).replace('/', '_')}"
+                        for key, value in config.items()
+                    ]
                 )
-                with open(os.path.join(output_save_dir, filename), "w") as fp:
-                    fp.write(result["raw"])
+                + ".md"
+            )
+            with open(os.path.join(output_save_dir, filename), "w") as fp:
+                fp.write(result["raw"])
 
-            diff_path = os.path.join(
-                output_save_dir, f"{Path(input_path).stem}_diff.txt"
-            )
-            similarity_dict = calculate_similarities(
-                result["raw"],
-                ground_truth,
-                diff_save_path=diff_path,
-            )
-            similarities.append(similarity_dict)
-            execution_times.append(execution_time)
-            costs.append(
-                result["token_cost"]["total"] if "token_cost" in result else 0.0
-            )
-        except Exception as e:
-            print(f"Error running benchmark for config: {config}\n{e}")
-            error = str(e)
-            break  # Stop further iterations if an error occurs
+        diff_path = os.path.join(output_save_dir, f"{Path(input_path).stem}_diff.txt")
+        similarity_dict = calculate_similarities(
+            result["raw"],
+            ground_truth,
+            diff_save_path=diff_path,
+        )
+        similarities.append(similarity_dict)
+        execution_times.append(execution_time)
+        costs.append(result["token_cost"]["total"] if "token_cost" in result else 0.0)
+        tu = result.get("token_usage", {}) or {}
+        token_usages.append(
+            {
+                "input": tu.get("input", 0),
+                "output": tu.get("output", 0),
+                "total": tu.get("total", tu.get("input", 0) + tu.get("output", 0)),
+            }
+        )
 
     mean_similarity = (
         {metric: mean([s[metric] for s in similarities]) for metric in METRIC_NAMES}
@@ -177,15 +294,22 @@ def run_benchmark_config(
         else {metric: 0.0 for metric in METRIC_NAMES}
     )
 
-    return BenchmarkResult(
+    benchmark_result = BenchmarkResult(
         config=config,
         similarities=similarities,
         mean_similarity=mean_similarity,
         std_similarity=std_similarity,
         execution_time=execution_times,
         cost=costs,
+        token_usage=token_usages,
         error=error,
     )
+
+    # Only cache successful runs so failed ones are retried on rerun.
+    if cache_dir and error is None and similarities:
+        _save_cached_result(cache_dir, input_path, benchmark_result)
+
+    return benchmark_result
 
 
 def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
@@ -212,6 +336,15 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
         )
         avg_execution_time = mean(all_execution_times)
         avg_cost = mean(all_costs)
+        all_token_usages = [t for r in valid_results for t in (r.token_usage or [])]
+        avg_token_usage = (
+            {
+                field: mean([t.get(field, 0) for t in all_token_usages])
+                for field in ("input", "output", "total")
+            }
+            if all_token_usages
+            else {"input": 0, "output": 0, "total": 0}
+        )
         error = (
             None
             if len(valid_results) == len(results)
@@ -222,6 +355,7 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
         std_similarity = {}
         avg_execution_time = 0.0
         avg_cost = 0.0
+        avg_token_usage = {"input": 0, "output": 0, "total": 0}
         error = f"Failed: {len(results)}/{len(results)}"
 
     return BenchmarkResult(
@@ -231,6 +365,7 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
         std_similarity=std_similarity,
         execution_time=[avg_execution_time],
         cost=[avg_cost],
+        token_usage=[avg_token_usage],
         error=error,
     )
 
@@ -454,12 +589,14 @@ def main():
     # Can be either a single file or directory
     input_path = "examples/inputs"
     # input_path = "examples/inputs/grocery_bill.jpg"
+    # input_path = "examples/inputs/cvs_coupon.jpg"  # DEBUG: single file
     output_dir = "examples/outputs"
 
     run_id = "_".join(
         f"{attr}={','.join(map(str, config_options[attr]))}" for attr in test_attributes
     )[:50]
-    benchmark_output_dir = f"tests/outputs/benchmark_{run_id}_{int(time.time())}/"
+    run_id = run_id.replace(" ", "_").replace("/", "_")
+    benchmark_output_dir = f"tests/outputs/benchmark_{run_id}/"
     os.makedirs(benchmark_output_dir, exist_ok=True)
 
     # Number of iterations for each benchmark

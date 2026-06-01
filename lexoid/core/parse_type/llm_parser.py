@@ -593,7 +593,10 @@ def parse_image_with_gemini(
         elif kwargs["model"].startswith("gemini-2.5-flash"):
             generation_config["thinkingConfig"] = {"thinkingBudget": 0}
         elif kwargs["model"].startswith("gemini-3"):
-            generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
+            if "flash" in kwargs["model"]:
+                generation_config["thinkingConfig"] = {"thinkingLevel": "minimal"}
+            else:
+                generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
 
         parts.append({"inline_data": {"mime_type": mime_type, "data": base64_file}})
     payload = {

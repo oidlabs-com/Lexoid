@@ -1,4 +1,20 @@
 {
+    "gemini-3.5-flash": {
+        "input": 1.5,
+        "output": 9
+    },
+    "gemini-3.1-flash-lite": {
+        "input": 0.25,
+        "output": 1.5
+    },
+    "gemini-3.1-pro-preview": {
+        "input": 2,
+        "output": 12
+    },
+    "gemini-3.1-flash-image": {
+        "input": 0.5,
+        "output": 3
+    },
     "gemini-3-flash-preview": {
         "input": 0.5,
         "output": 3
@@ -40,6 +56,30 @@
     "gemini-1.5-pro": {
         "input": 1.25,
         "output": 5
+    },
+    "gpt-5.5": {
+        "input": 5,
+        "output": 30
+    },
+    "gpt-5.5-pro": {
+        "input": 30,
+        "output": 180
+    },
+    "gpt-5.4": {
+        "input": 2.5,
+        "output": 15
+    },
+    "gpt-5.4-mini": {
+        "input": 0.75,
+        "output": 4.5
+    },
+    "gpt-5.4-nano": {
+        "input": 0.2,
+        "output": 1.25
+    },
+    "gpt-5.4-pro": {
+        "input": 30,
+        "output": 180
     },
     "gpt-4o": {
         "input": 2.5,
