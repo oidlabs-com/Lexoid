@@ -798,17 +798,15 @@ def create_response(
                     },
                 },
             )
-        response = client.messages.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": content,
-                }
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        request_params = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max_tokens,
+        }
+        # Opus 4.7+ deprecated `temperature`
+        if not re.match(r"claude-opus-4-[78]$", model):
+            request_params["temperature"] = temperature
+        response = client.messages.create(**request_params)
 
         return {
             "response": response.content[0].text,

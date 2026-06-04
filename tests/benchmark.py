@@ -71,7 +71,7 @@ config_options = {
     "model": [
         # # Google models
         # "gemini-3.5-flash",
-        "gemini-3.1-pro-preview",
+        # "gemini-3.1-pro-preview",
         # "gemini-3.1-flash-lite",
         # "gemini-3-flash-preview",
         # "gemini-3-pro-preview",
@@ -85,6 +85,9 @@ config_options = {
         # "gemini-1.5-flash",
         # "gemini-1.5-pro",
         # # Claude models
+        "claude-opus-4-8",
+        # "claude-sonnet-4-6",
+        # "claude-haiku-4-5-20251001",
         # "claude-opus-4-20250514",
         # "claude-sonnet-4-20250514",
         # "claude-3-7-sonnet-20250219",
