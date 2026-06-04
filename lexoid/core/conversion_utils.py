@@ -70,9 +70,10 @@ def convert_doc_to_base64_images(
         pdf_document.close()
         return images
     elif mimetypes.guess_type(path)[0].startswith("image"):
+        mime_type = mimetypes.guess_type(path)[0]
         with open(path, "rb") as img_file:
             image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
-            return [(0, f"data:image/png;base64,{image_base64}")]
+            return [(0, f"data:{mime_type};base64,{image_base64}")]
 
 
 def base64_to_bytesio(b64_string: str) -> io.BytesIO:

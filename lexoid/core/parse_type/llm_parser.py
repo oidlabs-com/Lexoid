@@ -593,7 +593,10 @@ def parse_image_with_gemini(
         elif kwargs["model"].startswith("gemini-2.5-flash"):
             generation_config["thinkingConfig"] = {"thinkingBudget": 0}
         elif kwargs["model"].startswith("gemini-3"):
-            generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
+            if "flash" in kwargs["model"]:
+                generation_config["thinkingConfig"] = {"thinkingLevel": "minimal"}
+            else:
+                generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
 
         parts.append({"inline_data": {"mime_type": mime_type, "data": base64_file}})
     payload = {
@@ -795,17 +798,15 @@ def create_response(
                     },
                 },
             )
-        response = client.messages.create(
-            model=model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": content,
-                }
-            ],
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        request_params = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max_tokens,
+        }
+        # Opus 4.7+ deprecated `temperature`
+        if not re.match(r"claude-opus-4-[78]$", model):
+            request_params["temperature"] = temperature
+        response = client.messages.create(**request_params)
 
         return {
             "response": response.content[0].text,

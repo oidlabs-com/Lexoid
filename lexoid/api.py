@@ -171,7 +171,8 @@ def parse_chunk(path: str, parser_type: ParserType, **kwargs) -> Dict:
         # Non-fatal: logging should not break parsing
         logger.warning(f"Failed to log parsed page numbers: {e}")
     return_bboxes = kwargs.get("return_bboxes", False)
-    has_bboxes = bool(result["segments"][0].get("bboxes"))
+    segments = result.get("segments") or []
+    has_bboxes = bool(segments[0].get("bboxes")) if segments else False
     bbox_framework = kwargs.get("bbox_framework", None)
     framework = kwargs.get("framework", DEFAULT_STATIC_FRAMEWORK)
     bbox_framework_different = bbox_framework and bbox_framework != framework
