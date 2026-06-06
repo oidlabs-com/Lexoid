@@ -22,7 +22,7 @@ The similarity metric is calculated using the following steps (see `calculate_si
 3. Whitespace and Punctuation Normalization
    Extra whitespace and punctuation are removed from both the parsed and ground truth texts. Therefore, the comparison is purely based on the sequence of characters/words, ignoring any formatting differences.
 
-3. Sequence Matching
+4. Sequence Matching
    Python's ``SequenceMatcher`` compares the extracted text sequences, calculating a similarity ratio between 0 and 1 that reflects content preservation and accuracy.
 
 Running the Benchmarks
@@ -60,11 +60,15 @@ Customizing Benchmarks
 
 You can modify the ``test_attributes`` list in the ``main()`` function to test different configurations:
 
-* ``parser_type``: Switch between LLM and static parsing
+* ``parser_type``: Switch between LLM and static parsing (``LLM_PARSE``, ``STATIC_PARSE``, ``AUTO``)
 * ``model``: Test different LLM models
-* ``framework``: Test different static parsing frameworks
+* ``framework``: Test different static parsing frameworks (``pdfplumber``, ``pdfminer``, ``paddleocr``)
 * ``pages_per_split``: Adjust document chunking
-* ``max_threads``: Control parallel processing
+
+.. note::
+
+   The benchmark harness currently hard-codes ``max_processes=1`` when calling :py:func:`lexoid.api.parse`, so configurations under the ``max_threads`` sweep knob in ``benchmark.py`` do not actually change
+   ``parse()``'s parallelism. To benchmark parallelism, edit ``tests/benchmark.py`` to forward the sweep value to ``max_processes``.
 
 Benchmark Results
 -----------------

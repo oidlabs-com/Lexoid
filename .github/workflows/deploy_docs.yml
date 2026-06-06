@@ -40,6 +40,7 @@ jobs:
 
   deploy:
     needs: build-docs
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       pages: write
