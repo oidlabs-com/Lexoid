@@ -247,3 +247,13 @@
 ### Fixed
 * Replaced MD5 hashing with SHA-256
 * Miscellaneous minor bug fixes
+
+## [0.1.22]
+
+### Added
+* Documentation updates: CLI, installation, and expanded API docs
+* `lexoid-cli` and `lexoid-python` skill files
+
+### Changed
+* Set default LLM to `gemini-3.5-flash`
+* Updated benchmark with the latest Gemini, GPT, and Claude models, and AUTO mode results
