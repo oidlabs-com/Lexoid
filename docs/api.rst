@@ -73,6 +73,7 @@ parse
    * ``retry_on_fail`` (bool): When ``True`` (default), automatically retries with the alternate parser type / framework on failure.
    * ``return_bboxes`` (bool): If ``True``, attach per-segment bounding boxes (``bboxes`` key on each segment). Default: ``False``.
    * ``bbox_framework`` (str): Framework used for bounding box extraction when ``return_bboxes=True``. One of ``"auto"`` (default — chooses ``paddleocr`` or ``pdfplumber`` based on file content), ``"pdfplumber"``, or ``"paddleocr"``.
+   * ``ghost`` (Union[bool, dict]): Opt-in stealth/agentic "ghost" browsing for URL parsing (stealth bot-detection bypass, reliable JS rendering, and optional agentic navigation). ``True`` enables it with defaults; a dict overrides individual options. See the `Ghost Browsing`_ section for the full option reference. Default behavior (without ``ghost``) is unchanged.
 
    Return value format:
    A dictionary with the following keys. Keys marked *(optional)* are only present in specific configurations; the others are present on the standard parsing path (and may hold an empty string / list / zeroed dict).
@@ -380,3 +381,163 @@ Gemini model (currently the only provider supporting audio).
 
     result = parse("interview.mp3", model="gemini-2.5-flash")
     print(result["raw"])
+
+Ghost Browsing (URLs)
+^^^^^^^^^^^^^^^^^^^^^
+
+.. code-block:: python
+
+    # Enable stealth + reliable JS rendering with defaults
+    result = parse("https://example.com/spa-page", ghost=True)
+
+    # Tune behavior with a dict
+    result = parse(
+        "https://example.com/spa-page",
+        ghost={"wait_until": "networkidle", "auto_scroll": True, "headless": False},
+    )
+
+    # Agentic navigation: reach content behind a click before parsing
+    result = parse(
+        "https://example.com/pricing",
+        ghost={"navigate": True, "nav_instruction": "open the Enterprise pricing tab"},
+    )
+    print(result["token_usage"])  # LLM cost of the navigation loop
+
+See the `Ghost Browsing`_ section for all options, CDP attach, and environment variables.
+
+
+Ghost Browsing
+--------------
+
+By default, Lexoid fetches web pages with a headless Playwright browser. For pages that are
+bot-protected (Cloudflare/DataDome), render their content with client-side JavaScript, or hide
+the target content behind interactions, enable **ghost browsing** — an opt-in, stealth/agentic
+mode that drives a stealthy (and optionally *real*) browser. It adds three capabilities:
+
+#. **Bot-detection bypass** — stealth patches so headless automation isn't fingerprinted.
+#. **Reliable JS rendering** — ``networkidle`` waits, auto-scroll for lazy-loaded content, and an optional ``wait_for_selector``.
+#. **Agentic navigation** — an optional vision-LLM loop that clicks/scrolls/navigates toward a goal before extraction. Page state is grounded with *set-of-marks* prompting (numbered boxes drawn over interactive elements on the screenshot), the same technique used by Microsoft AutoGen's MultimodalWebSurfer.
+
+Ghost browsing is fully opt-in. Without it, the default URL-parsing behavior is unchanged.
+
+Acquisition Modes
+^^^^^^^^^^^^^^^^^
+
+The browser is acquired in one of three auto-selected modes:
+
+* **CDP attach** — when ``cdp_url`` (or ``LEXOID_CDP_URL``) is set. Attaches over the Chrome DevTools Protocol to an already-running browser (e.g. Chrome started with ``--remote-debugging-port``), reusing its profile, cookies, fingerprint and **logged-in sessions**. Lexoid only opens/closes its own tab and never closes your browser. Stealth patches are *not* injected here because the browser already has a genuine fingerprint. If the endpoint is unreachable, Lexoid falls back to the legacy fetch.
+* **Persistent** — when ``user_data_dir`` (or ``LEXOID_GHOST_PROFILE_DIR``) is set. Launches with a stable profile so cookies/fingerprint persist across runs.
+* **Fresh** — otherwise. Launches a throwaway stealth browser.
+
+.. code-block:: bash
+
+    # Start a browser with remote debugging
+    google-chrome --remote-debugging-port=9222 --user-data-dir=/path/to/profile
+
+    # Point Lexoid at it
+    export LEXOID_CDP_URL=http://localhost:9222
+
+.. code-block:: python
+
+    # Picks up LEXOID_CDP_URL automatically
+    result = parse("https://example.com/members-only", ghost=True)
+
+    # ...or pass it inline
+    result = parse(
+        "https://example.com/members-only",
+        ghost={"cdp_url": "http://localhost:9222"},
+    )
+
+Options
+^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 26 12 38
+
+   * - Option (dict key)
+     - Environment variable
+     - Default
+     - Description
+   * - ``cdp_url``
+     - ``LEXOID_CDP_URL``
+     - –
+     - Attach to a running browser over CDP.
+   * - ``user_data_dir``
+     - ``LEXOID_GHOST_PROFILE_DIR``
+     - –
+     - Persistent profile dir (cookies/fingerprint persist across runs).
+   * - –
+     - ``LEXOID_GHOST=1``
+     - –
+     - Enable ghost browsing without a per-call ``ghost`` kwarg.
+   * - ``headless``
+     - –
+     - ``True``
+     - Set ``False`` for the strongest anti-bot stealth.
+   * - ``stealth``
+     - –
+     - ``True``
+     - Apply anti-detection patches (skipped in CDP mode).
+   * - ``wait_until``
+     - –
+     - ``networkidle``
+     - Page-load wait strategy (``domcontentloaded`` | ``load`` | ``networkidle``).
+   * - ``auto_scroll`` / ``scroll_max_rounds``
+     - –
+     - ``True`` / ``15``
+     - Scroll to trigger lazy-loaded content.
+   * - ``wait_for_selector``
+     - –
+     - –
+     - Wait for a CSS selector before extracting.
+   * - ``timeout_ms``
+     - –
+     - ``30000``
+     - Per-step navigation timeout (milliseconds).
+   * - ``navigate`` / ``nav_instruction``
+     - –
+     - ``False`` / –
+     - Enable the agentic-navigation loop and its goal.
+   * - ``nav_model`` / ``nav_max_steps``
+     - –
+     - ``DEFAULT_LLM`` / ``8``
+     - Model and step cap for agentic navigation.
+   * - ``set_of_marks``
+     - –
+     - ``True``
+     - Draw numbered element boxes on the screenshot for the agentic loop.
+   * - ``screenshot_max_dim``
+     - –
+     - ``1280``
+     - Downscale each screenshot to this max dimension before sending to the LLM (cost / model limits).
+   * - ``nav_history_steps``
+     - –
+     - ``5``
+     - How many recent actions are fed back into the prompt (prevents loops).
+   * - ``nav_same_domain``
+     - –
+     - ``True``
+     - Restrict the agent's ``navigate`` action and followed pop-ups to the start site's domain.
+
+When the agentic loop runs, its LLM token cost is reported in the result's ``token_usage``
+(``{"input", "output", "total"}``); a plain ghost fetch without navigation adds no ``token_usage``
+key. During recursive crawls (``depth > 1``) the agentic loop runs only on the root URL.
+
+The agent perceives each step as a downscaled viewport screenshot annotated with numbered
+*set-of-marks* boxes plus a matching element list (with roles and on/off-screen flags), and its
+recent action history. It stops early when the page stops changing (no-progress detection), and it
+follows pop-ups/new tabs opened by an action so their content isn't lost.
+
+For the strongest anti-bot stealth, install the optional ``ghost`` extra (Lexoid falls back to
+built-in stealth patches when it isn't installed):
+
+.. code-block:: bash
+
+    pip install "lexoid[ghost]"
+    patchright install chromium
+
+The agentic loop uses a constrained action set (click / type / select / keypress / hover / scroll /
+navigate / back / refresh / wait / done). It never evaluates arbitrary JavaScript, never types into
+credential (password) fields, and by default keeps navigation on the start domain; every action is
+logged.
