@@ -247,7 +247,21 @@ def parse(
         parser_type (Union[str, ParserType], optional): Parser type ("LLM_PARSE", "STATIC_PARSE", or "AUTO").
         pages_per_split (int, optional): Number of pages per split for chunking.
         max_processes (int, optional): Maximum number of processes for parallel processing.
-        **kwargs: Additional arguments for the parser.
+        **kwargs: Additional arguments for the parser. Notable URL-parsing option:
+            ghost (bool | dict): Opt-in stealth/agentic "ghost" browsing for URLs.
+                ``True`` enables stealth + reliable JS rendering using sensible
+                defaults; a dict overrides any GhostConfig field, e.g.
+                ``{"wait_until": "networkidle", "auto_scroll": True,
+                "headless": False, "navigate": True,
+                "nav_instruction": "open the pricing tab", "nav_model": "gpt-4o"}``.
+                To attach to an already-running real browser (e.g. Chrome started
+                with ``--remote-debugging-port``) over CDP — reusing its profile,
+                cookies and logged-in sessions — set ``LEXOID_CDP_URL`` to its
+                remote-debugging endpoint, or pass ``{"cdp_url": "http://localhost:9222"}``.
+                A persistent profile is used when ``LEXOID_GHOST_PROFILE_DIR`` /
+                ``{"user_data_dir": ...}`` is set. Requires the optional
+                ``patchright`` package for the strongest anti-bot stealth; falls
+                back gracefully otherwise.
 
     Returns:
         Dict: Dictionary containing:
@@ -292,12 +306,13 @@ def parse(
         kwargs["temp_dir"] = temp_dir
         if path.startswith(("http://", "https://")):
             kwargs["url"] = path
+            ghost_opts = kwargs.get("ghost")
             download_dir = kwargs.get("save_dir", os.path.join(temp_dir, "downloads/"))
             os.makedirs(download_dir, exist_ok=True)
             if is_supported_url_file_type(path):
                 path = download_file(path, download_dir)
             elif as_pdf:
-                soup = get_webpage_soup(path)
+                soup = get_webpage_soup(path, ghost_opts=ghost_opts)
                 kwargs["title"] = str(soup.title).strip() if soup.title else "Untitled"
                 pdf_filename = kwargs.get("save_filename", f"webpage_{int(time())}.pdf")
                 if not pdf_filename.endswith(".pdf"):
@@ -306,7 +321,7 @@ def parse(
                 logger.debug("Converting webpage to PDF...")
                 path = convert_to_pdf(path, pdf_path)
             else:
-                return recursive_read_html(path, depth)
+                return recursive_read_html(path, depth, ghost_opts=ghost_opts)
 
         assert is_supported_file_type(path), (
             f"Unsupported file type {os.path.splitext(path)[1]}"
