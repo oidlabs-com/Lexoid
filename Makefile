@@ -13,10 +13,12 @@ setup:
 install: setup
 	.venv/bin/poetry install --without dev
 	.venv/bin/playwright install --with-deps --only-shell chromium
+	.venv/bin/patchright install chromium
 
 dev: setup
 	.venv/bin/poetry install --with dev
 	.venv/bin/playwright install --with-deps --only-shell chromium
+	.venv/bin/patchright install chromium
 
 clean:
 	rm -rf .venv

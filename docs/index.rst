@@ -29,6 +29,7 @@ Key Features
 * Table detection and markdown conversion
 * Hyperlink detection and preservation
 * Reference highlighting and bounding box extraction (``return_bboxes``)
+* Ghost browsing for URLs (stealth bot-detection bypass, JS rendering, agentic navigation)
 * Parallel processing via multiprocessing
 * Command-line interface (``lexoid`` / ``python -m lexoid``)
 * Permissive Apache 2.0 license
