@@ -33,6 +33,11 @@ from loguru import logger
 from requests.exceptions import HTTPError
 
 
+_ANTHROPIC_MODEL_RE = re.compile(
+    r"claude-(opus-4-[789]|sonnet-(?:[5-9]|[1-9]\d)(?:[-.].*)?)$"
+)
+
+
 def retry_on_error(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -803,13 +808,20 @@ def create_response(
             "messages": [{"role": "user", "content": content}],
             "max_tokens": max_tokens,
         }
-        # Opus 4.7+ deprecated `temperature`
-        if not re.match(r"claude-opus-4-[78]$", model):
+        # Opus 4.7+ and Sonnet 5+ deprecated `temperature`
+        if not _ANTHROPIC_MODEL_RE.match(model):
             request_params["temperature"] = temperature
         response = client.messages.create(**request_params)
-
+        response_text = "".join(
+            block.text
+            for block in response.content
+            if getattr(block, "type", None) == "text"
+            and isinstance(getattr(block, "text", None), str)
+        ).strip()
+        if not response_text and response.content:
+            response_text = getattr(response.content[0], "text", "") or ""
         return {
-            "response": response.content[0].text,
+            "response": response_text,
             "usage": {
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,

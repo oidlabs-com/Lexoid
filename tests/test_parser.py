@@ -14,11 +14,15 @@ output_dir = "tests/outputs"
 os.makedirs(output_dir, exist_ok=True)
 models = [
     # Google models
-    "gemini-2.5-flash",
+    "gemini-3.5-flash",
     "gemini-2.5-pro",
     # OpenAI models
     "gpt-4o",
     "gpt-4o-mini",
+    # Anthropic models
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
 ]
 
 
@@ -37,7 +41,7 @@ async def test_llm_parse(model):
     with open(f"{output_dir}/input_table_{model.replace('/', '_')}.md", "w") as f:
         f.write(result)
     score = calculate_similarities(result, expected_ouput)["sequence_matcher"]
-    assert round(score, 3) > 0.75
+    assert round(score, 3) > 0.9
 
 
 @pytest.mark.asyncio
