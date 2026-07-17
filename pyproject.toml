@@ -33,7 +33,7 @@ pptx2md = "^2.0.6"
 mistralai = "^1.8.2"
 anthropic = ">=0.96.0,<1.0.0"
 transformers = "^4.51.3"
-torch = "^2.7.0"
+torch = "^2.13.0"
 scikit-learn = "^1.7.1"
 scikit-image = "^0.25.2"
 paddleocr = {version = "^3.3.0", extras = ["doc-parser"]}
