@@ -13,7 +13,7 @@ _TEST_URL = "https://jnhlifestyles.com/blog/top-5-reasons-to-add-a-full-spectrum
 _EXPECTED_PHRASES = [
     "which can run upwards up over $8,000",
     "collections are currently our full spectrum saunas",
-    "24 February 2020",
+    "24 February 2020,https://www.ncbi.nlm.nih.gov/pubmed/18685882",
 ]
 
 
@@ -46,8 +46,17 @@ _HAS_PYQT5 = find_spec("PyQt5") is not None
         ),
     ],
 )
+@pytest.mark.parametrize(
+    "parser_type, parser_kwargs",
+    [
+        pytest.param("STATIC_PARSE", {}, id="static_parse"),
+        pytest.param(
+            "AUTO", {"model": "gemini-3.6-flash"}, id="auto_gemini_3_6_flash"
+        ),
+    ],
+)
 @pytest.mark.asyncio
-async def test_webpage_rendering(tmp_path, engine):
+async def test_webpage_rendering(tmp_path, engine, parser_type, parser_kwargs):
     output_path = tmp_path / f"test-preview-{engine}.pdf"
     print(f"Testing webpage rendering with engine '{engine}' to {output_path}")
 
@@ -61,7 +70,15 @@ async def test_webpage_rendering(tmp_path, engine):
     assert output_path.exists()
     assert output_path.stat().st_size > 0
 
-    parsed = parse(str(output_path), parser_type="STATIC_PARSE")
+    parsed = parse(
+        str(output_path),
+        parser_type=parser_type,
+        router_priority="accuracy", # or speed, accuracy
+        pages_per_split=1,
+        depth=1,
+        max_image_dimension=1024,
+        **parser_kwargs,
+    )
     normalized = _normalize(parsed.get("raw", ""))
 
     missing = [p for p in _EXPECTED_PHRASES if p.lower() not in normalized]

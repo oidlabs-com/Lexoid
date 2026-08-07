@@ -252,6 +252,32 @@ def _save_webpage_as_pdf_chromium(url: str, output_path: str) -> str:
                     """
                 )
 
+                # Hide common fixed overlays (cookie banners/chat widgets)
+                # that can visually occlude lower-page content in captured PDFs.
+                await page.add_style_tag(
+                    content="""
+                    .cc-window,
+                    #onetrust-banner-sdk,
+                    #onetrust-consent-sdk,
+                    [id*='cookie'],
+                    [class*='cookie'],
+                    [id*='consent'],
+                    [class*='consent'],
+                    [id*='gdpr'],
+                    [class*='gdpr'],
+                    [id*='chat'],
+                    [class*='chat'],
+                    [id*='intercom'],
+                    [class*='intercom'],
+                    [id*='crisp'],
+                    [class*='crisp'],
+                    [style*='position: fixed'][style*='bottom'] {
+                        display: none !important;
+                        visibility: hidden !important;
+                    }
+                    """
+                )
+
                 page_state = await page.evaluate(
                     """
                     () => ({
@@ -265,10 +291,10 @@ def _save_webpage_as_pdf_chromium(url: str, output_path: str) -> str:
                     raise RuntimeError(
                         f"Rendered page contains insufficient content: {page_state['url']}"
                     )
-
+                pdf_width = os.environ.get("LEXOID_PDF_WIDTH", "1200px")
                 await page.pdf(
                     path=output_path,
-                    format="A4",
+                    width=pdf_width,
                     margin={
                         "top": "15mm",
                         "right": "15mm",
