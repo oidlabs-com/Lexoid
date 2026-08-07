@@ -50,15 +50,12 @@ _HAS_PYQT5 = find_spec("PyQt5") is not None
     "parser_type, parser_kwargs",
     [
         pytest.param("STATIC_PARSE", {}, id="static_parse"),
-        pytest.param(
-            "AUTO", {"model": "gemini-3.6-flash"}, id="auto_gemini_3_6_flash"
-        ),
+        pytest.param("AUTO", {"model": "gemini-3.6-flash"}, id="auto_gemini_3_6_flash"),
     ],
 )
 @pytest.mark.asyncio
 async def test_webpage_rendering(tmp_path, engine, parser_type, parser_kwargs):
     output_path = tmp_path / f"test-preview-{engine}.pdf"
-    print(f"Testing webpage rendering with engine '{engine}' to {output_path}")
 
     result = conversion_utils.save_webpage_as_pdf(
         _TEST_URL,
@@ -73,7 +70,7 @@ async def test_webpage_rendering(tmp_path, engine, parser_type, parser_kwargs):
     parsed = parse(
         str(output_path),
         parser_type=parser_type,
-        router_priority="accuracy", # or speed, accuracy
+        router_priority="accuracy",  # or speed
         pages_per_split=1,
         depth=1,
         max_image_dimension=1024,
