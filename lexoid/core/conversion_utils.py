@@ -69,8 +69,8 @@ def convert_doc_to_base64_images(
         ]
         pdf_document.close()
         return images
-    elif mimetypes.guess_type(path)[0].startswith("image"):
-        mime_type = mimetypes.guess_type(path)[0]
+    mime_type = mimetypes.guess_type(path)[0] or ""
+    if mime_type.startswith("image"):
         with open(path, "rb") as img_file:
             image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
             return [(0, f"data:{mime_type};base64,{image_base64}")]
@@ -113,17 +113,8 @@ def convert_image_to_pdf(image_path: str) -> bytes:
         return pdf_buffer.getvalue()
 
 
-def save_webpage_as_pdf(url: str, output_path: str) -> str:
-    """
-    Saves a webpage as a PDF file using PyQt5.
-
-    Args:
-        url (str): The URL of the webpage.
-        output_path (str): The path to save the PDF file.
-
-    Returns:
-        str: The path to the saved PDF file.
-    """
+def _save_webpage_as_pdf_qt(url: str, output_path: str) -> str:
+    """Render a webpage to PDF using Qt WebEngine (PyQt5)."""
     from PyQt5.QtCore import QMarginsF, QUrl
     from PyQt5.QtGui import QPageLayout, QPageSize
     from PyQt5.QtPrintSupport import QPrinter
@@ -162,6 +153,177 @@ def save_webpage_as_pdf(url: str, output_path: str) -> str:
     return output_path
 
 
+def _save_webpage_as_pdf_chromium(url: str, output_path: str) -> str:
+    """Render a webpage to PDF using Chromium via Playwright (CDP printToPDF)."""
+    import asyncio
+
+    import nest_asyncio
+    from playwright.async_api import async_playwright
+
+    nest_asyncio.apply()
+
+    async def render_pdf() -> None:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                ],
+            )
+            try:
+                page = await browser.new_page(
+                    viewport={"width": 1440, "height": 900},
+                    bypass_csp=True,
+                )
+                await page.emulate_media(
+                    media="screen", reduced_motion="reduce", color_scheme="light"
+                )
+                response = await page.goto(url, wait_until="load", timeout=25_000)
+                if response is None or response.status >= 400:
+                    status = response.status if response else "unknown"
+                    raise RuntimeError(f"Failed to load {url}: HTTP {status}")
+
+                await page.evaluate(
+                    """
+                    async () => {
+                        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                        const step = Math.max(window.innerHeight * 0.8, 600);
+                        const deadline = Date.now() + 8000;
+                        let lastHeight = 0;
+                        let stableRounds = 0;
+
+                        while (Date.now() < deadline) {
+                            const height = document.documentElement.scrollHeight;
+                            window.scrollBy(0, step);
+                            await delay(75);
+
+                            const newHeight = document.documentElement.scrollHeight;
+                            const atBottom = window.scrollY + window.innerHeight >= newHeight - 2;
+
+                            stableRounds = newHeight === lastHeight ? stableRounds + 1 : 0;
+                            lastHeight = newHeight;
+
+                            if (atBottom && stableRounds >= 2) {
+                                break;
+                            }
+                        }
+
+                        window.scrollTo(0, 0);
+                    }
+                    """
+                )
+
+                await page.evaluate(
+                    """
+                    () => Promise.race([
+                        document.fonts?.ready ?? Promise.resolve(),
+                        new Promise((resolve) => setTimeout(resolve, 3000)),
+                    ])
+                    """
+                )
+
+                await page.evaluate(
+                    """
+                    () => Promise.race([
+                        Promise.allSettled(
+                            [...document.images]
+                                .filter((img) => img.currentSrc || img.src)
+                                .map((img) =>
+                                    img.complete
+                                        ? Promise.resolve()
+                                        : new Promise((resolve) => {
+                                              img.addEventListener("load", resolve, { once: true });
+                                              img.addEventListener("error", resolve, { once: true });
+                                          })
+                                )
+                        ),
+                        new Promise((resolve) => setTimeout(resolve, 3000)),
+                    ])
+                    """
+                )
+
+                await page.evaluate(
+                    """
+                    () =>
+                        new Promise((resolve) =>
+                            requestAnimationFrame(() => requestAnimationFrame(resolve))
+                        )
+                    """
+                )
+
+                page_state = await page.evaluate(
+                    """
+                    () => ({
+                        title: (document.title || "").trim(),
+                        textLength: document.body?.innerText?.trim().length ?? 0,
+                        url: location.href,
+                    })
+                    """
+                )
+                if page_state["textLength"] < 50:
+                    raise RuntimeError(
+                        f"Rendered page contains insufficient content: {page_state['url']}"
+                    )
+
+                await page.pdf(
+                    path=output_path,
+                    format="A4",
+                    margin={
+                        "top": "15mm",
+                        "right": "15mm",
+                        "bottom": "15mm",
+                        "left": "15mm",
+                    },
+                    print_background=True,
+                )
+            finally:
+                await browser.close()
+
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(render_pdf())
+
+    if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        raise RuntimeError(f"Chromium PDF render produced empty output for {url}")
+
+    try:
+        document = pdfium.PdfDocument(output_path)
+        page_count = len(document)
+        document.close()
+    except Exception as exc:
+        raise RuntimeError(f"Chromium produced an invalid PDF for {url}") from exc
+
+    if page_count == 0:
+        raise RuntimeError(f"Chromium produced a zero-page PDF for {url}")
+
+    return output_path
+
+
+def save_webpage_as_pdf(url: str, output_path: str, engine: str | None = None) -> str:
+    """Saves a webpage as a PDF file.
+
+    Args:
+        url (str): The URL of the webpage.
+        output_path (str): The path to save the PDF file.
+        engine (str | None): Rendering engine: "qt" or "chromium".
+            If omitted, falls back to LEXOID_PDF_ENGINE or "qt".
+
+    Returns:
+        str: The path to the saved PDF file.
+    """
+    selected_engine = (engine or os.environ.get("LEXOID_PDF_ENGINE") or "qt").lower()
+    logger.debug(f"save_webpage_as_pdf engine: {selected_engine}")
+
+    if selected_engine == "qt":
+        return _save_webpage_as_pdf_qt(url, output_path)
+    if selected_engine == "chromium":
+        return _save_webpage_as_pdf_chromium(url, output_path)
+
+    raise ValueError(
+        f"Unsupported PDF engine: {selected_engine!r}. Use 'qt' or 'chromium'."
+    )
+
+
 def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     temp_path = os.path.join(
         temp_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
@@ -190,7 +352,7 @@ def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     return temp_path
 
 
-def convert_to_pdf(input_path: str, output_path: str) -> str:
+def convert_to_pdf(input_path: str, output_path: str, engine: str | None = None) -> str:
     """
     Converts a file or webpage to PDF.
 
@@ -203,8 +365,8 @@ def convert_to_pdf(input_path: str, output_path: str) -> str:
     """
     if input_path.startswith(("http://", "https://")):
         logger.debug(f"Converting webpage {input_path} to PDF...")
-        return save_webpage_as_pdf(input_path, output_path)
-    file_type = mimetypes.guess_type(input_path)[0]
+        return save_webpage_as_pdf(input_path, output_path, engine=engine)
+    file_type = mimetypes.guess_type(input_path)[0] or ""
     if file_type.startswith("image/"):
         img_data = convert_image_to_pdf(input_path)
         with open(output_path, "wb") as f:
