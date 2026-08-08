@@ -58,22 +58,31 @@ def convert_doc_to_base64_images(
         List[Tuple[int, str]]: A list of tuples where each tuple contains the page number
                                and the base64 encoded image string.
     """
-    if path.endswith(".pdf"):
-        pdf_document = pdfium.PdfDocument(path)
-        images = [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num, max_dimension)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-        pdf_document.close()
-        return images
     mime_type = mimetypes.guess_type(path)[0] or ""
-    if mime_type.startswith("image"):
+    is_pdf = path.lower().endswith(".pdf") or mime_type == "application/pdf"
+    if is_pdf:
+        pdf_document = pdfium.PdfDocument(path)
+        try:
+            images = [
+                (
+                    page_num,
+                    f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num, max_dimension)}",
+                )
+                for page_num in range(len(pdf_document))
+            ]
+        finally:
+            pdf_document.close()
+        return images
+
+    if mime_type.startswith("image/"):
         with open(path, "rb") as img_file:
             image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
             return [(0, f"data:{mime_type};base64,{image_base64}")]
+
+    raise ValueError(
+        f"Unsupported input type for base64 conversion: path={path!r}, mime_type={mime_type!r}. "
+        "Expected a PDF or image."
+    )
 
 
 def base64_to_bytesio(b64_string: str) -> io.BytesIO:
