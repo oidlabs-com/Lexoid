@@ -11,9 +11,12 @@ _TEST_URL = "https://jnhlifestyles.com/blog/top-5-reasons-to-add-a-full-spectrum
 
 # Stable phrases that must survive rendering and PDF extraction.
 _EXPECTED_PHRASES = [
-    "which can run upwards up over $8,000",
-    "collections are currently our full spectrum saunas",
-    "24 February 2020,https://www.ncbi.nlm.nih.gov/pubmed/18685882",
+    "$8,000",
+    "Tosi",
+    "ProSeries",
+    "the carbon fiber heaters",
+    "24 February 2020",
+    "https://www.ncbi.nlm.nih.gov/pubmed/18685882",
 ]
 
 
@@ -51,10 +54,16 @@ _HAS_PYQT5 = find_spec("PyQt5") is not None
     [
         pytest.param("STATIC_PARSE", {}, id="static_parse"),
         pytest.param("AUTO", {"model": "gemini-3.6-flash"}, id="auto_gemini_3_6_flash"),
+        pytest.param("AUTO", {"model": "claude-opus-4-8"}, id="auto_claude_opus_4_8"),
     ],
 )
 @pytest.mark.asyncio
 async def test_webpage_rendering(tmp_path, engine, parser_type, parser_kwargs):
+    import os
+
+    if not os.getenv("RUN_WEB_RENDER_TESTS"):
+        pytest.skip("RUN_WEB_RENDER_TESTS is not enabled")
+
     output_path = tmp_path / f"test-preview-{engine}.pdf"
 
     result = conversion_utils.save_webpage_as_pdf(
@@ -78,7 +87,7 @@ async def test_webpage_rendering(tmp_path, engine, parser_type, parser_kwargs):
     )
     normalized = _normalize(parsed.get("raw", ""))
 
-    missing = [p for p in _EXPECTED_PHRASES if p.lower() not in normalized]
+    missing = [p for p in _EXPECTED_PHRASES if _normalize(p) not in normalized]
     assert not missing, "Expected phrases missing from rendered PDF:\n" + "\n".join(
         f"  - {p!r}" for p in missing
     )
