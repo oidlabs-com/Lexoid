@@ -162,6 +162,18 @@ def _save_webpage_as_pdf_chromium(url: str, output_path: str) -> str:
 
     nest_asyncio.apply()
 
+    user_agent = os.environ.get(
+        "LEXOID_BROWSER_USER_AGENT",
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+    )
+    locale = os.environ.get("LEXOID_BROWSER_LOCALE", "en-US")
+    timezone_id = os.environ.get("LEXOID_BROWSER_TIMEZONE", "America/Los_Angeles")
+    accept_language = os.environ.get("LEXOID_BROWSER_ACCEPT_LANGUAGE", "en-US,en;q=0.9")
+
     async def render_pdf() -> None:
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -174,6 +186,10 @@ def _save_webpage_as_pdf_chromium(url: str, output_path: str) -> str:
             try:
                 page = await browser.new_page(
                     viewport={"width": 1440, "height": 900},
+                    user_agent=user_agent,
+                    locale=locale,
+                    timezone_id=timezone_id,
+                    extra_http_headers={"Accept-Language": accept_language},
                     bypass_csp=True,
                 )
                 await page.emulate_media(
@@ -283,10 +299,41 @@ def _save_webpage_as_pdf_chromium(url: str, output_path: str) -> str:
                     () => ({
                         title: (document.title || "").trim(),
                         textLength: document.body?.innerText?.trim().length ?? 0,
+                        textSample: (document.body?.innerText || "").slice(0, 4000),
                         url: location.href,
                     })
                     """
                 )
+                detect_challenges = os.environ.get(
+                    "LEXOID_DETECT_BOT_CHALLENGES", "1"
+                ).strip().lower() not in {"0", "false", "no"}
+                if detect_challenges:
+                    combined_text = (
+                        f"{page_state['title']}\n{page_state['textSample']}"
+                    ).lower()
+                    challenge_indicators = [
+                        "checking your browser",
+                        "verify you are human",
+                        "captcha",
+                        "cf-challenge",
+                        "cloudflare",
+                        "perimeterx",
+                        "datadome",
+                        "access denied",
+                        "unusual traffic",
+                        "automated queries",
+                    ]
+                    matched_indicators = [
+                        marker
+                        for marker in challenge_indicators
+                        if marker in combined_text
+                    ]
+                    if matched_indicators:
+                        raise RuntimeError(
+                            "Detected possible bot-protection challenge while rendering "
+                            f"{page_state['url']}: {', '.join(matched_indicators)}"
+                        )
+
                 if page_state["textLength"] < 50:
                     raise RuntimeError(
                         f"Rendered page contains insufficient content: {page_state['url']}"
