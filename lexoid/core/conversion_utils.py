@@ -332,13 +332,15 @@ def save_webpage_as_pdf(url: str, output_path: str, engine: str | None = None) -
         url (str): The URL of the webpage.
         output_path (str): The path to save the PDF file.
         engine (str | None): Rendering engine: "qt" or "chromium".
-            If omitted, falls back to LEXOID_PDF_ENGINE or "qt".
+            If omitted, defaults to LEXOID_PDF_ENGINE or "chromium".
 
     Returns:
         str: The path to the saved PDF file.
     """
-    selected_engine = (engine or os.environ.get("LEXOID_PDF_ENGINE") or "qt").lower()
-    logger.debug(f"save_webpage_as_pdf engine: {selected_engine}")
+    selected_engine = (
+        engine or os.environ.get("LEXOID_PDF_ENGINE") or "chromium"
+    ).lower()
+    logger.debug(f"Using {selected_engine} engine for webpage PDF rendering...")
 
     if selected_engine == "qt":
         return _save_webpage_as_pdf_qt(url, output_path)
@@ -385,6 +387,8 @@ def convert_to_pdf(input_path: str, output_path: str, engine: str | None = None)
     Args:
         input_path (str): The path to the input file or URL.
         output_path (str): The path to save the output PDF file.
+        engine (str | None): Rendering engine: "qt" or "chromium".
+            If omitted, defaults to LEXOID_PDF_ENGINE or "chromium".
 
     Returns:
         str: The path to the saved PDF file.
