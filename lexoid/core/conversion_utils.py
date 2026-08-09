@@ -58,22 +58,31 @@ def convert_doc_to_base64_images(
         List[Tuple[int, str]]: A list of tuples where each tuple contains the page number
                                and the base64 encoded image string.
     """
-    if path.endswith(".pdf"):
+    mime_type = mimetypes.guess_type(path)[0] or ""
+    is_pdf = path.lower().endswith(".pdf") or mime_type == "application/pdf"
+    if is_pdf:
         pdf_document = pdfium.PdfDocument(path)
-        images = [
-            (
-                page_num,
-                f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num, max_dimension)}",
-            )
-            for page_num in range(len(pdf_document))
-        ]
-        pdf_document.close()
+        try:
+            images = [
+                (
+                    page_num,
+                    f"data:image/png;base64,{convert_pdf_page_to_base64(pdf_document, page_num, max_dimension)}",
+                )
+                for page_num in range(len(pdf_document))
+            ]
+        finally:
+            pdf_document.close()
         return images
-    elif mimetypes.guess_type(path)[0].startswith("image"):
-        mime_type = mimetypes.guess_type(path)[0]
+
+    if mime_type.startswith("image/"):
         with open(path, "rb") as img_file:
             image_base64 = base64.b64encode(img_file.read()).decode("utf-8")
             return [(0, f"data:{mime_type};base64,{image_base64}")]
+
+    raise ValueError(
+        f"Unsupported input type for base64 conversion: path={path!r}, mime_type={mime_type!r}. "
+        "Expected a PDF or image."
+    )
 
 
 def base64_to_bytesio(b64_string: str) -> io.BytesIO:
@@ -113,17 +122,8 @@ def convert_image_to_pdf(image_path: str) -> bytes:
         return pdf_buffer.getvalue()
 
 
-def save_webpage_as_pdf(url: str, output_path: str) -> str:
-    """
-    Saves a webpage as a PDF file using PyQt5.
-
-    Args:
-        url (str): The URL of the webpage.
-        output_path (str): The path to save the PDF file.
-
-    Returns:
-        str: The path to the saved PDF file.
-    """
+def _save_webpage_as_pdf_qt(url: str, output_path: str) -> str:
+    """Render a webpage to PDF using Qt WebEngine (PyQt5)."""
     from PyQt5.QtCore import QMarginsF, QUrl
     from PyQt5.QtGui import QPageLayout, QPageSize
     from PyQt5.QtPrintSupport import QPrinter
@@ -162,6 +162,256 @@ def save_webpage_as_pdf(url: str, output_path: str) -> str:
     return output_path
 
 
+def _save_webpage_as_pdf_chromium(url: str, output_path: str) -> str:
+    """Render a webpage to PDF using Chromium via Playwright (CDP printToPDF)."""
+    import asyncio
+
+    import nest_asyncio
+    from playwright.async_api import async_playwright
+
+    nest_asyncio.apply()
+
+    user_agent = os.environ.get(
+        "LEXOID_BROWSER_USER_AGENT",
+        (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+    )
+    locale = os.environ.get("LEXOID_BROWSER_LOCALE", "en-US")
+    timezone_id = os.environ.get("LEXOID_BROWSER_TIMEZONE", "America/Los_Angeles")
+    accept_language = os.environ.get("LEXOID_BROWSER_ACCEPT_LANGUAGE", "en-US,en;q=0.9")
+
+    async def render_pdf() -> None:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                ],
+            )
+            try:
+                page = await browser.new_page(
+                    viewport={"width": 1440, "height": 900},
+                    user_agent=user_agent,
+                    locale=locale,
+                    timezone_id=timezone_id,
+                    extra_http_headers={"Accept-Language": accept_language},
+                    bypass_csp=True,
+                )
+                await page.emulate_media(
+                    media="screen", reduced_motion="reduce", color_scheme="light"
+                )
+                response = await page.goto(url, wait_until="load", timeout=25_000)
+                if response is None or response.status >= 400:
+                    status = response.status if response else "unknown"
+                    raise RuntimeError(f"Failed to load {url}: HTTP {status}")
+
+                await page.evaluate(
+                    """
+                    async () => {
+                        const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+                        const step = Math.max(window.innerHeight * 0.8, 600);
+                        const deadline = Date.now() + 8000;
+                        let lastHeight = 0;
+                        let stableRounds = 0;
+
+                        while (Date.now() < deadline) {
+                            const height = document.documentElement.scrollHeight;
+                            window.scrollBy(0, step);
+                            await delay(75);
+
+                            const newHeight = document.documentElement.scrollHeight;
+                            const atBottom = window.scrollY + window.innerHeight >= newHeight - 2;
+
+                            stableRounds = newHeight === lastHeight ? stableRounds + 1 : 0;
+                            lastHeight = newHeight;
+
+                            if (atBottom && stableRounds >= 2) {
+                                break;
+                            }
+                        }
+
+                        window.scrollTo(0, 0);
+                    }
+                    """
+                )
+
+                await page.evaluate(
+                    """
+                    () => Promise.race([
+                        document.fonts?.ready ?? Promise.resolve(),
+                        new Promise((resolve) => setTimeout(resolve, 3000)),
+                    ])
+                    """
+                )
+
+                await page.evaluate(
+                    """
+                    () => Promise.race([
+                        Promise.allSettled(
+                            [...document.images]
+                                .filter((img) => img.currentSrc || img.src)
+                                .map((img) =>
+                                    img.complete
+                                        ? Promise.resolve()
+                                        : new Promise((resolve) => {
+                                              img.addEventListener("load", resolve, { once: true });
+                                              img.addEventListener("error", resolve, { once: true });
+                                          })
+                                )
+                        ),
+                        new Promise((resolve) => setTimeout(resolve, 3000)),
+                    ])
+                    """
+                )
+
+                await page.evaluate(
+                    """
+                    () =>
+                        new Promise((resolve) =>
+                            requestAnimationFrame(() => requestAnimationFrame(resolve))
+                        )
+                    """
+                )
+
+                # Hide common fixed overlays (cookie banners/chat widgets)
+                # that can visually occlude lower-page content in captured PDFs.
+                await page.add_style_tag(
+                    content="""
+                    .cc-window,
+                    #onetrust-banner-sdk,
+                    #onetrust-consent-sdk,
+                    [id*='cookie'],
+                    [class*='cookie'],
+                    [id*='consent'],
+                    [class*='consent'],
+                    [id*='gdpr'],
+                    [class*='gdpr'],
+                    [id*='chat'],
+                    [class*='chat'],
+                    [id*='intercom'],
+                    [class*='intercom'],
+                    [id*='crisp'],
+                    [class*='crisp'],
+                    [style*='position: fixed'][style*='bottom'] {
+                        display: none !important;
+                        visibility: hidden !important;
+                    }
+                    """
+                )
+
+                page_state = await page.evaluate(
+                    """
+                    () => ({
+                        title: (document.title || "").trim(),
+                        textLength: document.body?.innerText?.trim().length ?? 0,
+                        textSample: (document.body?.innerText || "").slice(0, 4000),
+                        url: location.href,
+                    })
+                    """
+                )
+                detect_challenges = os.environ.get(
+                    "LEXOID_DETECT_BOT_CHALLENGES", "1"
+                ).strip().lower() not in {"0", "false", "no"}
+                if detect_challenges:
+                    combined_text = (
+                        f"{page_state['title']}\n{page_state['textSample']}"
+                    ).lower()
+                    challenge_indicators = [
+                        "checking your browser",
+                        "verify you are human",
+                        "captcha",
+                        "cf-challenge",
+                        "cloudflare",
+                        "perimeterx",
+                        "datadome",
+                        "access denied",
+                        "unusual traffic",
+                        "automated queries",
+                    ]
+                    matched_indicators = [
+                        marker
+                        for marker in challenge_indicators
+                        if marker in combined_text
+                    ]
+                    if matched_indicators:
+                        raise RuntimeError(
+                            "Detected possible bot-protection challenge while rendering "
+                            f"{page_state['url']}: {', '.join(matched_indicators)}"
+                        )
+
+                if page_state["textLength"] < 50:
+                    raise RuntimeError(
+                        f"Rendered page contains insufficient content: {page_state['url']}"
+                    )
+                pdf_width = os.environ.get("LEXOID_PDF_WIDTH", "1200px")
+                await page.pdf(
+                    path=output_path,
+                    width=pdf_width,
+                    margin={
+                        "top": "15mm",
+                        "right": "15mm",
+                        "bottom": "15mm",
+                        "left": "15mm",
+                    },
+                    print_background=True,
+                )
+            finally:
+                await browser.close()
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(render_pdf())
+    else:
+        loop.run_until_complete(render_pdf())
+
+    if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+        raise RuntimeError(f"Chromium PDF render produced empty output for {url}")
+
+    try:
+        document = pdfium.PdfDocument(output_path)
+        page_count = len(document)
+        document.close()
+    except Exception as exc:
+        raise RuntimeError(f"Chromium produced an invalid PDF for {url}") from exc
+
+    if page_count == 0:
+        raise RuntimeError(f"Chromium produced a zero-page PDF for {url}")
+
+    return output_path
+
+
+def save_webpage_as_pdf(url: str, output_path: str, engine: str | None = None) -> str:
+    """Saves a webpage as a PDF file.
+
+    Args:
+        url (str): The URL of the webpage.
+        output_path (str): The path to save the PDF file.
+        engine (str | None): Rendering engine: "qt" or "chromium".
+            If omitted, defaults to LEXOID_PDF_ENGINE or "chromium".
+
+    Returns:
+        str: The path to the saved PDF file.
+    """
+    selected_engine = (
+        engine or os.environ.get("LEXOID_PDF_ENGINE") or "chromium"
+    ).lower()
+    logger.debug(f"Using {selected_engine} engine for webpage PDF rendering...")
+
+    if selected_engine == "qt":
+        return _save_webpage_as_pdf_qt(url, output_path)
+    if selected_engine == "chromium":
+        return _save_webpage_as_pdf_chromium(url, output_path)
+
+    raise ValueError(
+        f"Unsupported PDF engine: {selected_engine!r}. Use 'qt' or 'chromium'."
+    )
+
+
 def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     temp_path = os.path.join(
         temp_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
@@ -190,21 +440,23 @@ def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
     return temp_path
 
 
-def convert_to_pdf(input_path: str, output_path: str) -> str:
+def convert_to_pdf(input_path: str, output_path: str, engine: str | None = None) -> str:
     """
     Converts a file or webpage to PDF.
 
     Args:
         input_path (str): The path to the input file or URL.
         output_path (str): The path to save the output PDF file.
+        engine (str | None): Rendering engine: "qt" or "chromium".
+            If omitted, defaults to LEXOID_PDF_ENGINE or "chromium".
 
     Returns:
         str: The path to the saved PDF file.
     """
     if input_path.startswith(("http://", "https://")):
         logger.debug(f"Converting webpage {input_path} to PDF...")
-        return save_webpage_as_pdf(input_path, output_path)
-    file_type = mimetypes.guess_type(input_path)[0]
+        return save_webpage_as_pdf(input_path, output_path, engine=engine)
+    file_type = mimetypes.guess_type(input_path)[0] or ""
     if file_type.startswith("image/"):
         img_data = convert_image_to_pdf(input_path)
         with open(output_path, "wb") as f:
