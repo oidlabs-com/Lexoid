@@ -362,8 +362,12 @@ def _save_webpage_as_pdf_chromium(url: str, output_path: str) -> str:
             finally:
                 await browser.close()
 
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(render_pdf())
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(render_pdf())
+    else:
+        loop.run_until_complete(render_pdf())
 
     if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
         raise RuntimeError(f"Chromium PDF render produced empty output for {url}")
