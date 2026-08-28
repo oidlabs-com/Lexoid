@@ -158,6 +158,29 @@ _CLEAR_UIDS_JS = """
 () => document.querySelectorAll('[data-lexoid-uid]').forEach(e => e.removeAttribute('data-lexoid-uid'))
 """
 
+_WAIT_FOR_DOM_QUIET_JS = """
+(idleMs) => new Promise((resolve) => {
+    let timer;
+    const observer = new MutationObserver(() => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+            observer.disconnect();
+            resolve(true);
+        }, idleMs);
+    });
+    observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        characterData: true,
+        attributes: true,
+    });
+    timer = setTimeout(() => {
+        observer.disconnect();
+        resolve(true);
+    }, idleMs);
+});
+"""
+
 
 @dataclass
 class GhostConfig:
@@ -183,6 +206,10 @@ class GhostConfig:
     screenshot_max_dim: int = 1280  # downscale screenshots before sending to the LLM
     nav_history_steps: int = 5  # recent actions fed back into the prompt
     nav_same_domain: bool = True  # restrict agent navigation to the start site
+    nav_wait_max_ms: int = 20000
+    nav_settle_idle_ms: int = 500
+    nav_success_selector: Optional[str] = None
+    nav_success_text: Optional[str] = None
 
     @classmethod
     def from_kwargs(cls, ghost_opts) -> "GhostConfig":
@@ -231,6 +258,10 @@ class GhostConfig:
             screenshot_max_dim=int(pick("screenshot_max_dim", 1280)),
             nav_history_steps=int(pick("nav_history_steps", 5)),
             nav_same_domain=bool(pick("nav_same_domain", True)),
+            nav_wait_max_ms=int(pick("nav_wait_max_ms", 20000)),
+            nav_settle_idle_ms=int(pick("nav_settle_idle_ms", 500)),
+            nav_success_selector=pick("nav_success_selector", None),
+            nav_success_text=pick("nav_success_text", None),
         )
 
     def for_child(self) -> "GhostConfig":
@@ -273,7 +304,9 @@ async def acquire_page(p, cfg: GhostConfig, patchright_active: bool):
     if cfg.cdp_url:
         # CDP attach — reuse the existing real context; do not create a new one.
         browser = await p.chromium.connect_over_cdp(cfg.cdp_url)
-        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        context = (
+            browser.contexts[0] if browser.contexts else await browser.new_context()
+        )
         page = await context.new_page()
         try:
             yield page, "cdp"
@@ -327,13 +360,56 @@ async def acquire_page(p, cfg: GhostConfig, patchright_active: bool):
                 pass
 
 
-async def _settle(page, cfg: GhostConfig):
+async def _settle(page, cfg: GhostConfig, wait_for_load_state: bool = True):
     """Best-effort wait for the page to finish rendering."""
+    await asyncio.sleep(0.35)
+    if wait_for_load_state:
+        try:
+            await page.wait_for_load_state(cfg.wait_until, timeout=cfg.timeout_ms)
+        except Exception:
+            # networkidle can time out on streaming/websocket sites; degrade gracefully.
+            logger.debug(f"wait_for_load_state({cfg.wait_until}) timed out; continuing")
     try:
-        await page.wait_for_load_state(cfg.wait_until, timeout=cfg.timeout_ms)
+        await asyncio.wait_for(
+            page.evaluate(_WAIT_FOR_DOM_QUIET_JS, cfg.nav_settle_idle_ms),
+            timeout=cfg.nav_wait_max_ms / 1000,
+        )
     except Exception:
-        # networkidle can time out on streaming/websocket sites; degrade gracefully.
-        logger.debug(f"wait_for_load_state({cfg.wait_until}) timed out; continuing")
+        logger.debug("DOM quiescence wait timed out; continuing")
+
+
+async def _wait_for_condition(
+    page,
+    cfg: GhostConfig,
+    selector: Optional[str] = None,
+    text: Optional[str] = None,
+) -> bool:
+    """Wait for a selector or visible text to appear on the page."""
+    if not selector and not text:
+        return True
+    deadline = asyncio.get_event_loop().time() + cfg.nav_wait_max_ms / 1000
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            found = await page.evaluate(
+                """
+                ({selector, text}) => {
+                  if (selector) {
+                    try {
+                      if (document.querySelector(selector)) return true;
+                    } catch (error) {}
+                  }
+                  return Boolean(text && (document.body.innerText || '').toLowerCase()
+                    .includes(text.toLowerCase()));
+                }
+                """,
+                {"selector": selector, "text": text},
+            )
+        except Exception:
+            found = False
+        if found:
+            return True
+        await asyncio.sleep(0.25)
+    return False
 
 
 async def _auto_scroll(page, cfg: GhostConfig):
@@ -377,7 +453,7 @@ _NAV_SYSTEM_PROMPT = """You are a web-navigation agent. Your goal is to interact
 You are given a screenshot of the current viewport with numbered pink boxes drawn over the interactive elements (set-of-marks), and a matching numbered list of those elements. The number on a box is the element's index. You also see RECENT ACTIONS — do NOT repeat an action that made no progress.
 
 Choose EXACTLY ONE next action and respond with ONLY a JSON object (no prose, no code fences):
-{"action": "click"|"type"|"select"|"keypress"|"hover"|"scroll"|"navigate"|"back"|"refresh"|"wait"|"done", "index": <int>, "text": <str>, "keys": <str>, "url": <str>, "direction": "up"|"down", "reason": <str>}
+{"action": "click"|"type"|"select"|"keypress"|"hover"|"scroll"|"navigate"|"back"|"refresh"|"wait"|"done", "index": <int>, "text": <str>, "keys": <str>, "url": <str>, "direction": "up"|"down", "seconds": <number>, "selector": <str>, "reason": <str>}
 
 Rules:
 - "index" refers to a box number from the list (for click/type/select/hover). Only use indices that exist.
@@ -385,6 +461,7 @@ Rules:
 - "type" fills an input with "text" but does NOT submit; to submit a form, then "click" the submit button (or "keypress" "Enter"). "keypress" presses "keys" (e.g. "Enter").
 - "select" picks an option from ANY dropdown — a native <select> OR an autocomplete/combobox (role=combobox). Put the desired option text in "text"; the field is opened, filtered, and the matching option clicked for you. Do NOT "scroll" a long dropdown hunting for an option — use "select".
 - "scroll" takes "direction" ("down" by default); "navigate" takes "url"; "back"/"refresh" need no other fields.
+- "wait" waits for visible page text in "text", a CSS selector in "selector", or "seconds" when no condition is known.
 - NEVER type into password/credential fields and never submit login forms.
 - Use "done" as soon as the target content is on screen. Prefer the fewest steps."""
 
@@ -598,7 +675,17 @@ async def _execute_action(page, cfg, action, elements, start_url):
         elif kind == "refresh":
             await page.reload(timeout=cfg.timeout_ms)
         elif kind == "wait":
-            pass
+            selector = action.get("selector")
+            text = action.get("text")
+            if selector or text:
+                found = await _wait_for_condition(
+                    page, cfg, selector=selector, text=text
+                )
+                outcome = "condition met" if found else "condition timed out"
+            else:
+                seconds = float(action.get("seconds", 2) or 2)
+                await asyncio.sleep(min(max(seconds, 0.25), 10))
+                outcome = f"waited {seconds:g}s"
         else:
             outcome = "no-op (bad action/index)"
     except Exception as e:
@@ -610,10 +697,16 @@ async def _execute_action(page, cfg, action, elements, start_url):
     if pages_before is not None and len(context.pages) > pages_before:
         new_page = context.pages[-1]
         try:
-            await new_page.wait_for_load_state("domcontentloaded", timeout=cfg.timeout_ms)
+            await new_page.wait_for_load_state(
+                "domcontentloaded", timeout=cfg.timeout_ms
+            )
         except Exception:
             pass
-        if cfg.nav_same_domain and new_page.url and not _same_site(new_page.url, start_url):
+        if (
+            cfg.nav_same_domain
+            and new_page.url
+            and not _same_site(new_page.url, start_url)
+        ):
             try:
                 await new_page.close()
             except Exception:
@@ -652,6 +745,7 @@ async def _run_agentic_navigation(page, cfg: GhostConfig, start_url=None):
     history: List[str] = []
     last_sig = None
     stall = 0
+    last_kind = None
 
     for step in range(cfg.nav_max_steps):
         elements = await _collect_elements(page)
@@ -664,12 +758,15 @@ async def _run_agentic_navigation(page, cfg: GhostConfig, start_url=None):
         )
         title = await page.title()
 
-        # No-progress / loop detection: stop if the page state hasn't changed.
-        sig = (page.url, title, tuple(e.get("text", "") for e in elements[:15]))
-        if sig == last_sig:
+        try:
+            body_text = await page.evaluate("() => document.body.innerText || ''")
+        except Exception:
+            body_text = ""
+        sig = (page.url, title, body_text)
+        if sig == last_sig and last_kind != "wait":
             stall += 1
-            if stall >= 2:
-                logger.info("Ghost navigation: no progress for 2 steps; stopping")
+            if stall >= 3:
+                logger.info("Ghost navigation: no progress for 3 steps; stopping")
                 break
         else:
             stall = 0
@@ -711,10 +808,23 @@ async def _run_agentic_navigation(page, cfg: GhostConfig, start_url=None):
             f"Ghost navigation step {step}: {kind} {action.get('reason', '')}".strip()
         )
         if kind == "done":
+            success = await _wait_for_condition(
+                page,
+                cfg,
+                selector=cfg.nav_success_selector,
+                text=cfg.nav_success_text,
+            )
+            if success:
+                break
+            if cfg.nav_success_selector or cfg.nav_success_text:
+                history.append(f"step {step}: premature done -> condition not met")
+                last_kind = kind
+                continue
             break
 
         page, outcome = await _execute_action(page, cfg, action, elements, start_url)
-        await _settle(page, cfg)
+        await _settle(page, cfg, wait_for_load_state=False)
+        last_kind = kind
 
         detail = []
         if action.get("index") is not None:
@@ -737,8 +847,6 @@ async def _run_agentic_navigation(page, cfg: GhostConfig, start_url=None):
 # --------------------------------------------------------------------------- #
 # Sync entry point
 # --------------------------------------------------------------------------- #
-
-
 def ghost_get_html(url: str, cfg: GhostConfig) -> Tuple[Optional[str], dict]:
     """
     Fetch ``url`` using ghost browsing.
@@ -770,6 +878,13 @@ def ghost_get_html(url: str, cfg: GhostConfig) -> Tuple[Optional[str], dict]:
                     # returned page may differ if a new tab was followed.
                     usage, page = await _run_agentic_navigation(page, cfg, url)
                     logger.info(f"Ghost navigation token usage: {usage}")
+                    await _settle(page, cfg, wait_for_load_state=False)
+                    await _wait_for_condition(
+                        page,
+                        cfg,
+                        selector=cfg.nav_success_selector,
+                        text=cfg.nav_success_text,
+                    )
                     html = await page.content()
                 return html, usage
 

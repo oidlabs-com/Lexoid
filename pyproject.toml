@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.23-dev"
+version = "0.1.24-dev"
 description = ""
 authors = []
 readme = "README.md"
@@ -14,7 +14,7 @@ pdfplumber = "^0.11.4"
 pandas = "^2.2.3"
 tabulate = "^0.9.0"
 bs4 = "^0.0.2"
-markdownify = "^0.14.1"
+markdownify = "^1.2.3"
 opencv-python = "^4.10.0.84"
 pypdfium2 = "^4.30.0"
 markdown = "^3.7"
