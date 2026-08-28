@@ -36,6 +36,8 @@ from lexoid.core.ghost import (
     _format_element,
     _normalize_step_usage,
     _parse_action,
+    _execute_action,
+    _wait_for_condition,
     ghost_get_html,
 )
 
@@ -165,7 +167,9 @@ def test_set_of_marks_enabled_by_default():
 
 
 def test_format_element_marks_role_and_offscreen():
-    on = _format_element(0, {"tag": "button", "role": "", "text": "Buy", "in_viewport": True})
+    on = _format_element(
+        0, {"tag": "button", "role": "", "text": "Buy", "in_viewport": True}
+    )
     assert on == "[0] <button> Buy"
     off = _format_element(
         3, {"tag": "a", "role": "link", "text": "Next", "in_viewport": False}
@@ -220,7 +224,9 @@ def test_token_usage_threaded_into_result(monkeypatch):
     """When the agentic loop runs, its LLM token usage appears in the result."""
     fake_html = "<html><head><title>T</title></head><body><h1>Hi</h1></body></html>"
     fake_usage = {"input": 120, "output": 30, "total": 150}
-    monkeypatch.setattr(ghost, "ghost_get_html", lambda url, cfg: (fake_html, fake_usage))
+    monkeypatch.setattr(
+        ghost, "ghost_get_html", lambda url, cfg: (fake_html, fake_usage)
+    )
 
     content = utils.read_html_content("https://example.com", ghost_opts=True)
     assert content["token_usage"] == fake_usage
@@ -230,14 +236,18 @@ def test_no_token_usage_key_when_navigation_did_not_run(monkeypatch):
     """A plain ghost fetch (no agentic loop) adds no token_usage key."""
     fake_html = "<html><head><title>T</title></head><body><h1>Hi</h1></body></html>"
     zero_usage = {"input": 0, "output": 0, "total": 0}
-    monkeypatch.setattr(ghost, "ghost_get_html", lambda url, cfg: (fake_html, zero_usage))
+    monkeypatch.setattr(
+        ghost, "ghost_get_html", lambda url, cfg: (fake_html, zero_usage)
+    )
 
     content = utils.read_html_content("https://example.com", ghost_opts=True)
     assert "token_usage" not in content
 
 
 def test_disabled_ghost_returns_none_html():
-    html, usage = ghost.ghost_get_html("https://example.com", GhostConfig(enabled=False))
+    html, usage = ghost.ghost_get_html(
+        "https://example.com", GhostConfig(enabled=False)
+    )
     assert html is None
     assert usage == {"input": 0, "output": 0, "total": 0}
 
@@ -422,9 +432,7 @@ def test_agentic_loop_executes_rich_actions(monkeypatch):
         "lexoid.core.parse_type.llm_parser.create_response",
         _scripted_create_response(calls, responses),
     )
-    cfg = GhostConfig(
-        enabled=True, navigate=True, nav_instruction="x", nav_max_steps=6
-    )
+    cfg = GhostConfig(enabled=True, navigate=True, nav_instruction="x", nav_max_steps=6)
     page = _FakePage(progressing=True)  # avoid the no-progress early stop
     asyncio.run(ghost._run_agentic_navigation(page, cfg))
 
@@ -483,9 +491,7 @@ def test_agentic_loop_blocks_typing_into_password_field(monkeypatch):
             ['{"action": "type", "index": 0, "text": "secret"}', '{"action": "done"}'],
         ),
     )
-    cfg = GhostConfig(
-        enabled=True, navigate=True, nav_instruction="x", nav_max_steps=3
-    )
+    cfg = GhostConfig(enabled=True, navigate=True, nav_instruction="x", nav_max_steps=3)
     page = _FakePage(input_type="password", progressing=True)
     asyncio.run(ghost._run_agentic_navigation(page, cfg))
 
@@ -500,12 +506,13 @@ def test_agentic_loop_types_without_submitting(monkeypatch):
         "lexoid.core.parse_type.llm_parser.create_response",
         _scripted_create_response(
             calls,
-            ['{"action": "type", "index": 0, "text": "213584631"}', '{"action": "done"}'],
+            [
+                '{"action": "type", "index": 0, "text": "213584631"}',
+                '{"action": "done"}',
+            ],
         ),
     )
-    cfg = GhostConfig(
-        enabled=True, navigate=True, nav_instruction="x", nav_max_steps=3
-    )
+    cfg = GhostConfig(enabled=True, navigate=True, nav_instruction="x", nav_max_steps=3)
     page = _FakePage(input_type="text", progressing=True)
     asyncio.run(ghost._run_agentic_navigation(page, cfg))
 
@@ -519,9 +526,7 @@ def test_agentic_loop_stops_on_no_progress(monkeypatch):
     calls = {"n": 0}
     monkeypatch.setattr(
         "lexoid.core.parse_type.llm_parser.create_response",
-        _scripted_create_response(
-            calls, ['{"action": "scroll", "direction": "down"}']
-        ),
+        _scripted_create_response(calls, ['{"action": "scroll", "direction": "down"}']),
     )
     cfg = GhostConfig(
         enabled=True, navigate=True, nav_instruction="x", nav_max_steps=10
@@ -534,7 +539,9 @@ def test_agentic_loop_stops_on_no_progress(monkeypatch):
 def test_same_site_compares_registrable_domain():
     from lexoid.core.ghost import _same_site
 
-    assert _same_site("https://quotes.toscrape.com/page/2/", "https://quotes.toscrape.com/")
+    assert _same_site(
+        "https://quotes.toscrape.com/page/2/", "https://quotes.toscrape.com/"
+    )
     assert _same_site("https://www.example.com/a", "https://api.example.com/b")
     assert not _same_site("https://example.com", "https://evil.com")
 
@@ -561,12 +568,57 @@ def test_new_agentic_config_defaults_and_overrides():
     assert cfg.screenshot_max_dim == 1280
     assert cfg.nav_history_steps == 5
     assert cfg.nav_same_domain is True
+    assert cfg.nav_wait_max_ms == 20000
+    assert cfg.nav_settle_idle_ms == 500
+    assert cfg.nav_success_selector is None
+    assert cfg.nav_success_text is None
     cfg2 = GhostConfig.from_kwargs(
-        {"screenshot_max_dim": 800, "nav_history_steps": 3, "nav_same_domain": False}
+        {
+            "screenshot_max_dim": 800,
+            "nav_history_steps": 3,
+            "nav_same_domain": False,
+            "nav_wait_max_ms": 7000,
+            "nav_settle_idle_ms": 800,
+            "nav_success_selector": "#result",
+            "nav_success_text": "No case found",
+        }
     )
     assert cfg2.screenshot_max_dim == 800
     assert cfg2.nav_history_steps == 3
     assert cfg2.nav_same_domain is False
+    assert cfg2.nav_wait_max_ms == 7000
+    assert cfg2.nav_settle_idle_ms == 800
+    assert cfg2.nav_success_selector == "#result"
+    assert cfg2.nav_success_text == "No case found"
+
+
+class _ConditionPage:
+    def __init__(self, body_texts):
+        self.body_texts = iter(body_texts)
+
+    async def evaluate(self, _script, _condition):
+        return next(self.body_texts)
+
+
+def test_wait_for_condition_observes_late_result_text():
+    cfg = GhostConfig(enabled=True, nav_wait_max_ms=1000)
+    page = _ConditionPage([False, False, True])
+    assert asyncio.run(_wait_for_condition(page, cfg, text="No case found")) is True
+
+
+def test_wait_action_dispatches_to_condition_wait():
+    cfg = GhostConfig(enabled=True, nav_wait_max_ms=1000)
+    page = _ConditionPage([False, True])
+    _page, outcome = asyncio.run(
+        _execute_action(
+            page,
+            cfg,
+            {"action": "wait", "text": "No case found"},
+            [],
+            "https://example.com",
+        )
+    )
+    assert outcome == "condition met"
 
 
 # --------------------------------------------------------------------------- #
@@ -618,9 +670,7 @@ async def test_fresh_mode_is_default_acquisition():
 async def test_persistent_profile_mode_persists_data():
     """A persistent profile dir is created/populated and reused across runs."""
     profile_dir = tempfile.mkdtemp(prefix="lexoid-ghost-")
-    mode, _ = await _acquire_and_probe(
-        {"headless": True, "user_data_dir": profile_dir}
-    )
+    mode, _ = await _acquire_and_probe({"headless": True, "user_data_dir": profile_dir})
     assert mode == "persistent"
     assert len(os.listdir(profile_dir)) > 0  # Chromium wrote the profile
 
