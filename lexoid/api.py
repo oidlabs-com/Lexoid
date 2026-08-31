@@ -44,6 +44,16 @@ from lexoid.core.utils import (
     router,
     split_pdf,
 )
+from lexoid.core.browse.agents import plan_task
+from lexoid.core.browse.events import BrowseEventListener
+from lexoid.core.browse.model_provider import create_chat_client
+from lexoid.core.browse.orchestrator import run_task
+from lexoid.core.browse.schemas import (
+    BrowseErrorCode,
+    BrowseLimits,
+    BrowseResult,
+    BrowseTask,
+)
 from loguru import logger
 
 
@@ -51,6 +61,62 @@ class ParserType(Enum):
     LLM_PARSE = "LLM_PARSE"
     STATIC_PARSE = "STATIC_PARSE"
     AUTO = "AUTO"
+
+
+async def browse(
+    query: str | BrowseTask,
+    *,
+    planner_model: str | None = None,
+    navigator_model: str | None = None,
+    extractor_model: str | None = None,
+    synthesizer_model: str | None = None,
+    cdp_url: str | None = None,
+    headless: bool = True,
+    limits: BrowseLimits | None = None,
+    event_listener: BrowseEventListener | None = None,
+) -> BrowseResult:
+    """Run one read-only browser task from an explicit URL or validated task.
+
+    Each model role may select a different provider/model: planner interprets
+    the task, navigator drives browser actions, extractor creates evidence
+    claims, and synthesizer writes from validated claims. Lexoid retains browser
+    lifecycle, policy, provenance, pagination, and tab ownership.
+    """
+    for model in (
+        planner_model,
+        navigator_model,
+        extractor_model,
+        synthesizer_model,
+    ):
+        if model is None:
+            continue
+        try:
+            get_api_provider_for_model(model)
+        except ValueError as error:
+            raise ValueError(
+                f"{BrowseErrorCode.MODEL_UNSUPPORTED.value}: {model}"
+            ) from error
+    effective_limits = limits or BrowseLimits()
+    if isinstance(query, BrowseTask):
+        task = query
+    else:
+        client = create_chat_client(planner_model) if planner_model else None
+        task, _ = await plan_task(query, client, effective_limits)
+    return await run_task(
+        task,
+        cdp_url=cdp_url,
+        headless=headless,
+        event_listener=event_listener,
+        navigator_client=(
+            create_chat_client(navigator_model) if navigator_model else None
+        ),
+        extractor_client=(
+            create_chat_client(extractor_model) if extractor_model else None
+        ),
+        synthesizer_client=(
+            create_chat_client(synthesizer_model) if synthesizer_model else None
+        ),
+    )
 
 
 def retry_with_different_parser_type(func):

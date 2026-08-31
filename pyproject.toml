@@ -43,6 +43,11 @@ levenshtein = "^0.27.1"
 accelerate = "^1.10.1"
 google-genai = "^1.56.0"
 patchright = "^1.49.0"
+agent-framework-core = {version = "^1.16.0", optional = true}
+agent-framework-openai = {version = "^1.14.1", optional = true}
+
+[tool.poetry.extras]
+browse = ["agent-framework-core", "agent-framework-openai"]
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"

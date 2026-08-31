@@ -219,6 +219,9 @@ class GhostConfig:
         Returns an ``enabled=False`` config when nothing requests ghost mode, so
         callers keep the legacy behaviour by default.
         """
+        if isinstance(ghost_opts, cls):
+            return ghost_opts
+
         opts: dict = {}
         if isinstance(ghost_opts, dict):
             opts = dict(ghost_opts)
