@@ -18,6 +18,8 @@ from markdown import markdown
 from markdownify import markdownify as md
 from matplotlib import pyplot as plt
 
+from lexoid.core.ghost import GhostConfig
+
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 DEFAULT_LLM = os.getenv("DEFAULT_LLM", "gemini-3.5-flash")
 DEFAULT_LOCAL_LM = os.getenv("DEFAULT_LOCAL_LM", "ds4sd/SmolDocling-256M-preview")
@@ -480,10 +482,8 @@ def recursive_read_html(
     # Extract URLs from all content sections
     urls = extract_urls_from_markdown(content["raw"])
 
-    # Children inherit ghost browsing but never run the agentic loop (cost).
-    child_ghost_opts = ghost_opts
-    if isinstance(ghost_opts, dict) and ghost_opts.get("navigate"):
-        child_ghost_opts = {**ghost_opts, "navigate": False}
+    # Children inherit resolved ghost settings but never run agentic navigation.
+    child_ghost_opts = GhostConfig.from_kwargs(ghost_opts).for_child()
 
     # Recursively process each URL
     recursive_docs = []
