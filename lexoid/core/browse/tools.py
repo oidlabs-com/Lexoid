@@ -12,10 +12,26 @@ from lexoid.core.browse.schemas import (
     BrowserActionResult,
     BrowserActionTrace,
     BrowserSnapshot,
+    NavigationOutcome,
 )
 from lexoid.core.browse.session import GhostBrowserSession
 
 TraceEmitter = Callable[[BrowserActionTrace], Awaitable[None]]
+
+
+def _contains_normalized(haystack: str, needle: str) -> bool:
+    """Compare visible text ignoring whitespace and case differences."""
+    if not needle.strip():
+        return False
+    return " ".join(needle.split()).lower() in " ".join(haystack.split()).lower()
+
+
+# Per-element identifiers are constant across a snapshot, so send them once.
+_OBSERVATION_EXCLUDE = {
+    "content_hash": True,
+    "truncated": True,
+    "elements": {"__all__": {"snapshot_id", "tab_id", "frame_id", "node_id"}},
+}
 
 
 class BrowserToolset:
@@ -34,6 +50,8 @@ class BrowserToolset:
         self._emit = emit
         self._snapshot: BrowserSnapshot | None = None
         self.action_count = 0
+        self.outcome = NavigationOutcome.UNKNOWN
+        self.outcome_evidence = ""
 
     async def observe(self) -> str:
         """Return the current accessible elements available to navigation tools."""
@@ -46,7 +64,7 @@ class BrowserToolset:
                 snapshot_id=self._snapshot.snapshot_id,
             )
         )
-        return self._snapshot.model_dump_json(exclude={"content_hash", "truncated"})
+        return self._snapshot.model_dump_json(exclude=_OBSERVATION_EXCLUDE)
 
     async def click(self, ref: str) -> str:
         """Click one element ref returned by observe."""
@@ -88,6 +106,45 @@ class BrowserToolset:
         """Navigate to an allowlisted URL only."""
         return await self._run(BrowserAction(kind="navigate", url=url))
 
+    async def report_outcome(self, outcome: str, evidence: str) -> str:
+        """Report the final navigation state, quoting visible page text as evidence."""
+        try:
+            reported = NavigationOutcome(outcome)
+        except ValueError:
+            return json.dumps(
+                {
+                    "success": False,
+                    "outcome": "unknown outcome; use results_ready, no_results, "
+                    "blocked, or timeout",
+                }
+            )
+        if reported is NavigationOutcome.UNKNOWN:
+            return json.dumps(
+                {"success": False, "outcome": "unknown is not reportable"}
+            )
+        # A reported outcome is only accepted when the page still shows the quote.
+        if reported in {NavigationOutcome.RESULTS_READY, NavigationOutcome.NO_RESULTS}:
+            page_text = await self._session.text_content(self._tab_id)
+            if not _contains_normalized(page_text, evidence):
+                return json.dumps(
+                    {
+                        "success": False,
+                        "outcome": "evidence is not visible page text; observe the "
+                        "page and quote it exactly",
+                    }
+                )
+        self.outcome = reported
+        self.outcome_evidence = evidence[:1000]
+        await self._emit(
+            BrowserActionTrace(
+                event="observation",
+                task_id=self._task.task_id,
+                tab_id=self._tab_id,
+                metadata={"navigation_outcome": reported.value},
+            )
+        )
+        return json.dumps({"success": True, "outcome": reported.value})
+
     def functions(self) -> list[Callable[..., Awaitable[str]]]:
         """Return the callable tools supplied to the navigator Agent."""
         return [
@@ -101,6 +158,7 @@ class BrowserToolset:
             self.back,
             self.refresh,
             self.navigate,
+            self.report_outcome,
         ]
 
     async def _run(self, action: BrowserAction) -> str:

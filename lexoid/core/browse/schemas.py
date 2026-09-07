@@ -32,6 +32,102 @@ class BrowseErrorCode(str, Enum):
     MODEL_UNSUPPORTED = "model_unsupported"
 
 
+class NavigationOutcome(str, Enum):
+    """Verified state of the page after navigation, before any collection."""
+
+    RESULTS_READY = "results_ready"
+    NO_RESULTS = "no_results"
+    BLOCKED = "blocked"
+    TIMEOUT = "timeout"
+    UNKNOWN = "unknown"
+
+
+class TaskFilter(BaseModel):
+    """One user-requested constraint expressed in the user's own terms."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str = Field(min_length=1, max_length=200)
+    operator: Literal["equals", "contains", "unspecified"] = "unspecified"
+    value: str = Field(min_length=1, max_length=1_000)
+
+
+class TaskConstraints(BaseModel):
+    """Site-independent description of what the user asked for."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    filters: list[TaskFilter] = Field(default_factory=list, max_length=20)
+    coverage: Literal["all_matches", "first_page", "count"] = "all_matches"
+    max_records: int | None = Field(default=None, ge=1, le=100_000)
+
+
+class CollectionPlan(BaseModel):
+    """How results should be collected once navigation is verified."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    preferred_method: Literal["auto", "export", "dom"] = "auto"
+    fallback_method: Literal["dom", "none"] = "dom"
+    discover_pagination: bool = True
+
+
+class PlanStage(BaseModel):
+    """One declared stage with a typed executor and gating condition."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1, max_length=128)
+    executor: Literal["navigator", "collector", "extractor", "synthesizer"]
+    goal: str = Field(min_length=1, max_length=2_000)
+    depends_on: list[str] = Field(default_factory=list, max_length=20)
+    run_if: NavigationOutcome | None = None
+
+
+class ConstraintCheck(BaseModel):
+    """Whether captured evidence shows a filter's value, not its semantic relationship."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str = Field(min_length=1, max_length=200)
+    value: str = Field(min_length=1, max_length=1_000)
+    verified: bool = False
+    supporting_claim_ids: list[str] = Field(default_factory=list, max_length=500)
+
+
+class EvidenceAssessment(BaseModel):
+    """One model judgement of whether captured evidence answers the task so far."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answerability: Literal["sufficient", "partial", "insufficient"] = "insufficient"
+    gaps: list[str] = Field(default_factory=list, max_length=20)
+    next_action: Literal["paginate", "stop"] = "stop"
+    next_action_reason: str = Field(default="", max_length=1_000)
+
+
+class CoverageReport(BaseModel):
+    """Deterministic account of what was captured and what stayed unverified."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pages_captured: int = Field(default=0, ge=0)
+    stop_reason: Literal[
+        "sufficient",
+        "no_progress",
+        "no_next_action",
+        "budget_exhausted",
+        "blocked",
+    ] = "budget_exhausted"
+    answerability: Literal["sufficient", "partial", "insufficient"] = "insufficient"
+    gaps: list[str] = Field(default_factory=list, max_length=20)
+    artifacts_truncated: bool = False
+    validated_claims: int = Field(default=0, ge=0)
+    constraint_checks: list[ConstraintCheck] = Field(
+        default_factory=list, max_length=20
+    )
+
+
 class BrowseLimits(BaseModel):
     """Bounded resources available to one browse task."""
 
@@ -58,6 +154,12 @@ class ElementRef(BaseModel):
     name: str | None = Field(default=None, max_length=1_000)
     tag: str | None = Field(default=None, max_length=64)
     ordinal: int | None = Field(default=None, ge=0)
+    bbox_x: float | None = Field(default=None, ge=-20_000, le=20_000)
+    bbox_y: float | None = Field(default=None, ge=-20_000, le=20_000)
+    bbox_width: float | None = Field(default=None, gt=0, le=20_000)
+    bbox_height: float | None = Field(default=None, gt=0, le=20_000)
+    visible: bool = True
+    enabled: bool = True
 
 
 class BrowserSnapshot(BaseModel):
@@ -70,6 +172,10 @@ class BrowserSnapshot(BaseModel):
     page_revision: int = Field(ge=0)
     url: str = Field(min_length=1, max_length=8_192)
     title: str = Field(default="", max_length=2_000)
+    viewport_width: int = Field(ge=1, le=20_000)
+    viewport_height: int = Field(ge=1, le=20_000)
+    scroll_x: float = Field(ge=-20_000, le=20_000)
+    scroll_y: float = Field(ge=-20_000, le=20_000)
     elements: list[ElementRef] = Field(default_factory=list, max_length=500)
     truncated: bool = False
     content_hash: str = Field(min_length=1, max_length=128)
@@ -190,11 +296,15 @@ class BrowseTask(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     task_id: str = Field(default="task-1", min_length=1, max_length=128)
+    schema_version: int = Field(default=1, ge=1)
     task_type: Literal["search", "navigate", "capture"] = "search"
     seed_urls: list[str] = Field(min_length=1, max_length=20)
     subject: str = Field(min_length=1, max_length=4_000)
     requested_facts: list[str] = Field(default_factory=list, max_length=100)
     completion_criteria: list[str] = Field(default_factory=list, max_length=20)
+    constraints: TaskConstraints = Field(default_factory=TaskConstraints)
+    collection: CollectionPlan = Field(default_factory=CollectionPlan)
+    stages: list[PlanStage] = Field(default_factory=list, max_length=20)
     allowed_domains: list[str] = Field(min_length=1, max_length=100)
     limits: BrowseLimits = Field(default_factory=BrowseLimits)
     retain_final_page: bool = True
@@ -219,6 +329,9 @@ class BrowseTaskResult(BaseModel):
 
     task: BrowseTask
     status: BrowseTerminalState
+    navigation_outcome: NavigationOutcome = NavigationOutcome.UNKNOWN
+    site_profile_id: str | None = Field(default=None, max_length=128)
+    coverage: CoverageReport = Field(default_factory=CoverageReport)
     artifacts: list[PageArtifact] = Field(default_factory=list)
     claims: list[EvidenceClaim] = Field(default_factory=list)
     trace: list[BrowserActionTrace] = Field(default_factory=list)

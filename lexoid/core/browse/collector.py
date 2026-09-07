@@ -1,34 +1,42 @@
-"""Deterministic result-page capture for completed browser searches."""
+"""Deterministic single-page result capture for browser search sessions."""
 
 from __future__ import annotations
 
 import hashlib
 
+from loguru import logger
+
 from lexoid.core.browse.schemas import PageArtifact
 from lexoid.core.browse.session import GhostBrowserSession
+from lexoid.core.utils import html_to_markdown
 
 
-async def collect_result_pages(
-    session: GhostBrowserSession, tab_id: str, max_pages: int, max_artifact_chars: int
-) -> tuple[list[PageArtifact], bool]:
-    """Capture reachable result pages and report whether pagination was exhausted."""
-    artifacts: list[PageArtifact] = []
-    exhausted = False
-    for index in range(max_pages):
-        tab = await session.tab(tab_id)
-        html = await session.content(tab_id)
-        text = html[:max_artifact_chars]
-        artifacts.append(
-            PageArtifact(
-                artifact_id=f"artifact-{index + 1}",
-                url=tab.url,
-                tab_id=tab_id,
-                content_hash=hashlib.sha256(html.encode("utf-8")).hexdigest(),
-                text=text,
-                truncated=len(text) < len(html),
-            )
-        )
-        if not await session.advance_to_next_result_page(tab_id):
-            exhausted = True
-            break
-    return artifacts, exhausted
+async def capture_page(
+    session: GhostBrowserSession,
+    tab_id: str,
+    artifact_index: int,
+    max_artifact_chars: int,
+) -> PageArtifact:
+    """Capture the current page as one markdown artifact; loop control lives in the caller."""
+    tab = await session.tab(tab_id)
+    html = await session.content(tab_id)
+    content_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
+    markdown = html_to_markdown(html, tab.title, tab.url)["raw"]
+    logger.debug(f"Raw markdown result:\n\n{markdown}")
+    text = markdown[:max_artifact_chars]
+    logger.debug(
+        "Browse collector captured page {} url={} hash={} chars={} truncated={}",
+        artifact_index,
+        tab.url,
+        content_hash[:12],
+        len(text),
+        len(text) < len(markdown),
+    )
+    return PageArtifact(
+        artifact_id=f"artifact-{artifact_index}",
+        url=tab.url,
+        tab_id=tab_id,
+        content_hash=content_hash,
+        text=text,
+        truncated=len(text) < len(markdown),
+    )
