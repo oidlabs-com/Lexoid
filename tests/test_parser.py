@@ -5,11 +5,9 @@ import os
 
 import pytest
 from benchmark_utils import calculate_similarities
-from dotenv import load_dotenv
 from lexoid.api import parse, parse_with_schema
 from loguru import logger
 
-load_dotenv()
 output_dir = "tests/outputs"
 os.makedirs(output_dir, exist_ok=True)
 models = [

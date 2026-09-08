@@ -56,9 +56,10 @@ tests = ["hypothesis", "pytest"]
 name = "agent-framework-core"
 version = "1.16.0"
 description = "Microsoft Agent Framework for building AI Agents with Python. This is the core package that has all the core abstractions and implementations."
-optional = false
+optional = true
 python-versions = ">=3.10"
 groups = ["main"]
+markers = "extra == \"browse\""
 files = [
     {file = "agent_framework_core-1.16.0-py3-none-any.whl", hash = "sha256:382a6a0332cdc3144ffcf14b07a9a38c3ef42afc06dde8230226b850fe4cc76e"},
     {file = "agent_framework_core-1.16.0.tar.gz", hash = "sha256:47ee37b4f6201add7a8a8f9cc39ffe43438c24360b53b116f61ba075e6962d94"},
@@ -79,9 +80,10 @@ all = ["agent-framework-a2a", "agent-framework-ag-ui", "agent-framework-anthropi
 name = "agent-framework-openai"
 version = "1.14.1"
 description = "OpenAI integrations for Microsoft Agent Framework."
-optional = false
+optional = true
 python-versions = ">=3.10"
 groups = ["main"]
+markers = "extra == \"browse\""
 files = [
     {file = "agent_framework_openai-1.14.1-py3-none-any.whl", hash = "sha256:93dc402f90dd8f5c38acf17e720d1bbc202af29f279641caa206acbc84a14bb4"},
     {file = "agent_framework_openai-1.14.1.tar.gz", hash = "sha256:b255ec3979aa4dcaf894144511ce08cca163f7e1bb5aa7d0fb6da4b44de92c38"},
@@ -3483,9 +3485,10 @@ tests = ["pytest (>=4.6)"]
 name = "msgspec"
 version = "0.21.1"
 description = "A fast serialization and validation library, with builtin support for JSON, MessagePack, YAML, and TOML."
-optional = false
+optional = true
 python-versions = ">=3.10"
 groups = ["main"]
+markers = "extra == \"browse\""
 files = [
     {file = "msgspec-0.21.1-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:72d9cd03241b8b2edb2e12dcc66c500fa480d8cbd71a8bac105809d468882064"},
     {file = "msgspec-0.21.1-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:ed2ab278200e743a1d2610a4e0c8fc74f6cecb8548544cdec43f927bd9265238"},
@@ -8627,7 +8630,10 @@ idna = ">=2.0"
 multidict = ">=4.0"
 propcache = ">=0.2.1"
 
+[extras]
+browse = ["agent-framework-core", "agent-framework-openai"]
+
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "8b60be789d3138196190a42048dc8f6b05fefd61224fcbcfc2fedf977998b2ea"
+content-hash = "3211986d2f6f1e8c23995e4b3df65b7513f41418edcdb97ea7591b460dbccb97"

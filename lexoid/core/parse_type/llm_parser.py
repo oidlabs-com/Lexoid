@@ -4,7 +4,6 @@ import io
 import mimetypes
 import os
 import re
-import time
 from functools import wraps
 from typing import Dict, List, Optional, Tuple
 
@@ -31,6 +30,13 @@ from lexoid.core.utils import (
 )
 from loguru import logger
 from requests.exceptions import HTTPError
+from tenacity import (
+    RetryCallState,
+    Retrying,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_fixed,
+)
 
 
 _ANTHROPIC_MODEL_RE = re.compile(
@@ -38,53 +44,44 @@ _ANTHROPIC_MODEL_RE = re.compile(
 )
 
 
+def _llm_parse_error_dict(kwargs: dict, error: Exception) -> Dict:
+    return {
+        "raw": "",
+        "segments": [],
+        "title": kwargs["title"],
+        "url": kwargs.get("url", ""),
+        "parent_title": kwargs.get("parent_title", ""),
+        "recursive_docs": [],
+        "error": (
+            f"{type(error).__name__} encountered on page {kwargs.get('start', 0)}: {error}"
+        ),
+    }
+
+
+def _log_retry_wait(retry_state: RetryCallState) -> None:
+    error = retry_state.outcome.exception()
+    logger.error(
+        f"{type(error).__name__} encountered: {error}. Retrying in 10 seconds..."
+    )
+
+
 def retry_on_error(func):
     @wraps(func)
     def wrapper(*args, **kwargs):
-        return_dict = {
-            "raw": "",
-            "segments": [],
-            "title": kwargs["title"],
-            "url": kwargs.get("url", ""),
-            "parent_title": kwargs.get("parent_title", ""),
-            "recursive_docs": [],
-        }
+        # retry_on_fail=False means fail fast with no retry attempt.
+        attempts = 2 if kwargs.get("retry_on_fail", True) else 1
+        retryer = Retrying(
+            stop=stop_after_attempt(attempts),
+            wait=wait_fixed(10),
+            retry=retry_if_exception_type((HTTPError, ValueError)),
+            before_sleep=_log_retry_wait,
+            reraise=True,
+        )
         try:
-            return func(*args, **kwargs)
-        except HTTPError as e:
-            logger.error(f"HTTPError encountered: {e}. Retrying in 10 seconds...")
-            if not kwargs.get("retry_on_fail", True):
-                return_dict["error"] = (
-                    f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}"
-                )
-                return return_dict
-            time.sleep(10)
-            try:
-                logger.debug(f"Retry {func.__name__}")
-                return func(*args, **kwargs)
-            except HTTPError as e:
-                logger.error(f"Retry failed: {e}")
-                return_dict["error"] = (
-                    f"HTTPError encountered on page {kwargs.get('start', 0)}: {e}"
-                )
-                return return_dict
-        except ValueError as e:
-            logger.error(f"ValueError encountered: {e}")
-            if not kwargs.get("retry_on_fail", True):
-                return_dict["error"] = (
-                    f"ValueError encountered on page {kwargs.get('start', 0)}: {e}"
-                )
-                return return_dict
-            time.sleep(10)
-            try:
-                logger.debug(f"Retry {func.__name__}")
-                return func(*args, **kwargs)
-            except ValueError as e:
-                logger.error(f"Retry failed: {e}")
-                return_dict["error"] = (
-                    f"ValueError encountered on page {kwargs.get('start', 0)}: {e}"
-                )
-                return return_dict
+            return retryer(func, *args, **kwargs)
+        except (HTTPError, ValueError) as e:
+            logger.error(f"Retry failed: {e}")
+            return _llm_parse_error_dict(kwargs, e)
 
     return wrapper
 

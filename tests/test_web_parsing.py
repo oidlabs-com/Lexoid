@@ -2,11 +2,9 @@ import re
 from importlib.util import find_spec
 
 import pytest
-from dotenv import load_dotenv
 from lexoid.api import parse
 from lexoid.core import conversion_utils
 
-load_dotenv()
 _TEST_URL = "https://jnhlifestyles.com/blog/top-5-reasons-to-add-a-full-spectrum-infrared-sauna-into-your-home/"
 
 # Stable phrases that must survive rendering and PDF extraction.

@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from lexoid.core.browse.policy import PolicyDecision, authorize
 from lexoid.core.browse.schemas import (
+    BrowseErrorCode,
     BrowseTask,
     BrowserAction,
     BrowserActionResult,
@@ -52,6 +53,10 @@ class BrowserToolset:
         self.action_count = 0
         self.outcome = NavigationOutcome.UNKNOWN
         self.outcome_evidence = ""
+        # Deterministic executor state, used to explain a navigator exit without
+        # a reported outcome; never derived from model text.
+        self.step_limit_reached = False
+        self.last_error_code: BrowseErrorCode | None = None
 
     async def observe(self) -> str:
         """Return the current accessible elements available to navigation tools."""
@@ -163,10 +168,12 @@ class BrowserToolset:
 
     async def _run(self, action: BrowserAction) -> str:
         if self.action_count >= self._task.limits.max_steps:
+            self.step_limit_reached = True
             return json.dumps(
                 {
                     "success": False,
-                    "outcome": "navigation step limit reached",
+                    "outcome": "navigation step limit reached; call report_outcome "
+                    "now with the outcome you can support",
                 }
             )
         if self._snapshot is None:
@@ -183,6 +190,7 @@ class BrowserToolset:
                 error_code=decision.error_code,
             )
         self.action_count += 1
+        self.last_error_code = None if result.success else result.error_code
         await self._emit(
             BrowserActionTrace(
                 event="action",

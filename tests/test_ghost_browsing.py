@@ -28,7 +28,6 @@ import time
 import urllib.request
 
 import pytest
-from dotenv import load_dotenv
 
 from lexoid.core import ghost, utils
 from lexoid.core.ghost import (
@@ -40,8 +39,6 @@ from lexoid.core.ghost import (
     _wait_for_condition,
     ghost_get_html,
 )
-
-load_dotenv()
 
 # A reachable, JS-rendered test site (mirrors the external-URL style of the
 # existing test_parser.py suite).
