@@ -3,9 +3,17 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from loguru import logger
+from tenacity import (
+    AsyncRetrying,
+    RetryCallState,
+    retry_if_exception_type,
+    stop_after_attempt,
+)
 
 try:
     from agent_framework import Agent
@@ -15,6 +23,7 @@ except ImportError:  # pragma: no cover - exercised by a clean core install
 from lexoid.core.browse.model_provider import ChatClient, browse_usage_from_response
 from lexoid.core.browse.profiles import SiteProfile
 from lexoid.core.browse.schemas import (
+    BrowseErrorCode,
     BrowseLimits,
     BrowseTask,
     BrowseUsage,
@@ -48,6 +57,11 @@ allowlisted URLs. Never enter credentials or take actions that create, modify,
 or submit accounts, applications, purchases, bookings, or legal agreements.
 Apply every requested filter to the matching named field on the page. Never
 substitute a different field, and never silently broaden a filter.
+When the objective is to reach more matching records, inspect the observed
+pagination and results-per-page controls before scrolling repeatedly, and use
+only options actually present in an observation. Preserve the active search and
+filters, and report the outcome once the requested results are visible instead
+of collecting every record yourself.
 Do not return an action as text: call a tool for each browser interaction.
 Before finishing you must call report_outcome exactly once with results_ready,
 no_results, blocked, or timeout, quoting visible page text as evidence. Report
@@ -74,11 +88,21 @@ when some but not all is supported; "insufficient" when little or nothing is
 supported yet. List concrete, specific gaps that remain (e.g. a named missing
 fact or an unconfirmed constraint), reusing prior gaps that are still open and
 dropping ones the new evidence resolves. Propose exactly one next action:
-"paginate" to capture another result page, or "stop" when no further page is
-expected to add relevant evidence or coverage is already sufficient. Return one
-JSON object: {"claims": [{"text":...,"quote":...,"artifact_id":...,
+"paginate" to capture another already-reachable result page, "investigate" to
+send the navigator a specific bounded objective (e.g. open one record and
+confirm a named field, or retry the search) when reaching more evidence needs
+browser interaction beyond turning the page, or "stop" when no further action
+is expected to add relevant evidence or coverage is already sufficient. When
+many more matching records are still needed, prefer an "investigate" objective
+asking for more matching records to be shown at once, but never when the new
+artifact is truncated; state the evidence goal and leave the choice of page
+control to the navigator. When proposing "investigate", set `objective` to one
+concrete, verifiable goal for the navigator; never describe a login, purchase,
+or agreement action. Return
+one JSON object: {"claims": [{"text":...,"quote":...,"artifact_id":...,
 "source_url":...}], "answerability": "sufficient|partial|insufficient",
-"gaps": ["..."], "next_action": "paginate|stop", "next_action_reason": "..."}.
+"gaps": ["..."], "next_action": "paginate|investigate|stop",
+"next_action_reason": "...", "objective": "..."}.
 Return JSON only."""
 
 _SYNTHESIZER_PROMPT = """Answer only from the supplied evidence claims. Return
@@ -115,14 +139,19 @@ def task_from_query(query: str, limits: BrowseLimits) -> BrowseTask:
     )
 
 
-def _json_object(raw: str) -> dict:
-    """Parse a JSON object, accepting a single markdown JSON fence."""
+def _json_value(raw: str) -> Any:
+    """Parse JSON, accepting a single markdown JSON fence."""
     cleaned = raw.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[1].rsplit("```", 1)[0].strip()
-    value = json.loads(cleaned)
+    return json.loads(cleaned)
+
+
+def _json_object(raw: str) -> dict:
+    """Parse a JSON object, accepting a single markdown JSON fence."""
+    value = _json_value(raw)
     if not isinstance(value, dict):
-        raise ValueError("planner output must be a JSON object")
+        raise ValueError("model output must be a JSON object")
     return value
 
 
@@ -161,21 +190,13 @@ async def plan_task(
     """Produce one validated task, using a model when one is explicitly supplied."""
     if client is None:
         return task_from_query(query, limits), BrowseUsage()
-    raw, usage = await _run_json_agent(client, "planner", _PLANNER_PROMPT, query)
-    try:
-        return validate_planned_task(query, _json_object(raw), limits), usage
-    except (KeyError, ValueError, json.JSONDecodeError) as first_error:
-        logger.debug("Browse planner output failed validation: {}", first_error)
-        repair = f"{_PLANNER_PROMPT}\nYour prior output was invalid: {first_error}. Return corrected JSON only.\nUser: {query}"
-        raw, retry_usage = await _run_json_agent(
-            client, "planner", _PLANNER_PROMPT, repair
-        )
-        task = validate_planned_task(query, _json_object(raw), limits)
-        return task, BrowseUsage(
-            input=usage.input + retry_usage.input,
-            output=usage.output + retry_usage.output,
-            total=usage.total + retry_usage.total,
-        )
+
+    def _parse(raw: str) -> BrowseTask:
+        return validate_planned_task(query, _json_object(raw), limits)
+
+    return await _run_json_agent_with_repair(
+        client, "planner", _PLANNER_PROMPT, query, _parse
+    )
 
 
 async def next_navigation_action(
@@ -201,18 +222,46 @@ async def navigate_with_tools(
     task: BrowseTask,
     initial_observation: str,
     profile: SiteProfile | None = None,
+    objective: str | None = None,
+    prior_attempts: list[str] | None = None,
 ) -> tuple[NavigationOutcome, BrowseUsage]:
-    """Run the navigator role and return the outcome it verifiably reported."""
+    """Run the navigator role and return the outcome it verifiably reported.
+
+    ``toolset`` may be reused across multiple calls for the same task so that
+    the browser-action budget it enforces stays shared; each call only tops up
+    the framework's own per-call tool-call ceiling by the remaining headroom.
+    """
     if Agent is None:
         raise ImportError(
             "Browse requires optional dependencies. Install with: pip install 'lexoid[browse]'"
         )
     configuration = getattr(client, "function_invocation_configuration", None)
     if configuration is not None:
-        configuration["max_iterations"] = task.limits.max_steps
-        configuration["max_function_calls"] = task.limits.max_steps
+        # The browser action budget is enforced by BrowserToolset itself, not by
+        # the framework's call count, and toolset.action_count persists across
+        # calls sharing one toolset. Reserve extra tool-call headroom above the
+        # remaining action budget so observe/report_outcome remain callable
+        # after actions are exhausted; otherwise the framework forces a
+        # text-only reply with no outcome.
+        remaining = max(task.limits.max_steps - toolset.action_count, 1)
+        configuration["max_iterations"] = remaining + 4
+        configuration["max_function_calls"] = remaining + 4
     tools = toolset.functions()
     instructions = _NAVIGATOR_PROMPT
+    if objective:
+        instructions = (
+            f"{instructions}\nYour only objective right now: {objective}\n"
+            "Do not attempt the broader task; call report_outcome once this "
+            "objective's content is visible or you determine it cannot be reached."
+        )
+    if prior_attempts:
+        # Carries what earlier navigator runs already tried, since each run is
+        # a fresh agent with no memory of the previous one.
+        history = "\n".join(f"- {item}" for item in prior_attempts[-5:])
+        instructions = (
+            f"{instructions}\nAlready attempted in this task (trusted):\n{history}\n"
+            "Do not repeat an approach that already failed."
+        )
     if profile is not None and profile.guidance:
         guidance = "\n".join(f"- {item}" for item in profile.guidance)
         instructions = f"{instructions}\nSite guidance (trusted):\n{guidance}"
@@ -220,15 +269,21 @@ async def navigate_with_tools(
         {
             "subject": task.subject,
             "requested_facts": task.requested_facts,
-            "completion_criteria": task.completion_criteria,
+            "completion_criteria": [objective]
+            if objective
+            else task.completion_criteria,
             "constraints": task.constraints.model_dump(mode="json"),
+            "remaining_browser_actions": max(
+                task.limits.max_steps - toolset.action_count, 0
+            ),
             "initial_observation": json.loads(initial_observation),
         }
     )
     logger.debug(
-        "Browse navigator tool run started (prompt_chars={}, profile={})",
+        "Browse navigator tool run started (prompt_chars={}, profile={}, objective={})",
         len(prompt),
         profile.profile_id if profile else None,
+        bool(objective),
     )
     agent = Agent(
         client,
@@ -240,12 +295,25 @@ async def navigate_with_tools(
     response = await agent.run(prompt)
     usage = browse_usage_from_response(response)
     logger.debug("Browse navigator tool run output: {}", response.text or "")
+    outcome = toolset.outcome
+    if outcome is NavigationOutcome.UNKNOWN:
+        # Model prose is never treated as an outcome; only deterministic
+        # executor state may override UNKNOWN.
+        if toolset.last_error_code is BrowseErrorCode.TAB_GONE:
+            outcome = NavigationOutcome.BLOCKED
+        logger.warning(
+            "Browse navigator ended without reporting an outcome "
+            "(actions={}, step_limit_reached={}, last_error_code={})",
+            toolset.action_count,
+            toolset.step_limit_reached,
+            toolset.last_error_code,
+        )
     logger.debug(
         "Browse navigator outcome={} usage={}",
-        toolset.outcome.value,
+        outcome.value,
         usage.model_dump(),
     )
-    return toolset.outcome, usage
+    return outcome, usage
 
 
 async def extract_claims(
@@ -269,17 +337,19 @@ async def extract_claims(
         f"truncated={artifact.truncated}\ntext={artifact.text}"
         for artifact in artifacts
     )
-    raw, usage = await _run_json_agent(
-        client, "extractor", _EXTRACTOR_PROMPT, "\n".join(sections)
+
+    def _parse(raw: str) -> list[EvidenceClaim]:
+        payload = _json_value(raw)
+        if not isinstance(payload, list):
+            raise ValueError("extractor output must be a JSON array")
+        return [
+            EvidenceClaim.model_validate({"claim_id": f"claim-{index + 1}", **item})
+            for index, item in enumerate(payload)
+        ]
+
+    return await _run_json_agent_with_repair(
+        client, "extractor", _EXTRACTOR_PROMPT, "\n".join(sections), _parse
     )
-    payload = json.loads(raw)
-    if not isinstance(payload, list):
-        raise ValueError("extractor output must be a JSON array")
-    claims = [
-        EvidenceClaim.model_validate({"claim_id": f"claim-{index + 1}", **item})
-        for index, item in enumerate(payload)
-    ]
-    return claims, usage
 
 
 async def assess_page(
@@ -308,27 +378,32 @@ async def assess_page(
             "text": artifact.text,
         },
     }
-    raw, usage = await _run_json_agent(
-        client, "assessor", _ASSESSOR_PROMPT, json.dumps(payload_in)
-    )
-    payload = _json_object(raw)
-    raw_claims = payload.get("claims", [])
-    if not isinstance(raw_claims, list):
-        raise ValueError("assessor output must contain a claims array")
     offset = len(prior_claims)
-    claims = [
-        EvidenceClaim.model_validate(
-            {"claim_id": f"claim-{offset + index + 1}", **item}
+
+    def _parse(raw: str) -> tuple[EvidenceAssessment, list[EvidenceClaim]]:
+        payload = _json_object(raw)
+        raw_claims = payload.get("claims", [])
+        if not isinstance(raw_claims, list):
+            raise ValueError("assessor output must contain a claims array")
+        claims = [
+            EvidenceClaim.model_validate(
+                {"claim_id": f"claim-{offset + index + 1}", **item}
+            )
+            for index, item in enumerate(raw_claims)
+        ]
+        assessment = EvidenceAssessment.model_validate(
+            {
+                "answerability": payload.get("answerability", "insufficient"),
+                "gaps": payload.get("gaps", []),
+                "next_action": payload.get("next_action", "stop"),
+                "next_action_reason": payload.get("next_action_reason", ""),
+                "objective": payload.get("objective", ""),
+            }
         )
-        for index, item in enumerate(raw_claims)
-    ]
-    assessment = EvidenceAssessment.model_validate(
-        {
-            "answerability": payload.get("answerability", "insufficient"),
-            "gaps": payload.get("gaps", []),
-            "next_action": payload.get("next_action", "stop"),
-            "next_action_reason": payload.get("next_action_reason", ""),
-        }
+        return assessment, claims
+
+    (assessment, claims), usage = await _run_json_agent_with_repair(
+        client, "assessor", _ASSESSOR_PROMPT, json.dumps(payload_in), _parse
     )
     return assessment, claims, usage
 
@@ -353,18 +428,19 @@ async def synthesize_answer(
         }
     if coverage is not None:
         payload_in["coverage"] = coverage.model_dump(mode="json")
-    raw, usage = await _run_json_agent(
-        client,
-        "synthesizer",
-        _SYNTHESIZER_PROMPT,
-        json.dumps(payload_in),
+
+    def _parse(raw: str) -> tuple[str, list[str]]:
+        payload = _json_object(raw)
+        answer = payload.get("answer")
+        claim_ids = payload.get("claim_ids", [])
+        if not isinstance(answer, str) or not isinstance(claim_ids, list):
+            raise ValueError("synthesizer output must contain answer and claim_ids")
+        return answer, [str(claim_id) for claim_id in claim_ids]
+
+    (answer, claim_ids), usage = await _run_json_agent_with_repair(
+        client, "synthesizer", _SYNTHESIZER_PROMPT, json.dumps(payload_in), _parse
     )
-    payload = _json_object(raw)
-    answer = payload.get("answer")
-    claim_ids = payload.get("claim_ids", [])
-    if not isinstance(answer, str) or not isinstance(claim_ids, list):
-        raise ValueError("synthesizer output must contain answer and claim_ids")
-    return answer, [str(claim_id) for claim_id in claim_ids], usage
+    return answer, claim_ids, usage
 
 
 async def _run_json_agent(
@@ -385,3 +461,55 @@ async def _run_json_agent(
     logger.debug(f"Browse {name} agent output: {output}")
     logger.debug(f"Browse {name} agent usage: {usage.model_dump()}")
     return output, usage
+
+
+_T = TypeVar("_T")
+_REPAIRABLE_ERRORS = (KeyError, ValueError, TypeError, json.JSONDecodeError)
+
+
+# Planner → initial objective
+#               ↓
+# Navigator → Capture → Assess accepted evidence
+#     ↑                        │
+#     └── next objective ──────┤
+#                              └── sufficient / budget / cannot progress
+#                                           ↓
+#                                Finalize grounded answer
+async def _run_json_agent_with_repair(
+    client: ChatClient,
+    name: str,
+    instructions: str,
+    prompt: str,
+    parse: Callable[[str], _T],
+) -> tuple[_T, BrowseUsage]:
+    """Run a JSON role, retrying once with a bounded repair on invalid output."""
+    current_prompt = prompt
+    total_usage = BrowseUsage()
+
+    def _prepare_repair(retry_state: RetryCallState) -> None:
+        nonlocal current_prompt
+        error = retry_state.outcome.exception()
+        logger.debug("Browse {} output failed validation: {}", name, error)
+        current_prompt = (
+            f"{instructions}\nYour prior output was invalid: {error}. "
+            f"Return corrected JSON only.\n{prompt}"
+        )
+
+    results: list[_T] = []
+    async for attempt in AsyncRetrying(
+        stop=stop_after_attempt(2),
+        retry=retry_if_exception_type(_REPAIRABLE_ERRORS),
+        before_sleep=_prepare_repair,
+        reraise=True,
+    ):
+        with attempt:
+            raw, usage = await _run_json_agent(
+                client, name, instructions, current_prompt
+            )
+            total_usage = BrowseUsage(
+                input=total_usage.input + usage.input,
+                output=total_usage.output + usage.output,
+                total=total_usage.total + usage.total,
+            )
+            results.append(parse(raw))
+    return results[-1], total_usage

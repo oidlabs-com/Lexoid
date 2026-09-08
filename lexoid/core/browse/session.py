@@ -360,6 +360,10 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             outcome="action executed",
             before_url=before_url,
             after_url=page.url,
+            target_bbox_x=element.bbox_x if element else None,
+            target_bbox_y=element.bbox_y if element else None,
+            target_bbox_width=element.bbox_width if element else None,
+            target_bbox_height=element.bbox_height if element else None,
         )
 
     async def cleanup(self) -> None:

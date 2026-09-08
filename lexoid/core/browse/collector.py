@@ -22,7 +22,6 @@ async def capture_page(
     html = await session.content(tab_id)
     content_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
     markdown = html_to_markdown(html, tab.title, tab.url)["raw"]
-    logger.debug(f"Raw markdown result:\n\n{markdown}")
     text = markdown[:max_artifact_chars]
     logger.debug(
         "Browse collector captured page {} url={} hash={} chars={} truncated={}",

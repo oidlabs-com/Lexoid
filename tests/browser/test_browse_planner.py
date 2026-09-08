@@ -34,6 +34,53 @@ def test_planner_rejects_invented_url_and_domain():
         validate_planned_task(QUERY, payload, BrowseLimits())
 
 
+def test_planner_preserves_user_filters():
+    filter_query = (
+        "Go to https://tmsearch.uspto.gov/ and retrieve all cases related to "
+        "Arash Samadani as attorney"
+    )
+    task = validate_planned_task(
+        filter_query,
+        {
+            "seed_urls": ["https://tmsearch.uspto.gov/"],
+            "subject": "Arash Samadani",
+            "allowed_domains": ["tmsearch.uspto.gov"],
+            "constraints": {
+                "filters": [
+                    {
+                        "field": "attorney",
+                        "operator": "unspecified",
+                        "value": "Arash Samadani",
+                    }
+                ],
+                "coverage": "all_matches",
+            },
+        },
+        BrowseLimits(),
+    )
+
+    assert task.constraints.filters[0].field == "attorney"
+    assert task.constraints.coverage == "all_matches"
+
+
+def test_planner_rejects_invented_filter_value():
+    filter_query = (
+        "Go to https://tmsearch.uspto.gov/ and retrieve all cases related to "
+        "Arash Samadani as attorney"
+    )
+    payload = {
+        "seed_urls": ["https://tmsearch.uspto.gov/"],
+        "subject": "Arash Samadani",
+        "allowed_domains": ["tmsearch.uspto.gov"],
+        "constraints": {
+            "filters": [{"field": "owner", "value": "Unrelated Person"}],
+        },
+    }
+
+    with pytest.raises(ValueError, match="invented a filter value"):
+        validate_planned_task(filter_query, payload, BrowseLimits())
+
+
 @pytest.mark.asyncio
 async def test_lexoid_client_uses_agent_framework_response_path(monkeypatch):
     from lexoid.core.browse import model_provider

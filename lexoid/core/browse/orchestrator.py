@@ -74,6 +74,7 @@ async def run_task(
     navigation_outcome = NavigationOutcome.UNKNOWN
     claims: list[EvidenceClaim] = []
     gaps: list[str] = []
+    attempted_objectives: list[str] = []
     assessment: EvidenceAssessment | None = None
     url = task.seed_urls[0]
     profile = find_profile(url, task.task_type)
@@ -200,6 +201,55 @@ async def run_task(
                         if index == max_iterations - 1:
                             stop_reason = "budget_exhausted"
                             break
+                        if (
+                            assessment is not None
+                            and assessment.next_action == "investigate"
+                            and assessment.objective
+                        ):
+                            if navigator_client is None:
+                                warnings.append(
+                                    "Assessor proposed an investigation objective, but "
+                                    "no navigator client is configured; stopping."
+                                )
+                                stop_reason = "no_next_action"
+                                break
+                            fresh_observation = await toolset.observe()
+                            (
+                                investigate_outcome,
+                                investigate_usage,
+                            ) = await navigate_with_tools(
+                                navigator_client,
+                                toolset,
+                                task,
+                                fresh_observation,
+                                profile,
+                                objective=assessment.objective,
+                                prior_attempts=list(attempted_objectives),
+                            )
+                            agent_usage = _add_usage(agent_usage, investigate_usage)
+                            attempted_objectives.append(
+                                f"{assessment.objective} -> {investigate_outcome.value}"
+                            )
+                            if investigate_outcome in {
+                                NavigationOutcome.BLOCKED,
+                                NavigationOutcome.TIMEOUT,
+                            }:
+                                # Investigation failed, but evidence captured so
+                                # far remains valid and must not be discarded.
+                                stop_reason = "blocked"
+                                warnings.append(
+                                    f"Investigation objective reported {investigate_outcome.value}; "
+                                    "continuing with evidence captured so far."
+                                )
+                                break
+                            if investigate_outcome is NavigationOutcome.UNKNOWN:
+                                warnings.append(
+                                    "Navigator did not verifiably complete the "
+                                    "investigation objective; continuing with "
+                                    "evidence captured so far."
+                                )
+                            await session.settle(tab.tab_id)
+                            continue
                         if not await session.advance_to_next_result_page(tab.tab_id):
                             stop_reason = "no_next_action"
                             break

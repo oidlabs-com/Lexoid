@@ -1,62 +1,16 @@
-"""Tests for generic task constraints, site profiles, and outcome gating."""
+"""Tests for site profiles, navigator outcome gating, and orchestrator branching."""
 
 import json
 
 import pytest
 
-from lexoid.core.browse.agents import validate_planned_task
 from lexoid.core.browse.profiles import SiteProfile, find_profile
 from lexoid.core.browse.schemas import (
-    BrowseLimits,
     BrowseTask,
     BrowseTerminalState,
     NavigationOutcome,
 )
 from lexoid.core.browse.tools import BrowserToolset
-
-QUERY = (
-    "Go to https://tmsearch.uspto.gov/ and retrieve all cases related to "
-    "Arash Samadani as attorney"
-)
-
-
-def test_planner_preserves_user_filters():
-    task = validate_planned_task(
-        QUERY,
-        {
-            "seed_urls": ["https://tmsearch.uspto.gov/"],
-            "subject": "Arash Samadani",
-            "allowed_domains": ["tmsearch.uspto.gov"],
-            "constraints": {
-                "filters": [
-                    {
-                        "field": "attorney",
-                        "operator": "unspecified",
-                        "value": "Arash Samadani",
-                    }
-                ],
-                "coverage": "all_matches",
-            },
-        },
-        BrowseLimits(),
-    )
-
-    assert task.constraints.filters[0].field == "attorney"
-    assert task.constraints.coverage == "all_matches"
-
-
-def test_planner_rejects_invented_filter_value():
-    payload = {
-        "seed_urls": ["https://tmsearch.uspto.gov/"],
-        "subject": "Arash Samadani",
-        "allowed_domains": ["tmsearch.uspto.gov"],
-        "constraints": {
-            "filters": [{"field": "owner", "value": "Unrelated Person"}],
-        },
-    }
-
-    with pytest.raises(ValueError, match="invented a filter value"):
-        validate_planned_task(QUERY, payload, BrowseLimits())
 
 
 def test_site_profile_matches_host_and_task_type():
@@ -176,3 +130,104 @@ async def test_blocked_navigation_skips_collection(monkeypatch):
     assert task_result.navigation_outcome is NavigationOutcome.BLOCKED
     assert task_result.site_profile_id is None
     assert task_result.artifacts == []
+
+
+@pytest.mark.asyncio
+async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import BrowseUsage, EvidenceAssessment, PageArtifact
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            from lexoid.core.browse.schemas import OpenTab
+
+            return OpenTab(tab_id="tab-1", target_id="t1", url=url)
+
+        async def settle(self, tab_id):
+            return None
+
+        async def retain_page(self, tab_id):
+            from lexoid.core.browse.schemas import OpenTab
+
+            return OpenTab(
+                tab_id=tab_id, target_id="t1", url="https://tmsearch.uspto.gov/"
+            )
+
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
+
+    async def _observation():
+        return "{}"
+
+    monkeypatch.setattr(
+        orchestrator.BrowserToolset, "observe", lambda self: _observation()
+    )
+
+    navigate_calls: list[str | None] = []
+
+    async def navigate(
+        client,
+        toolset,
+        task,
+        observation,
+        profile=None,
+        objective=None,
+        prior_attempts=None,
+    ):
+        navigate_calls.append(objective)
+        return NavigationOutcome.RESULTS_READY, BrowseUsage()
+
+    monkeypatch.setattr(orchestrator, "navigate_with_tools", navigate)
+
+    async def fake_capture_page(session, tab_id, index, max_chars):
+        return PageArtifact(
+            artifact_id=f"artifact-{index}",
+            url="https://tmsearch.uspto.gov/",
+            tab_id=tab_id,
+            content_hash=f"hash-{index}",
+            text=f"page {index} text",
+        )
+
+    monkeypatch.setattr(orchestrator, "capture_page", fake_capture_page)
+
+    assess_calls: list[str] = []
+
+    async def fake_assess_page(client, task, artifact, prior_claims, prior_gaps):
+        assess_calls.append(artifact.artifact_id)
+        if len(assess_calls) == 1:
+            assessment = EvidenceAssessment(
+                answerability="partial",
+                gaps=["record detail unverified"],
+                next_action="investigate",
+                next_action_reason="need to open the first record",
+                objective="open the first record and confirm the attorney field",
+            )
+        else:
+            assessment = EvidenceAssessment(answerability="sufficient")
+        return assessment, [], BrowseUsage()
+
+    monkeypatch.setattr(orchestrator, "assess_page", fake_assess_page)
+
+    task = BrowseTask(
+        seed_urls=["https://tmsearch.uspto.gov/"],
+        subject="Arash Samadani",
+        allowed_domains=["tmsearch.uspto.gov"],
+    )
+
+    result = await orchestrator.run_task(
+        task, navigator_client=object(), extractor_client=object()
+    )
+
+    task_result = result.task_results[0]
+    assert assess_calls == ["artifact-1", "artifact-2"]
+    assert navigate_calls == [
+        None,
+        "open the first record and confirm the attorney field",
+    ]
+    assert task_result.coverage.stop_reason == "sufficient"
+    assert task_result.status is BrowseTerminalState.COMPLETED

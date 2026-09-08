@@ -123,3 +123,24 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
     assert task_result.artifacts[0].content_hash
     assert task_result.retained_tabs
     assert task_result.retained_tabs[0].url.startswith("https://tmsearch.uspto.gov/")
+
+
+@pytest.mark.asyncio
+async def test_end_to_end():
+    """Full planner->navigator->extractor->synthesizer pipeline against a live browser."""
+    if not os.getenv("RUN_BROWSE_LIVE_TESTS"):
+        pytest.skip("RUN_BROWSE_LIVE_TESTS is not enabled")
+
+    result = await browse(
+        "Go to https://tmsearch.uspto.gov/ and retrieve all cases related to "
+        "Arash Samadani (as attorney)",
+        planner_model="gpt-5.6-sol",
+        navigator_model="gpt-5.6-sol",
+        extractor_model="gpt-5.6-sol",
+        synthesizer_model="gpt-5.6-sol",
+        headless=False,
+    )
+
+    task_result = result.task_results[0]
+    assert task_result.artifacts
+    assert "158" in result.answer

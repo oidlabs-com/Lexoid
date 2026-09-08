@@ -102,8 +102,11 @@ class EvidenceAssessment(BaseModel):
 
     answerability: Literal["sufficient", "partial", "insufficient"] = "insufficient"
     gaps: list[str] = Field(default_factory=list, max_length=20)
-    next_action: Literal["paginate", "stop"] = "stop"
+    next_action: Literal["paginate", "investigate", "stop"] = "stop"
     next_action_reason: str = Field(default="", max_length=1_000)
+    # Required when next_action is "investigate": what the navigator should do
+    # next, e.g. "open the first record and confirm the attorney field".
+    objective: str = Field(default="", max_length=2_000)
 
 
 class CoverageReport(BaseModel):
@@ -133,11 +136,11 @@ class BrowseLimits(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_steps: int = Field(default=8, ge=1, le=100)
+    max_steps: int = Field(default=20, ge=1, le=100)
     max_pages: int = Field(default=5, ge=1, le=100)
     max_snapshot_chars: int = Field(default=20_000, ge=1_000, le=200_000)
     max_artifact_chars: int = Field(default=100_000, ge=1_000, le=2_000_000)
-    timeout_ms: int = Field(default=30_000, ge=1_000, le=300_000)
+    timeout_ms: int = Field(default=60_000, ge=1_000, le=300_000)
 
 
 class ElementRef(BaseModel):
@@ -273,6 +276,11 @@ class BrowserActionResult(BaseModel):
     after_url: str = ""
     warnings: list[str] = Field(default_factory=list, max_length=100)
     usage: BrowseUsage = Field(default_factory=BrowseUsage)
+    # Snapshot-time element bounds, surfaced so a trace can show what was acted on.
+    target_bbox_x: float | None = None
+    target_bbox_y: float | None = None
+    target_bbox_width: float | None = None
+    target_bbox_height: float | None = None
 
 
 class BrowserActionTrace(BaseModel):
