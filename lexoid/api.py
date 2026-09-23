@@ -8,7 +8,7 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
@@ -51,6 +51,7 @@ from lexoid.core.browse.orchestrator import run_task
 from lexoid.core.browse.schemas import (
     BrowseErrorCode,
     BrowseLimits,
+    BrowseModelConfig,
     BrowseResult,
     BrowseTask,
 )
@@ -66,10 +67,7 @@ class ParserType(Enum):
 async def browse(
     query: str | BrowseTask,
     *,
-    planner_model: str | None = None,
-    navigator_model: str | None = None,
-    extractor_model: str | None = None,
-    synthesizer_model: str | None = None,
+    model_config: str | BrowseModelConfig | dict[str, Any] | None = None,
     cdp_url: str | None = None,
     headless: bool = True,
     limits: BrowseLimits | None = None,
@@ -77,19 +75,30 @@ async def browse(
 ) -> BrowseResult:
     """Run one read-only browser task from an explicit URL or validated task.
 
-    Each model role may select a different provider/model: planner interprets
-    the task, navigator drives browser actions, extractor creates evidence
-    claims, and synthesizer writes from validated claims. Lexoid retains browser
+    The ``model_config`` parameter controls which LLM model is used for each
+    role: planner interprets the task, navigator drives browser actions,
+    extractor creates evidence claims, and synthesizer writes from validated
+    claims. Pass a single model string to use that model for all roles, or a
+    mapping/BrowseModelConfig to override individual roles. Lexoid retains browser
     lifecycle, policy, provenance, pagination, and tab ownership.
     """
-    for model in (
-        planner_model,
-        navigator_model,
-        extractor_model,
-        synthesizer_model,
-    ):
-        if model is None:
-            continue
+    cfg = BrowseModelConfig.from_value(model_config)
+    resolved_models = {
+        role: cfg.for_role(role)
+        for role in ("planner", "navigator", "extractor", "synthesizer")
+    }
+    models_to_validate = {
+        model
+        for model in (
+            cfg.default,
+            resolved_models["planner"],
+            resolved_models["navigator"],
+            resolved_models["extractor"],
+            resolved_models["synthesizer"],
+        )
+        if model is not None
+    }
+    for model in models_to_validate:
         try:
             get_api_provider_for_model(model)
         except ValueError as error:
@@ -100,6 +109,7 @@ async def browse(
     if isinstance(query, BrowseTask):
         task = query
     else:
+        planner_model = resolved_models["planner"]
         client = create_chat_client(planner_model) if planner_model else None
         task, _ = await plan_task(query, client, effective_limits)
     return await run_task(
@@ -108,13 +118,19 @@ async def browse(
         headless=headless,
         event_listener=event_listener,
         navigator_client=(
-            create_chat_client(navigator_model) if navigator_model else None
+            create_chat_client(resolved_models["navigator"])
+            if resolved_models["navigator"]
+            else None
         ),
         extractor_client=(
-            create_chat_client(extractor_model) if extractor_model else None
+            create_chat_client(resolved_models["extractor"])
+            if resolved_models["extractor"]
+            else None
         ),
         synthesizer_client=(
-            create_chat_client(synthesizer_model) if synthesizer_model else None
+            create_chat_client(resolved_models["synthesizer"])
+            if resolved_models["synthesizer"]
+            else None
         ),
     )
 

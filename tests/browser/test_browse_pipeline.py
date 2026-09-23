@@ -3,8 +3,9 @@
 import os
 
 import pytest
+from pydantic import ValidationError
 
-from lexoid.api import browse
+from lexoid.api import BrowseModelConfig, browse
 from lexoid.core.browse.evidence import validated_claims
 from lexoid.core.browse.schemas import (
     BrowseTask,
@@ -23,7 +24,57 @@ async def test_browse_requires_explicit_https_url():
 @pytest.mark.asyncio
 async def test_browse_rejects_unsupported_model_before_capture():
     with pytest.raises(ValueError, match="model_unsupported"):
-        await browse("https://tmsearch.uspto.gov/", navigator_model="unknown-model")
+        await browse("https://tmsearch.uspto.gov/", model_config="unknown-model")
+
+    with pytest.raises(ValueError, match="model_unsupported"):
+        await browse(
+            "https://tmsearch.uspto.gov/",
+            model_config={"navigator": "unknown-model"},
+        )
+
+
+def test_browse_model_config_resolution():
+    # String shorthand sets default for all roles
+    cfg_str = BrowseModelConfig.from_value("gpt-5.6-sol")
+    assert cfg_str.for_role("planner") == "gpt-5.6-sol"
+    assert cfg_str.for_role("navigator") == "gpt-5.6-sol"
+    assert cfg_str.for_role("extractor") == "gpt-5.6-sol"
+    assert cfg_str.for_role("synthesizer") == "gpt-5.6-sol"
+
+    # Dict with default baseline + role override
+    cfg_dict = BrowseModelConfig.from_value(
+        {"default": "gpt-4o", "navigator": "gpt-5.6-sol"}
+    )
+    assert cfg_dict.for_role("planner") == "gpt-4o"
+    assert cfg_dict.for_role("navigator") == "gpt-5.6-sol"
+    assert cfg_dict.for_role("extractor") == "gpt-4o"
+    assert cfg_dict.for_role("synthesizer") == "gpt-4o"
+
+    # Selective role with no default
+    cfg_selective = BrowseModelConfig.from_value({"navigator": "gpt-5.6-sol"})
+    assert cfg_selective.for_role("planner") is None
+    assert cfg_selective.for_role("navigator") == "gpt-5.6-sol"
+    assert cfg_selective.for_role("extractor") is None
+    assert cfg_selective.for_role("synthesizer") is None
+
+    # None value produces empty config
+    cfg_none = BrowseModelConfig.from_value(None)
+    assert cfg_none.for_role("planner") is None
+    assert cfg_none.for_role("navigator") is None
+
+    # Unknown role lookup raises ValueError
+    with pytest.raises(ValueError, match="Unknown browse role"):
+        cfg_str.for_role("invalid_role")
+
+
+def test_browse_model_config_validation():
+    # Misspelled role name is rejected immediately
+    with pytest.raises(ValidationError):
+        BrowseModelConfig.from_value({"navigtor": "gpt-5.6-sol"})
+
+    # Invalid type is rejected
+    with pytest.raises(TypeError, match="model_config must be str, dict"):
+        BrowseModelConfig.from_value(123)  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio
@@ -134,10 +185,7 @@ async def test_end_to_end():
     result = await browse(
         "Go to https://tmsearch.uspto.gov/ and retrieve all cases related to "
         "Arash Samadani (as attorney)",
-        planner_model="gpt-5.6-sol",
-        navigator_model="gpt-5.6-sol",
-        extractor_model="gpt-5.6-sol",
-        synthesizer_model="gpt-5.6-sol",
+        model_config="gpt-5.6-sol",
         headless=False,
     )
 

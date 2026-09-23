@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class BrowseTerminalState(str, Enum):
@@ -129,6 +129,41 @@ class CoverageReport(BaseModel):
     constraint_checks: list[ConstraintCheck] = Field(
         default_factory=list, max_length=20
     )
+
+
+class BrowseModelConfig(BaseModel):
+    """Configuration mapping roles to LLM model identifiers for browse()."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    default: str | None = Field(default=None, min_length=1, max_length=200)
+    planner: str | None = Field(default=None, min_length=1, max_length=200)
+    navigator: str | None = Field(default=None, min_length=1, max_length=200)
+    extractor: str | None = Field(default=None, min_length=1, max_length=200)
+    synthesizer: str | None = Field(default=None, min_length=1, max_length=200)
+
+    def for_role(self, role: str) -> str | None:
+        """Get the effective model for a specific role, falling back to default."""
+        if role not in {"planner", "navigator", "extractor", "synthesizer"}:
+            raise ValueError(f"Unknown browse role: {role}")
+        return getattr(self, role) or self.default
+
+    @classmethod
+    def from_value(
+        cls, value: str | BrowseModelConfig | dict[str, Any] | None
+    ) -> BrowseModelConfig:
+        """Coerce a string, dict, or existing config into a BrowseModelConfig."""
+        if value is None:
+            return cls()
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            return cls(default=value)
+        if isinstance(value, dict):
+            return cls.model_validate(value)
+        raise TypeError(
+            f"model_config must be str, dict, or BrowseModelConfig, got {type(value).__name__}"
+        )
 
 
 class BrowseLimits(BaseModel):
