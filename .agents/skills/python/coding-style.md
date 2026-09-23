@@ -81,6 +81,11 @@ Use named constants for meaningful thresholds, delays, and limits.
 
 Split large functions into focused pieces with clear responsibilities.
 
+### Tests
+
+- For all major functional change, make sure there is a unit test to validate.
+- Before writing a new test, check `tests/` folder if a logical test file exits. In-case of ambigiuity create one.
+
 ## Code Quality Checklist
 
 Before marking work complete:
