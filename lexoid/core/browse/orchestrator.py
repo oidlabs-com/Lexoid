@@ -11,6 +11,7 @@ from lexoid.core.browse.events import BrowseEventListener, BrowseEventPublisher
 from lexoid.core.browse.policy import is_allowed_url
 from lexoid.core.browse.profiles import find_profile
 from lexoid.core.browse.schemas import (
+    BrowseErrorCode,
     BrowseResult,
     BrowseTask,
     BrowseTaskResult,
@@ -187,22 +188,52 @@ async def run_task(
                             "Navigator did not report a verified outcome; collected "
                             "page state may not reflect the requested search."
                         )
+                try:
+                    current_tab = await session.tab(tab.tab_id)
+                except (AttributeError, RuntimeError):
+                    current_tab = tab
+                page_reached = current_tab.url != url or (
+                    toolset.action_count > 0
+                    and toolset.last_error_code
+                    not in {
+                        BrowseErrorCode.POLICY_DENIED,
+                        BrowseErrorCode.TAB_GONE,
+                    }
+                )
                 artifacts: list[PageArtifact] = []
-                if navigation_outcome in {
-                    NavigationOutcome.BLOCKED,
-                    NavigationOutcome.TIMEOUT,
-                }:
+                if (
+                    navigation_outcome
+                    in {
+                        NavigationOutcome.BLOCKED,
+                        NavigationOutcome.TIMEOUT,
+                    }
+                    and not page_reached
+                ):
                     stop_reason = "blocked"
                 else:
                     await session.settle(tab.tab_id)
-                    # A verified empty result set needs one page, never pagination.
-                    max_iterations = (
-                        1
-                        if navigation_outcome is NavigationOutcome.NO_RESULTS
-                        else task.limits.max_pages
-                    )
+                    if navigation_outcome in {
+                        NavigationOutcome.BLOCKED,
+                        NavigationOutcome.TIMEOUT,
+                    }:
+                        # Navigation self-reported blocked/timeout, but the page was
+                        # reached; capture the reached page as evidence rather than
+                        # discarding it based solely on model self-report.
+                        max_iterations = 1
+                        stop_reason = "blocked"
+                        warnings.append(
+                            f"Navigation reported {navigation_outcome.value}, but reached "
+                            "page was captured for evidence assessment."
+                        )
+                    elif navigation_outcome is NavigationOutcome.NO_RESULTS:
+                        # A verified empty result set needs one page, never pagination.
+                        max_iterations = 1
+                        stop_reason = "budget_exhausted"
+                    else:
+                        max_iterations = task.limits.max_pages
+                        stop_reason = "budget_exhausted"
+
                     seen_hashes: set[str] = set()
-                    stop_reason = "budget_exhausted"
                     for index in range(max_iterations):
                         artifact = await capture_page(
                             session,
@@ -241,7 +272,8 @@ async def run_task(
                                 stop_reason = "no_next_action"
                                 break
                         if index == max_iterations - 1:
-                            stop_reason = "budget_exhausted"
+                            if stop_reason != "blocked":
+                                stop_reason = "budget_exhausted"
                             break
                         if (
                             assessment is not None
@@ -311,10 +343,14 @@ async def run_task(
         raise
 
     normalized_usage = BrowseUsage.model_validate(usage or {})
-    if navigation_outcome in {
-        NavigationOutcome.BLOCKED,
-        NavigationOutcome.TIMEOUT,
-    }:
+    if (
+        navigation_outcome
+        in {
+            NavigationOutcome.BLOCKED,
+            NavigationOutcome.TIMEOUT,
+        }
+        and not artifacts
+    ):
         logger.debug(
             "Browse task {} stopped before collection: navigation reported {}",
             task.task_id,
@@ -463,7 +499,11 @@ async def run_task(
     if capture_complete:
         task.status = BrowseTerminalState.COMPLETED
     else:
-        task.status = BrowseTerminalState.LIMIT_REACHED
+        task.status = (
+            BrowseTerminalState.BLOCKED
+            if not claims and navigation_outcome is NavigationOutcome.BLOCKED
+            else BrowseTerminalState.LIMIT_REACHED
+        )
         warnings.append(
             f"Capture stopped ({stop_reason}); results are not exhaustive and no "
             "absence or completeness conclusion is supported."

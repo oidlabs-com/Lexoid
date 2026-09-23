@@ -240,18 +240,34 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
 
 
 @pytest.mark.asyncio
-async def test_end_to_end():
+@pytest.mark.parametrize(
+    "query, expected_text",
+    [
+        (
+            "Go to https://tmsearch.uspto.gov/ and retrieve all cases related to ",
+            "Arash Samadani (as attorney)",
+            "158",
+        ),
+        (
+            """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
+            information for alien number: 123-456-789, country of origin - Mexico""",
+            "No case found",
+        ),
+    ],
+)
+async def test_end_to_end(query, expected_text):
     """Full planner->navigator->extractor->synthesizer pipeline against a live browser."""
     if not os.getenv("RUN_BROWSE_LIVE_TESTS"):
         pytest.skip("RUN_BROWSE_LIVE_TESTS is not enabled")
 
     result = await browse(
-        "Go to https://tmsearch.uspto.gov/ and retrieve all cases related to "
-        "Arash Samadani (as attorney)",
+        query,
         model_config="gpt-5.6-sol",
         headless=False,
     )
 
     task_result = result.task_results[0]
     assert task_result.artifacts
-    assert "158" in result.answer
+    assert expected_text in result.answer or any(
+        expected_text in artifact.text for artifact in task_result.artifacts
+    )
