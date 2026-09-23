@@ -154,6 +154,69 @@ def test_public_schemas_produce_json_schema():
 
 
 @pytest.mark.asyncio
+async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatch):
+    import json
+    from lexoid.core.browse import agents
+    from lexoid.core.browse.schemas import BrowseUsage, CoverageReport, PlanStrategy
+
+    captured_prompt = []
+
+    async def fake_run_json_agent(client, name, instructions, prompt):
+        captured_prompt.append((instructions, json.loads(prompt)))
+        answer_json = json.dumps(
+            {
+                "answer": "Found 1 matching case for Arash Samadani as attorney.",
+                "claim_ids": ["claim-1"],
+            }
+        )
+        return answer_json, BrowseUsage(input=10, output=10, total=20)
+
+    monkeypatch.setattr(agents, "_run_json_agent", fake_run_json_agent)
+
+    task = BrowseTask(
+        seed_urls=["https://tmsearch.uspto.gov/"],
+        subject="Arash Samadani as attorney",
+        allowed_domains=["tmsearch.uspto.gov"],
+        strategy=PlanStrategy(
+            intent="Find all trademark cases where Arash Samadani is listed as attorney."
+        ),
+    )
+    claims = [
+        EvidenceClaim(
+            claim_id="claim-1",
+            text="Arash Samadani listed as attorney",
+            quote="Arash Samadani",
+            artifact_id="art-1",
+            source_url="https://tmsearch.uspto.gov/",
+        )
+    ]
+    coverage = CoverageReport(
+        pages_captured=1,
+        stop_reason="sufficient",
+        answerability="sufficient",
+        validated_claims=1,
+    )
+
+    answer, cited_ids, usage = await agents.synthesize_answer(
+        client=object(),
+        claims=claims,
+        capture_complete=True,
+        task=task,
+        coverage=coverage,
+    )
+
+    assert "Direct answer first" in captured_prompt[0][0]
+    payload = captured_prompt[0][1]
+    assert (
+        payload["task"]["intent"]
+        == "Find all trademark cases where Arash Samadani is listed as attorney."
+    )
+    assert answer == "Found 1 matching case for Arash Samadani as attorney."
+    assert cited_ids == ["claim-1"]
+    assert usage.total == 20
+
+
+@pytest.mark.asyncio
 async def test_browse_live_cdp_captures_and_retains_uspto_page():
     """Exercise the high-level API against an explicitly attached browser."""
     if not os.getenv("RUN_BROWSE_LIVE_TESTS"):

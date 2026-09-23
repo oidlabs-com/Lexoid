@@ -84,6 +84,17 @@ class PlanStage(BaseModel):
     run_if: NavigationOutcome | None = None
 
 
+class PlanStrategy(BaseModel):
+    """Inferred operational plan and conditional guidance from the planner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    intent: str = Field(default="", max_length=2_000)
+    approach: list[str] = Field(default_factory=list, max_length=20)
+    navigation_guidance: list[str] = Field(default_factory=list, max_length=20)
+    assumptions: list[str] = Field(default_factory=list, max_length=20)
+
+
 class ConstraintCheck(BaseModel):
     """Whether captured evidence shows a filter's value, not its semantic relationship."""
 
@@ -323,7 +334,7 @@ class BrowserActionTrace(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    event: Literal["observation", "action", "artifact", "warning", "terminal"]
+    event: Literal["plan", "observation", "action", "artifact", "warning", "terminal"]
     task_id: str = Field(min_length=1, max_length=128)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     tab_id: str | None = None
@@ -346,6 +357,7 @@ class BrowseTask(BaseModel):
     requested_facts: list[str] = Field(default_factory=list, max_length=100)
     completion_criteria: list[str] = Field(default_factory=list, max_length=20)
     constraints: TaskConstraints = Field(default_factory=TaskConstraints)
+    strategy: PlanStrategy = Field(default_factory=PlanStrategy)
     collection: CollectionPlan = Field(default_factory=CollectionPlan)
     stages: list[PlanStage] = Field(default_factory=list, max_length=20)
     allowed_domains: list[str] = Field(min_length=1, max_length=100)
@@ -365,6 +377,23 @@ class BrowseRequest(BaseModel):
     limits: BrowseLimits = Field(default_factory=BrowseLimits)
 
 
+class PlanOutcomeRecord(BaseModel):
+    """Durable plan-to-outcome record for audit trails and self-improvement evaluation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(min_length=1, max_length=128)
+    intent: str = Field(default="", max_length=2_000)
+    assumptions: list[str] = Field(default_factory=list, max_length=20)
+    navigation_guidance: list[str] = Field(default_factory=list, max_length=20)
+    coverage_requested: str = Field(default="all_matches", max_length=64)
+    stop_reason: str = Field(max_length=64)
+    answerability: str = Field(max_length=64)
+    unresolved_gaps: list[str] = Field(default_factory=list, max_length=20)
+    validated_claims_count: int = Field(default=0, ge=0)
+    pages_captured: int = Field(default=0, ge=0)
+
+
 class BrowseTaskResult(BaseModel):
     """Result for a single task, shaped for Slice 2 expansion."""
 
@@ -380,6 +409,7 @@ class BrowseTaskResult(BaseModel):
     trace: list[BrowserActionTrace] = Field(default_factory=list)
     retained_tabs: list[OpenTab] = Field(default_factory=list)
     usage: BrowseUsage = Field(default_factory=BrowseUsage)
+    plan_outcome: PlanOutcomeRecord | None = None
 
 
 class BrowseResult(BaseModel):

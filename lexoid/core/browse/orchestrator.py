@@ -22,6 +22,7 @@ from lexoid.core.browse.schemas import (
     EvidenceClaim,
     NavigationOutcome,
     PageArtifact,
+    PlanOutcomeRecord,
 )
 from lexoid.core.ghost import GhostConfig, ghost_get_html
 from lexoid.core.browse.session import GhostBrowserSession
@@ -68,6 +69,28 @@ async def run_task(
     judges cumulative answerability and proposes the next action.
     """
     publisher = BrowseEventPublisher(event_listener)
+    await publisher.emit(
+        BrowserActionTrace(
+            event="plan",
+            task_id=task.task_id,
+            metadata={
+                "subject": task.subject,
+                "intent": task.strategy.intent,
+                "approach": task.strategy.approach,
+                "navigation_guidance": task.strategy.navigation_guidance,
+                "assumptions": task.strategy.assumptions,
+                "seed_urls": task.seed_urls,
+                "allowed_domains": task.allowed_domains,
+                "requested_facts": task.requested_facts,
+                "completion_criteria": task.completion_criteria,
+                "filters": [
+                    {"field": f.field, "operator": f.operator, "value": f.value}
+                    for f in task.constraints.filters
+                ],
+                "coverage": task.constraints.coverage,
+            },
+        )
+    )
     fetcher = html_fetcher or ghost_get_html
     agent_usage = BrowseUsage()
     warnings: list[str] = []
@@ -89,8 +112,27 @@ async def run_task(
             "Browse task {} blocked: seed URL is outside allowlist", task.task_id
         )
         task.status = BrowseTerminalState.BLOCKED
+        plan_outcome = PlanOutcomeRecord(
+            task_id=task.task_id,
+            intent=task.strategy.intent or task.subject,
+            assumptions=task.strategy.assumptions,
+            navigation_guidance=task.strategy.navigation_guidance,
+            coverage_requested=task.constraints.coverage,
+            stop_reason="blocked",
+            answerability="insufficient",
+            unresolved_gaps=["Seed URL outside allowlist"],
+            validated_claims_count=0,
+            pages_captured=0,
+        )
         return BrowseResult(
-            task_results=[BrowseTaskResult(task=task, status=task.status)],
+            task_results=[
+                BrowseTaskResult(
+                    task=task,
+                    status=task.status,
+                    trace=publisher.events,
+                    plan_outcome=plan_outcome,
+                )
+            ],
             warnings=["Seed URL is outside the task allowlist."],
         )
 
@@ -225,6 +267,8 @@ async def run_task(
                                 profile,
                                 objective=assessment.objective,
                                 prior_attempts=list(attempted_objectives),
+                                gaps=list(gaps),
+                                reason=assessment.next_action_reason,
                             )
                             agent_usage = _add_usage(agent_usage, investigate_usage)
                             attempted_objectives.append(
@@ -286,7 +330,25 @@ async def run_task(
             "collected and no completeness conclusion is supported."
         )
         blocked_usage = _add_usage(normalized_usage, agent_usage)
-        await publisher.emit(BrowserActionTrace(event="terminal", task_id=task.task_id))
+        plan_outcome = PlanOutcomeRecord(
+            task_id=task.task_id,
+            intent=task.strategy.intent or task.subject,
+            assumptions=task.strategy.assumptions,
+            navigation_guidance=task.strategy.navigation_guidance,
+            coverage_requested=task.constraints.coverage,
+            stop_reason="blocked",
+            answerability="insufficient",
+            unresolved_gaps=[f"Navigation reported {navigation_outcome.value}"],
+            validated_claims_count=0,
+            pages_captured=0,
+        )
+        await publisher.emit(
+            BrowserActionTrace(
+                event="terminal",
+                task_id=task.task_id,
+                metadata={"plan_outcome": plan_outcome.model_dump(mode="json")},
+            )
+        )
         return BrowseResult(
             task_results=[
                 BrowseTaskResult(
@@ -296,6 +358,7 @@ async def run_task(
                     site_profile_id=profile.profile_id if profile else None,
                     trace=publisher.events,
                     usage=blocked_usage,
+                    plan_outcome=plan_outcome,
                 )
             ],
             warnings=warnings,
@@ -306,8 +369,31 @@ async def run_task(
             "Browse task {} failed: page capture returned no HTML", task.task_id
         )
         task.status = BrowseTerminalState.FAILED
-        result = BrowseTaskResult(task=task, status=task.status, usage=normalized_usage)
-        await publisher.emit(BrowserActionTrace(event="terminal", task_id=task.task_id))
+        plan_outcome = PlanOutcomeRecord(
+            task_id=task.task_id,
+            intent=task.strategy.intent or task.subject,
+            assumptions=task.strategy.assumptions,
+            navigation_guidance=task.strategy.navigation_guidance,
+            coverage_requested=task.constraints.coverage,
+            stop_reason="blocked",
+            answerability="insufficient",
+            unresolved_gaps=["Page capture failed to return HTML"],
+            validated_claims_count=0,
+            pages_captured=0,
+        )
+        result = BrowseTaskResult(
+            task=task,
+            status=task.status,
+            usage=normalized_usage,
+            plan_outcome=plan_outcome,
+        )
+        await publisher.emit(
+            BrowserActionTrace(
+                event="terminal",
+                task_id=task.task_id,
+                metadata={"plan_outcome": plan_outcome.model_dump(mode="json")},
+            )
+        )
         return BrowseResult(
             task_results=[result],
             warnings=["Page capture failed."],
@@ -390,6 +476,18 @@ async def run_task(
         navigation_outcome.value,
         normalized_usage.model_dump(),
     )
+    plan_outcome = PlanOutcomeRecord(
+        task_id=task.task_id,
+        intent=task.strategy.intent or task.subject,
+        assumptions=task.strategy.assumptions,
+        navigation_guidance=task.strategy.navigation_guidance,
+        coverage_requested=task.constraints.coverage,
+        stop_reason=stop_reason,
+        answerability=coverage.answerability,
+        unresolved_gaps=coverage.gaps,
+        validated_claims_count=len(claims),
+        pages_captured=len(artifacts),
+    )
     result = BrowseTaskResult(
         task=task,
         status=task.status,
@@ -401,9 +499,16 @@ async def run_task(
         trace=publisher.events,
         retained_tabs=retained_tabs,
         usage=normalized_usage,
+        plan_outcome=plan_outcome,
     )
     await publisher.emit(BrowserActionTrace(event="artifact", task_id=task.task_id))
-    await publisher.emit(BrowserActionTrace(event="terminal", task_id=task.task_id))
+    await publisher.emit(
+        BrowserActionTrace(
+            event="terminal",
+            task_id=task.task_id,
+            metadata={"plan_outcome": plan_outcome.model_dump(mode="json")},
+        )
+    )
     result.trace = publisher.events
     return BrowseResult(
         answer=answer,

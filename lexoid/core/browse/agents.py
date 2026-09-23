@@ -34,6 +34,7 @@ from lexoid.core.browse.schemas import (
     EvidenceClaim,
     NavigationOutcome,
     PageArtifact,
+    PlanStrategy,
 )
 from lexoid.core.browse.tools import BrowserToolset
 
@@ -41,13 +42,24 @@ _PLANNER_PROMPT = """Return one JSON object matching this shape exactly:
 {"seed_urls":["https://..."],"subject":"...","requested_facts":["..."],
 "completion_criteria":["..."],"allowed_domains":["host"],
 "constraints":{"filters":[{"field":"...","operator":"equals|contains|unspecified",
-"value":"..."}],"coverage":"all_matches|first_page|count"}}.
+"value":"..."}],"coverage":"all_matches|first_page|count"},
+"strategy":{"intent":"...","approach":["..."],"navigation_guidance":["..."],"assumptions":["..."]}}.
+`subject` is the target entity, concept, or topic from the request.
+Only use URLs, domains, and facts explicitly supplied by the user for `seed_urls`,
+`allowed_domains`, `requested_facts`, and `constraints`. Do not browse, invent URLs/domains,
+or infer unstated constraints.
+`completion_criteria`: Concrete, observable on-page conditions indicating success
+(e.g. matching records visible with verified relationship and requested coverage reached).
 Describe filters in the user's own terms, such as the role or attribute the user
 asked about; never name a website control, field label, or selector. Copy each
 filter value verbatim from the user request. Use "unspecified" unless the user
-stated how the value must match. Only use URLs, domains, and facts explicitly
-supplied by the user. Do not browse, infer missing information, or add fields.
-Return JSON only."""
+stated how the value must match.
+In `strategy`:
+- `intent`: Concise statement of the operational goal, clarifying requested action, scope, and relationship.
+- `approach`: 2 to 5 high-level operational phases to reach and verify the goal. Leave empty if trivial.
+- `navigation_guidance`: At most 5 conditional heuristics for the navigator (stating condition + action, e.g. "if an attorney-specific field exists, prefer it"). Keep guidance conditional and capability-level; never invent button labels, CSS selectors, or mandatory sequences before seeing page observations. Leave empty if none.
+- `assumptions`: Explicit operational interpretations made about request ambiguities. Never use assumptions to silently narrow, broaden, or discard user constraints. Leave empty if none.
+Do not pad strategy fields; leave lists empty when not needed. Return JSON only."""
 
 _NAVIGATOR_PROMPT = """You are a read-only browser navigation agent. Use the
 provided browser tools to reach the task completion criteria. Start from the
@@ -105,18 +117,21 @@ one JSON object: {"claims": [{"text":...,"quote":...,"artifact_id":...,
 "next_action_reason": "...", "objective": "..."}.
 Return JSON only."""
 
-_SYNTHESIZER_PROMPT = """Answer only from the supplied evidence claims. Return
-one JSON object with `answer` and `claim_ids`; `claim_ids` must contain only IDs
-of claims that support the answer. State uncertainty when no claims support the
-requested fact. Do not claim a record satisfies the requested constraints unless
-a cited claim shows it. The coverage object is authoritative and its fields are
-computed, not negotiable: when a constraint check is unverified you must say
-that constraint was not confirmed by captured evidence. Use `coverage.answerability`
-and `coverage.gaps` to explain what remains unresolved, and `coverage.stop_reason`
-to explain why capture ended, without inventing a number or total that no
-captured evidence states. When capture_complete is false you must not state or
-imply that results are all, complete, exhaustive, or absent; say explicitly what
-was captured, list the reported gaps, and state that the capture is incomplete.
+_SYNTHESIZER_PROMPT = """You are an expert synthesizer producing a clear, grounded answer to the user request.
+Answer strictly and only from the supplied evidence claims. Return one JSON object:
+{"answer": "...", "claim_ids": ["claim-1", ...]}.
+
+Requirements for `answer`:
+1. Direct answer first: Lead directly with findings answering the user's operational goal. Do not open with meta-talk like "Based on the provided claims" or "According to the payload".
+2. Structured presentation: Format the response using clean Markdown. When presenting multiple items or records, use organized bullet points or itemized blocks highlighting key fields (e.g. name, role, status, identifiers).
+3. Grounded specificity: Cite specific names, dates, numbers, and attributes directly supported by claims. Never extrapolate or assert facts beyond what cited claims show. State uncertainty when no claims support a requested fact.
+4. Absolute honesty on constraints & totals: Do not claim an item meets a constraint unless a cited claim verifies it. Never invent a total count unless explicitly stated in a cited claim.
+5. Coverage & Limitations section:
+   - The `coverage` object is authoritative and computed.
+   - If `capture_complete` is true and `coverage.answerability` is sufficient, deliver the verified findings cleanly.
+   - If `capture_complete` is false or `coverage.gaps` exist, provide verified findings first, then add a brief, transparent section at the end (e.g. "### Coverage & Gaps") explaining what was captured, what remains unconfirmed, and why capture ended (`coverage.stop_reason`), without claiming exhaustive absence or presence.
+6. `claim_ids`: Must contain all and only the IDs of claims directly supporting the statements in `answer`.
+
 Return JSON only."""
 
 
@@ -134,6 +149,18 @@ def task_from_query(query: str, limits: BrowseLimits) -> BrowseTask:
         subject=query,
         requested_facts=[],
         completion_criteria=["The requested results are visibly displayed."],
+        strategy=PlanStrategy(
+            intent=query,
+            approach=[
+                "Open the supplied target URL",
+                "Locate search or result controls",
+                "Capture matching evidence",
+            ],
+            navigation_guidance=[
+                "Apply requested filters directly",
+                "Verify result relevance before reporting results_ready",
+            ],
+        ),
         allowed_domains=[host],
         limits=limits,
     )
@@ -159,12 +186,19 @@ def validate_planned_task(
     query: str, payload: dict, limits: BrowseLimits
 ) -> BrowseTask:
     """Validate a planner task without permitting new URLs or allowlist hosts."""
+    raw_strategy = payload.get("strategy") or {}
+    strategy = (
+        PlanStrategy.model_validate(raw_strategy)
+        if raw_strategy
+        else PlanStrategy(intent=payload.get("subject", query))
+    )
     task = BrowseTask(
         seed_urls=payload["seed_urls"],
         subject=payload["subject"],
         requested_facts=payload.get("requested_facts", []),
         completion_criteria=payload.get("completion_criteria", []),
         constraints=payload.get("constraints", {}),
+        strategy=strategy,
         collection=payload.get("collection", {}),
         allowed_domains=payload["allowed_domains"],
         limits=limits,
@@ -184,19 +218,64 @@ def validate_planned_task(
     return task
 
 
+def render_task_plan(task: BrowseTask) -> str:
+    """Render an itemized operational plan for logs, traces, and audit surfaces."""
+    raw_intent = task.strategy.intent or task.subject
+    intent = raw_intent if len(raw_intent) <= 200 else f"{raw_intent[:197]}..."
+    lines = [
+        f"Initial Plan {task.task_id}:",
+        f"Intent:\n  {intent}",
+    ]
+    if task.strategy.approach:
+        approach_lines = "\n".join(
+            f"  {i + 1}. {step}" for i, step in enumerate(task.strategy.approach)
+        )
+        lines.append(f"Approach:\n{approach_lines}")
+    if task.strategy.navigation_guidance:
+        guidance_lines = "\n".join(
+            f"  - {g}" for g in task.strategy.navigation_guidance
+        )
+        lines.append(f"Navigation Guidance:\n{guidance_lines}")
+    if task.strategy.assumptions:
+        assumption_lines = "\n".join(f"  - {a}" for a in task.strategy.assumptions)
+        lines.append(f"Assumptions:\n{assumption_lines}")
+
+    filter_strs = [
+        f"{item.field} {item.operator} {item.value!r}"
+        for item in task.constraints.filters
+    ]
+    constraints_part = ", ".join(filter_strs) if filter_strs else "none"
+    lines.append(
+        f"Constraints & Coverage:\n  Filters: {constraints_part}\n  Coverage: {task.constraints.coverage}"
+    )
+    lines.append(
+        f"Target:\n  Seed URLs: {task.seed_urls}\n  Allowed Domains: {task.allowed_domains}"
+    )
+    return "\n".join(lines)
+
+
+def _log_task_plan(task: BrowseTask) -> None:
+    # Surface the validated plan as an itemized audit log for user visibility.
+    logger.info("{}", render_task_plan(task))
+
+
 async def plan_task(
     query: str, client: ChatClient | None, limits: BrowseLimits
 ) -> tuple[BrowseTask, BrowseUsage]:
     """Produce one validated task, using a model when one is explicitly supplied."""
     if client is None:
-        return task_from_query(query, limits), BrowseUsage()
+        task = task_from_query(query, limits)
+        _log_task_plan(task)
+        return task, BrowseUsage()
 
     def _parse(raw: str) -> BrowseTask:
         return validate_planned_task(query, _json_object(raw), limits)
 
-    return await _run_json_agent_with_repair(
+    task, usage = await _run_json_agent_with_repair(
         client, "planner", _PLANNER_PROMPT, query, _parse
     )
+    _log_task_plan(task)
+    return task, usage
 
 
 async def next_navigation_action(
@@ -224,6 +303,8 @@ async def navigate_with_tools(
     profile: SiteProfile | None = None,
     objective: str | None = None,
     prior_attempts: list[str] | None = None,
+    gaps: list[str] | None = None,
+    reason: str | None = None,
 ) -> tuple[NavigationOutcome, BrowseUsage]:
     """Run the navigator role and return the outcome it verifiably reported.
 
@@ -248,11 +329,23 @@ async def navigate_with_tools(
         configuration["max_function_calls"] = remaining + 4
     tools = toolset.functions()
     instructions = _NAVIGATOR_PROMPT
+    if task.strategy.navigation_guidance:
+        planner_guidance = "\n".join(
+            f"- {item}" for item in task.strategy.navigation_guidance
+        )
+        instructions = f"{instructions}\nPlanner navigation guidance (conditional):\n{planner_guidance}"
     if objective:
         instructions = (
             f"{instructions}\nYour only objective right now: {objective}\n"
             "Do not attempt the broader task; call report_outcome once this "
             "objective's content is visible or you determine it cannot be reached."
+        )
+    if reason:
+        instructions = f"{instructions}\nInvestigation reason: {reason}"
+    if gaps:
+        gap_items = "\n".join(f"- {gap}" for gap in gaps)
+        instructions = (
+            f"{instructions}\nUnresolved evidence gaps to address:\n{gap_items}"
         )
     if prior_attempts:
         # Carries what earlier navigator runs already tried, since each run is
@@ -273,6 +366,9 @@ async def navigate_with_tools(
             if objective
             else task.completion_criteria,
             "constraints": task.constraints.model_dump(mode="json"),
+            "planner_guidance": task.strategy.navigation_guidance,
+            "unresolved_gaps": gaps or [],
+            "investigation_reason": reason or "",
             "remaining_browser_actions": max(
                 task.limits.max_steps - toolset.action_count, 0
             ),
@@ -423,6 +519,7 @@ async def synthesize_answer(
     if task is not None:
         payload_in["task"] = {
             "subject": task.subject,
+            "intent": task.strategy.intent,
             "requested_facts": task.requested_facts,
             "constraints": task.constraints.model_dump(mode="json"),
         }

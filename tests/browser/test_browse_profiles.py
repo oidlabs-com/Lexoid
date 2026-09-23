@@ -168,7 +168,7 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
         orchestrator.BrowserToolset, "observe", lambda self: _observation()
     )
 
-    navigate_calls: list[str | None] = []
+    navigate_calls: list[tuple[str | None, list[str] | None, str | None]] = []
 
     async def navigate(
         client,
@@ -178,8 +178,11 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
         profile=None,
         objective=None,
         prior_attempts=None,
+        gaps=None,
+        reason=None,
+        **kwargs,
     ):
-        navigate_calls.append(objective)
+        navigate_calls.append((objective, gaps, reason))
         return NavigationOutcome.RESULTS_READY, BrowseUsage()
 
     monkeypatch.setattr(orchestrator, "navigate_with_tools", navigate)
@@ -226,8 +229,12 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
     task_result = result.task_results[0]
     assert assess_calls == ["artifact-1", "artifact-2"]
     assert navigate_calls == [
-        None,
-        "open the first record and confirm the attorney field",
+        (None, None, None),
+        (
+            "open the first record and confirm the attorney field",
+            ["record detail unverified"],
+            "need to open the first record",
+        ),
     ]
     assert task_result.coverage.stop_reason == "sufficient"
     assert task_result.status is BrowseTerminalState.COMPLETED
