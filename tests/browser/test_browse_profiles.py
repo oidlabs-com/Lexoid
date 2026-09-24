@@ -102,6 +102,15 @@ async def test_blocked_navigation_skips_collection(monkeypatch):
 
             return OpenTab(tab_id="tab-1", target_id="t1", url=url)
 
+        async def tab(self, tab_id):
+            from lexoid.core.browse.schemas import OpenTab
+
+            return OpenTab(
+                tab_id=tab_id,
+                target_id="t1",
+                url="https://tmsearch.uspto.gov/",
+            )
+
     monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
     monkeypatch.setattr(
         orchestrator.BrowserToolset, "observe", lambda self: _observation()
@@ -148,6 +157,15 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
             from lexoid.core.browse.schemas import OpenTab
 
             return OpenTab(tab_id="tab-1", target_id="t1", url=url)
+
+        async def tab(self, tab_id):
+            from lexoid.core.browse.schemas import OpenTab
+
+            return OpenTab(
+                tab_id=tab_id,
+                target_id="t1",
+                url="https://tmsearch.uspto.gov/",
+            )
 
         async def settle(self, tab_id):
             return None

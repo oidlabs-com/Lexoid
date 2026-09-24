@@ -46,7 +46,7 @@ def verify_constraints(
             ConstraintCheck(
                 field=item.field,
                 value=item.value,
-                verified=bool(supporting),
+                value_present=bool(supporting),
                 supporting_claim_ids=supporting[:500],
             )
         )

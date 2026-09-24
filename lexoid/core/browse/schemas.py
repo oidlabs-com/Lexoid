@@ -102,7 +102,7 @@ class ConstraintCheck(BaseModel):
 
     field: str = Field(min_length=1, max_length=200)
     value: str = Field(min_length=1, max_length=1_000)
-    verified: bool = False
+    value_present: bool = False
     supporting_claim_ids: list[str] = Field(default_factory=list, max_length=500)
 
 

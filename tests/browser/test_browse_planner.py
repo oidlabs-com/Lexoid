@@ -1,11 +1,9 @@
 """Planner validation tests without a network model dependency."""
 
 import pytest
-
 from lexoid.core.browse.agents import validate_planned_task
 from lexoid.core.browse.model_provider import LexoidChatClient, create_chat_client
 from lexoid.core.browse.schemas import BrowseLimits
-
 
 QUERY = "Go to https://tmsearch.uspto.gov/ and search records related to Arash Samadani"
 
@@ -123,8 +121,8 @@ def test_openai_models_use_native_agent_framework_client(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_plan_task_emits_info_audit_log():
-    from loguru import logger
     from lexoid.core.browse.agents import plan_task
+    from loguru import logger
 
     messages = []
     sink_id = logger.add(lambda msg: messages.append(msg), level="INFO")
@@ -135,17 +133,15 @@ async def test_plan_task_emits_info_audit_log():
             limits=BrowseLimits(),
         )
         assert task.seed_urls == ["https://tmsearch.uspto.gov/"]
-        assert any(
-            "Initial Plan" in m and "tmsearch.uspto.gov" in m for m in messages
-        )
+        assert any("Initial Plan" in m and "tmsearch.uspto.gov" in m for m in messages)
     finally:
         logger.remove(sink_id)
 
 
 @pytest.mark.asyncio
 async def test_plan_task_truncates_long_subject_in_log():
-    from loguru import logger
     from lexoid.core.browse.agents import plan_task
+    from loguru import logger
 
     long_query = "Go to https://tmsearch.uspto.gov/ " + ("longtext " * 35)
     messages = []

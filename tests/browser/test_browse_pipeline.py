@@ -3,8 +3,6 @@
 import os
 
 import pytest
-from pydantic import ValidationError
-
 from lexoid.api import BrowseModelConfig, browse
 from lexoid.core.browse.evidence import validated_claims
 from lexoid.core.browse.schemas import (
@@ -13,6 +11,7 @@ from lexoid.core.browse.schemas import (
     EvidenceClaim,
     PageArtifact,
 )
+from pydantic import ValidationError
 
 
 @pytest.mark.asyncio
@@ -146,6 +145,34 @@ def test_evidence_claim_requires_exact_artifact_quote():
     assert validated_claims([supported, unsupported], [artifact]) == [supported]
 
 
+def test_verify_constraints_checks_value_presence():
+    from lexoid.core.browse.evidence import verify_constraints
+    from lexoid.core.browse.schemas import TaskFilter
+
+    claim = EvidenceClaim(
+        claim_id="claim-1",
+        text="The country is Mexico.",
+        quote="Respondent is a citizen of Mexico.",
+        artifact_id="artifact-1",
+        source_url="https://example.test/",
+    )
+    filters = [
+        TaskFilter(field="country_of_origin", operator="equals", value="Mexico"),
+        TaskFilter(field="country_of_origin", operator="equals", value="Canada"),
+    ]
+
+    checks = verify_constraints(filters, [claim])
+    assert checks[0].field == "country_of_origin"
+    assert checks[0].value == "Mexico"
+    assert checks[0].value_present is True
+    assert checks[0].supporting_claim_ids == ["claim-1"]
+
+    assert checks[1].field == "country_of_origin"
+    assert checks[1].value == "Canada"
+    assert checks[1].value_present is False
+    assert checks[1].supporting_claim_ids == []
+
+
 def test_public_schemas_produce_json_schema():
     schema = BrowseTask.model_json_schema()
 
@@ -156,6 +183,7 @@ def test_public_schemas_produce_json_schema():
 @pytest.mark.asyncio
 async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatch):
     import json
+
     from lexoid.core.browse import agents
     from lexoid.core.browse.schemas import BrowseUsage, CoverageReport, PlanStrategy
 
@@ -244,8 +272,7 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
     "query, expected_text",
     [
         (
-            "Go to https://tmsearch.uspto.gov/ and retrieve all cases related to ",
-            "Arash Samadani (as attorney)",
+            """Go to https://tmsearch.uspto.gov/ and retrieve all cases related to Arash Samadani (as attorney)""",
             "158",
         ),
         (

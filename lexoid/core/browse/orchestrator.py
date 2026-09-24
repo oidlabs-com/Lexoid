@@ -5,18 +5,25 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Callable
-from loguru import logger
 
+from lexoid.core.browse.agents import (
+    assess_page,
+    extract_claims,
+    navigate_with_tools,
+    synthesize_answer,
+)
+from lexoid.core.browse.collector import capture_page
 from lexoid.core.browse.events import BrowseEventListener, BrowseEventPublisher
+from lexoid.core.browse.evidence import validated_claims, verify_constraints
+from lexoid.core.browse.model_provider import ChatClient
 from lexoid.core.browse.policy import is_allowed_url
 from lexoid.core.browse.profiles import find_profile
 from lexoid.core.browse.schemas import (
-    BrowseErrorCode,
+    BrowserActionTrace,
     BrowseResult,
     BrowseTask,
     BrowseTaskResult,
     BrowseTerminalState,
-    BrowserActionTrace,
     BrowseUsage,
     CoverageReport,
     EvidenceAssessment,
@@ -25,18 +32,10 @@ from lexoid.core.browse.schemas import (
     PageArtifact,
     PlanOutcomeRecord,
 )
-from lexoid.core.ghost import GhostConfig, ghost_get_html
 from lexoid.core.browse.session import GhostBrowserSession
-from lexoid.core.browse.model_provider import ChatClient
-from lexoid.core.browse.agents import (
-    assess_page,
-    extract_claims,
-    navigate_with_tools,
-    synthesize_answer,
-)
-from lexoid.core.browse.collector import capture_page
-from lexoid.core.browse.evidence import validated_claims, verify_constraints
 from lexoid.core.browse.tools import BrowserToolset
+from lexoid.core.ghost import GhostConfig, ghost_get_html
+from loguru import logger
 
 HtmlFetcher = Callable[[str, GhostConfig], tuple[str | None, dict[str, int]]]
 
@@ -188,17 +187,9 @@ async def run_task(
                             "Navigator did not report a verified outcome; collected "
                             "page state may not reflect the requested search."
                         )
-                try:
-                    current_tab = await session.tab(tab.tab_id)
-                except (AttributeError, RuntimeError):
-                    current_tab = tab
+                current_tab = await session.tab(tab.tab_id)
                 page_reached = current_tab.url != url or (
-                    toolset.action_count > 0
-                    and toolset.last_error_code
-                    not in {
-                        BrowseErrorCode.POLICY_DENIED,
-                        BrowseErrorCode.TAB_GONE,
-                    }
+                    toolset.successful_action_count > 0
                 )
                 artifacts: list[PageArtifact] = []
                 if (
@@ -478,7 +469,7 @@ async def run_task(
         constraint_checks=verify_constraints(task.constraints.filters, claims),
     )
     for check in coverage.constraint_checks:
-        if not check.verified:
+        if not check.value_present:
             warnings.append(
                 f"Constraint {check.field}={check.value!r} is not shown by any "
                 "captured evidence quote."

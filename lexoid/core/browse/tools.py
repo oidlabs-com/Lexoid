@@ -51,6 +51,7 @@ class BrowserToolset:
         self._emit = emit
         self._snapshot: BrowserSnapshot | None = None
         self.action_count = 0
+        self.successful_action_count = 0
         self.outcome = NavigationOutcome.UNKNOWN
         self.outcome_evidence = ""
         # Deterministic executor state, used to explain a navigator exit without
@@ -190,6 +191,8 @@ class BrowserToolset:
                 error_code=decision.error_code,
             )
         self.action_count += 1
+        if result.success:
+            self.successful_action_count += 1
         self.last_error_code = None if result.success else result.error_code
         await self._emit(
             BrowserActionTrace(
