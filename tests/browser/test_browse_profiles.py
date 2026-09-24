@@ -1,9 +1,9 @@
 """Tests for site profiles, navigator outcome gating, and orchestrator branching."""
 
 import json
+from typing import Any, cast
 
 import pytest
-
 from lexoid.core.browse.profiles import SiteProfile, find_profile
 from lexoid.core.browse.schemas import (
     BrowseTask,
@@ -24,6 +24,7 @@ def test_site_profile_matches_host_and_task_type():
     matched = find_profile("https://records.example.test/search", "search", [profile])
 
     assert matched is profile
+    assert matched is not None
     assert matched.supports_export is False
     assert find_profile("https://other.test/search", "search", [profile]) is None
     assert find_profile("https://example.test/x", "capture", [profile]) is None
@@ -54,7 +55,7 @@ def _toolset(page_text: str) -> BrowserToolset:
     async def emit(_trace) -> None:
         return None
 
-    return BrowserToolset(_OutcomeSession(page_text), task, "tab-1", emit)
+    return BrowserToolset(cast(Any, _OutcomeSession(page_text)), task, "tab-1", emit)
 
 
 @pytest.mark.asyncio
@@ -79,6 +80,41 @@ async def test_reported_outcome_accepts_quoted_page_text():
 
     assert accepted["success"] is True
     assert toolset.outcome is NavigationOutcome.RESULTS_READY
+
+
+@pytest.mark.asyncio
+async def test_read_text_returns_bounded_rendered_text():
+    emitted = []
+
+    async def emit(trace):
+        emitted.append(trace)
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+    )
+    long_text = "Case #101: Pending approval.\n" * 200
+    toolset = BrowserToolset(cast(Any, _OutcomeSession(long_text)), task, "tab-1", emit)
+
+    raw = await toolset.read_text(max_chars=500)
+    data = json.loads(raw)
+
+    assert len(data["text"]) == 500
+    assert data["total_chars"] == len(long_text)
+    assert data["truncated"] is True
+    assert toolset.action_count == 0
+    assert toolset.successful_action_count == 0
+    assert emitted[-1].event == "observation"
+    assert emitted[-1].metadata["action"] == "read_text"
+
+
+@pytest.mark.asyncio
+async def test_read_text_available_in_toolset_functions():
+    toolset = _toolset("some text")
+    tool_names = [func.__name__ for func in toolset.functions()]
+    assert "read_text" in tool_names
+    assert "observe" in tool_names
 
 
 @pytest.mark.asyncio

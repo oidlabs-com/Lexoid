@@ -25,10 +25,10 @@ from lexoid.core.browse.profiles import SiteProfile
 from lexoid.core.browse.schemas import (
     BrowseErrorCode,
     BrowseLimits,
-    BrowseTask,
-    BrowseUsage,
     BrowserAction,
     BrowserSnapshot,
+    BrowseTask,
+    BrowseUsage,
     CoverageReport,
     EvidenceAssessment,
     EvidenceClaim,
@@ -74,6 +74,9 @@ pagination and results-per-page controls before scrolling repeatedly, and use
 only options actually present in an observation. Preserve the active search and
 filters, and report the outcome once the requested results are visible instead
 of collecting every record yourself.
+Use read_text to inspect visible text, messages, results tables, or error
+banners on the page when interactive controls alone do not show whether results
+loaded or what records appeared.
 Do not return an action as text: call a tool for each browser interaction.
 Before finishing you must call report_outcome exactly once with results_ready,
 no_results, blocked, or timeout, quoting visible page text as evidence. Report

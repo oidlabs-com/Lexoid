@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import hashlib
 
-from loguru import logger
-
 from lexoid.core.browse.schemas import PageArtifact
 from lexoid.core.browse.session import GhostBrowserSession
 from lexoid.core.utils import html_to_markdown
+from loguru import logger
 
 
 async def capture_page(

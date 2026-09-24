@@ -72,6 +72,36 @@ class BrowserToolset:
         )
         return self._snapshot.model_dump_json(exclude=_OBSERVATION_EXCLUDE)
 
+    async def read_text(self, max_chars: int = 4000) -> str:
+        """Read visible rendered page text to inspect static text, tables, and messages.
+
+        Does not count toward the browser action modification count. Returns bounded
+        visible text from the current page.
+        """
+        clamped_chars = max(100, min(max_chars, 20_000))
+        full_text = await self._session.text_content(self._tab_id)
+        bounded_text = full_text[:clamped_chars]
+        truncated = len(full_text) > clamped_chars
+        payload = {
+            "text": bounded_text,
+            "total_chars": len(full_text),
+            "truncated": truncated,
+        }
+        await self._emit(
+            BrowserActionTrace(
+                event="observation",
+                task_id=self._task.task_id,
+                tab_id=self._tab_id,
+                snapshot_id=self._snapshot.snapshot_id if self._snapshot else None,
+                metadata={
+                    "action": "read_text",
+                    "chars": len(bounded_text),
+                    "truncated": truncated,
+                },
+            )
+        )
+        return json.dumps(payload)
+
     async def click(self, ref: str) -> str:
         """Click one element ref returned by observe."""
         return await self._run(BrowserAction(kind="click", ref=ref))
@@ -155,6 +185,7 @@ class BrowserToolset:
         """Return the callable tools supplied to the navigator Agent."""
         return [
             self.observe,
+            self.read_text,
             self.click,
             self.type,
             self.select,
