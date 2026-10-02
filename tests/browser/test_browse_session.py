@@ -124,6 +124,7 @@ async def test_pagination_skips_hidden_next_control():
 class _FakeSnapshotHandle:
     def __init__(self) -> None:
         self.clicked = False
+        self.evaluated: list[tuple[str, tuple[object, ...]]] = []
 
     async def click(self, **kwargs: int) -> None:
         self.clicked = True
@@ -132,6 +133,10 @@ class _FakeSnapshotHandle:
         return True
 
     async def is_enabled(self) -> bool:
+        return True
+
+    async def evaluate(self, script: str, *args: object) -> object:
+        self.evaluated.append((script, args))
         return True
 
 
@@ -185,6 +190,7 @@ class _FakeSnapshotPage:
 
     def __init__(self) -> None:
         self.handles = [_FakeSnapshotHandle(), _FakeSnapshotHandle()]
+        self.evaluated: list[tuple[str, tuple[object, ...]]] = []
 
     def is_closed(self) -> bool:
         return False
@@ -194,10 +200,12 @@ class _FakeSnapshotPage:
         return _FakeSnapshotLocator(self.handles)
 
     async def evaluate(self, script: str, *args: object) -> object:
+        self.evaluated.append((script, args))
         if "MutationObserver" in script:
             return True
-        assert "innerWidth" in script
-        return {"width": 1280, "height": 720, "scrollX": 0, "scrollY": 180}
+        if "innerWidth" in script:
+            return {"width": 1280, "height": 720, "scrollX": 0, "scrollY": 180}
+        return True
 
     async def title(self) -> str:
         return "Search"
@@ -229,3 +237,168 @@ async def test_snapshot_excludes_hidden_controls_and_executes_captured_handle():
     assert result.success is True
     assert page.handles[0].clicked is False
     assert page.handles[1].clicked is True
+
+
+class _FakeModalLocator:
+    def __init__(self, handles: list[_FakeSnapshotHandle]) -> None:
+        self.handles = handles
+
+    async def evaluate_all(self, script: str) -> list[dict[str, object]]:
+        assert "getBoundingClientRect" in script
+        return [
+            {
+                "index": 0,
+                "role": "button",
+                "name": "Search",
+                "tag": "button",
+                "bbox_x": 100,
+                "bbox_y": 100,
+                "bbox_width": 80,
+                "bbox_height": 30,
+                "visible": False,
+                "enabled": True,
+                "in_modal": False,
+            },
+            {
+                "index": 1,
+                "role": "input",
+                "name": "Min SF",
+                "tag": "input",
+                "bbox_x": 200,
+                "bbox_y": 200,
+                "bbox_width": 100,
+                "bbox_height": 30,
+                "visible": True,
+                "enabled": True,
+                "field_context": "Space Size",
+                "input_type": "text",
+                "in_modal": True,
+            },
+            {
+                "index": 2,
+                "role": "input",
+                "name": "Min SF",
+                "tag": "input",
+                "bbox_x": 200,
+                "bbox_y": 250,
+                "bbox_width": 100,
+                "bbox_height": 30,
+                "visible": True,
+                "enabled": True,
+                "field_context": "Building Size",
+                "input_type": "text",
+                "in_modal": True,
+            },
+            {
+                "index": 3,
+                "role": "checkbox",
+                "name": "Available",
+                "tag": "input",
+                "bbox_x": 200,
+                "bbox_y": 300,
+                "bbox_width": 20,
+                "bbox_height": 20,
+                "visible": True,
+                "enabled": True,
+                "checked": True,
+                "input_type": "checkbox",
+                "in_modal": True,
+            },
+            {
+                "index": 4,
+                "role": "button",
+                "name": "Search",
+                "tag": "button",
+                "bbox_x": 200,
+                "bbox_y": 350,
+                "bbox_width": 80,
+                "bbox_height": 30,
+                "visible": True,
+                "enabled": True,
+                "in_modal": True,
+            },
+        ]
+
+    def nth(self, index: int) -> _FakeSnapshotLocatorItem:
+        return _FakeSnapshotLocatorItem(self.handles[index])
+
+
+class _FakeModalPage(_FakeSnapshotPage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.handles = [_FakeSnapshotHandle() for _ in range(5)]
+
+    def locator(self, selector: str) -> _FakeModalLocator:
+        return _FakeModalLocator(self.handles)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_prioritizes_modal_elements_and_captures_context_and_state():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeModalPage()
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 0
+
+    snapshot = await session.snapshot("tab-1")
+    refs = [e.ref for e in snapshot.elements]
+
+    assert "e0" not in refs
+    assert refs == ["e1", "e2", "e3", "e4"]
+
+    e1 = next(e for e in snapshot.elements if e.ref == "e1")
+    assert e1.name == "Min SF"
+    assert e1.field_context == "Space Size"
+    assert e1.input_type == "text"
+    assert e1.in_modal is True
+
+    e2 = next(e for e in snapshot.elements if e.ref == "e2")
+    assert e2.name == "Min SF"
+    assert e2.field_context == "Building Size"
+    assert e2.input_type == "text"
+    assert e2.in_modal is True
+
+    e3 = next(e for e in snapshot.elements if e.ref == "e3")
+    assert e3.checked is True
+    assert e3.input_type == "checkbox"
+
+    result = await session.execute(
+        BrowserAction(kind="click", snapshot_id=snapshot.snapshot_id, ref="e4")
+    )
+    assert result.success is True
+    assert page.handles[0].clicked is False
+    assert page.handles[4].clicked is True
+
+
+@pytest.mark.asyncio
+async def test_scroll_with_ref_targets_container_handle():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeModalPage()
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 0
+
+    snapshot = await session.snapshot("tab-1")
+
+    result = await session.execute(
+        BrowserAction(
+            kind="scroll",
+            snapshot_id=snapshot.snapshot_id,
+            ref="e1",
+            text="down",
+        )
+    )
+    assert result.success is True
+    assert len(page.handles[1].evaluated) == 1
+    script, args = page.handles[1].evaluated[0]
+    assert "curr.scrollBy" in script
+    assert args == (1,)
+
+    snapshot2 = await session.snapshot("tab-1")
+    result_window = await session.execute(
+        BrowserAction(
+            kind="scroll",
+            snapshot_id=snapshot2.snapshot_id,
+            text="up",
+        )
+    )
+    assert result_window.success is True
+    assert any("window.scrollBy" in call[0] for call in page.evaluated)

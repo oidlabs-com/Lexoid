@@ -69,6 +69,12 @@ allowlisted URLs. Never enter credentials or take actions that create, modify,
 or submit accounts, applications, purchases, bookings, or legal agreements.
 Apply every requested filter to the matching named field on the page. Never
 substitute a different field, and never silently broaden a filter.
+When an active modal dialog or filter panel is open, treat its controls as the
+current interaction workspace. Check `field_context`, `name`, `input_type`, and
+`checked`/`selected` states on elements to distinguish duplicate field names
+(such as Min SF across different sections) before typing or clicking. To reveal
+more controls inside a scrollable modal or container, pass its ref to scroll
+(e.g. scroll(direction="down", ref=...)).
 When the objective is to reach more matching records, inspect the observed
 pagination and results-per-page controls before scrolling repeatedly, and use
 only options actually present in an observation. Preserve the active search and

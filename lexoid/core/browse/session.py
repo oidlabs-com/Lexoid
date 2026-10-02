@@ -51,6 +51,188 @@ _FORM_STATE_JS = """
     .slice(0, 50)
 """
 
+_SNAPSHOT_ELEMENTS_JS = """
+elements => {
+    const modalSelectors = [
+        'dialog[open]',
+        '[role="dialog"]',
+        '[role="alertdialog"]',
+        '[aria-modal="true"]',
+        '.csgp-modal:not([aria-hidden="true"])',
+        '.modal.show',
+        '.modal[style*="display: block"]'
+    ].join(', ');
+
+    const candidateModals = Array.from(document.querySelectorAll(modalSelectors)).filter(m => {
+        const r = m.getBoundingClientRect();
+        const s = window.getComputedStyle(m);
+        return r.width > 0 && r.height > 0 &&
+            s.display !== 'none' && s.visibility !== 'hidden' &&
+            Number(s.opacity) !== 0 && m.getAttribute('aria-hidden') !== 'true';
+    });
+
+    let activeModal = null;
+    if (candidateModals.length > 0) {
+        activeModal = candidateModals.reduce((top, curr) => {
+            if (!top) return curr;
+            const topZ = parseInt(window.getComputedStyle(top).zIndex, 10) || 0;
+            const currZ = parseInt(window.getComputedStyle(curr).zIndex, 10) || 0;
+            return currZ >= topZ ? curr : top;
+        }, null);
+    }
+
+    const isInsideModalOrPopup = (el) => {
+        if (!activeModal) return false;
+        if (activeModal.contains(el)) return true;
+        const popup = el.closest('[role="listbox"], [role="menu"], [role="tooltip"], .cdk-overlay-container, [class*="dropdown-menu"], [class*="popup"]');
+        if (popup) {
+            const style = window.getComputedStyle(popup);
+            const z = parseInt(style.zIndex, 10) || 0;
+            const modalZ = parseInt(window.getComputedStyle(activeModal).zIndex, 10) || 0;
+            return z >= modalZ;
+        }
+        return false;
+    };
+
+    const resolveName = (el) => {
+        const ariaLabel = el.getAttribute('aria-label');
+        if (ariaLabel && ariaLabel.trim()) return ariaLabel.trim();
+
+        const labelledBy = el.getAttribute('aria-labelledby');
+        if (labelledBy) {
+            const parts = labelledBy.split(/\\s+/).map(id => {
+                const node = document.getElementById(id);
+                return node ? (node.innerText || node.textContent || '').trim() : '';
+            }).filter(Boolean);
+            if (parts.length > 0) return parts.join(' ');
+        }
+
+        if (el.id) {
+            const escId = (window.CSS && window.CSS.escape) ? window.CSS.escape(el.id) : el.id.replace(/"/g, '\\\\"') ;
+            const labelFor = document.querySelector(`label[for="${escId}"]`);
+            if (labelFor && labelFor.innerText.trim()) return labelFor.innerText.trim();
+        }
+
+        const parentLabel = el.closest('label');
+        if (parentLabel && parentLabel !== el) {
+            const labelText = (parentLabel.innerText || '').trim();
+            if (labelText) return labelText;
+        }
+
+        const placeholder = el.getAttribute('placeholder');
+        if (placeholder && placeholder.trim()) return placeholder.trim();
+
+        const title = el.getAttribute('title');
+        if (title && title.trim()) return title.trim();
+
+        return (el.innerText || el.value || '').trim();
+    };
+
+    const getFieldContext = (el) => {
+        const fieldset = el.closest('fieldset');
+        if (fieldset) {
+            const legend = fieldset.querySelector('legend');
+            if (legend && legend.innerText.trim()) return legend.innerText.trim().slice(0, 100);
+        }
+        const group = el.closest('[role="group"], [role="radiogroup"]');
+        if (group) {
+            const gl = group.getAttribute('aria-label') || (group.querySelector(':scope > [class*="label"], :scope > [class*="header"], :scope > [class*="title"]') || {}).innerText;
+            if (gl && gl.trim()) return gl.trim().slice(0, 100);
+        }
+        let curr = el.parentElement;
+        for (let i = 0; i < 3 && curr && curr !== document.body && (!activeModal || curr !== activeModal.parentElement); i++) {
+            const heading = curr.querySelector(':scope > h1, :scope > h2, :scope > h3, :scope > h4, :scope > h5, :scope > h6, :scope > label, :scope > [class*="header"], :scope > [class*="title"], :scope > [class*="label"]');
+            if (heading && heading !== el && !heading.contains(el)) {
+                const text = (heading.innerText || '').trim();
+                if (text && text.length > 0 && text.length <= 100) return text;
+            }
+            curr = curr.parentElement;
+        }
+        return null;
+    };
+
+    return elements.map((element, index) => {
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        const isVisible = rect.width > 0 && rect.height > 0 &&
+            style.display !== 'none' && style.visibility !== 'hidden' &&
+            style.visibility !== 'collapse' && Number(style.opacity) !== 0 &&
+            element.getAttribute('aria-hidden') !== 'true' &&
+            !element.hasAttribute('inert');
+
+        const inModal = isInsideModalOrPopup(element);
+        // Only treat an element as covered when another element is physically on top
+        let covered = false;
+        if (isVisible && activeModal && !inModal) {
+            const cx = Math.min(Math.max(rect.x + rect.width / 2, 0), window.innerWidth - 1);
+            const cy = Math.min(Math.max(rect.y + rect.height / 2, 0), window.innerHeight - 1);
+            const topHit = document.elementFromPoint(cx, cy);
+            covered = Boolean(topHit) && topHit !== element && !element.contains(topHit) && !topHit.contains(element);
+        }
+        const visible = isVisible && !covered;
+
+        let checked = null;
+        if (element.tagName.toLowerCase() === 'input' && (element.type === 'checkbox' || element.type === 'radio')) {
+            checked = Boolean(element.checked);
+        } else if (element.hasAttribute('aria-checked')) {
+            checked = element.getAttribute('aria-checked') === 'true';
+        }
+
+        let selected = null;
+        if (element.tagName.toLowerCase() === 'option') {
+            selected = Boolean(element.selected);
+        } else if (element.hasAttribute('aria-selected')) {
+            selected = element.getAttribute('aria-selected') === 'true';
+        }
+
+        let expanded = null;
+        if (element.hasAttribute('aria-expanded')) {
+            expanded = element.getAttribute('aria-expanded') === 'true';
+        }
+
+        const inputType = element.tagName.toLowerCase() === 'input' ? (element.type || 'text') : null;
+        const name = resolveName(element);
+        const fieldContext = getFieldContext(element);
+
+        return {
+            index,
+            role: element.getAttribute('role') || element.tagName.toLowerCase(),
+            name,
+            tag: element.tagName.toLowerCase(),
+            bbox_x: rect.x,
+            bbox_y: rect.y,
+            bbox_width: rect.width,
+            bbox_height: rect.height,
+            visible,
+            enabled: !element.matches(':disabled') && element.getAttribute('aria-disabled') !== 'true',
+            checked,
+            selected,
+            expanded,
+            input_type: inputType,
+            field_context: fieldContext,
+            in_modal: inModal,
+        };
+    }).filter(entry => entry.visible).slice(0, 100);
+}
+"""
+
+_CONTAINER_SCROLL_JS = """
+(element, dir) => {
+    let curr = element;
+    while (curr && curr !== document.body && curr !== document.documentElement) {
+        const style = window.getComputedStyle(curr);
+        const overflowY = style.overflowY || style.overflow;
+        const isScrollable = (overflowY === 'auto' || overflowY === 'scroll') && curr.scrollHeight > curr.clientHeight;
+        if (isScrollable) {
+            curr.scrollBy({ top: dir * Math.max(curr.clientHeight * 0.8, 100), behavior: 'instant' });
+            return;
+        }
+        curr = curr.parentElement;
+    }
+    element.scrollIntoView({ block: dir > 0 ? 'end' : 'start', behavior: 'instant' });
+}
+"""
+
 
 class GhostBrowserSession(AbstractAsyncContextManager):
     """Own only pages opened by Lexoid during an async browser session."""
@@ -175,34 +357,14 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         if page is None or page.is_closed():
             raise TabGoneError(tab_id)
         locator = page.locator("button, a, input, select, textarea, [role]")
-        entries = await locator.evaluate_all(
-            """elements => elements.map((element, index) => {
-                const rect = element.getBoundingClientRect();
-                const style = window.getComputedStyle(element);
-                const visible = rect.width > 0 && rect.height > 0 &&
-                    style.display !== 'none' && style.visibility !== 'hidden' &&
-                    style.visibility !== 'collapse' && Number(style.opacity) !== 0;
-                return {
-                    index,
-                    role: element.getAttribute('role') || element.tagName.toLowerCase(),
-                    name: element.getAttribute('aria-label') || element.innerText || element.value || '',
-                    tag: element.tagName.toLowerCase(),
-                    bbox_x: rect.x,
-                    bbox_y: rect.y,
-                    bbox_width: rect.width,
-                    bbox_height: rect.height,
-                    visible,
-                    enabled: !element.matches(':disabled') && element.getAttribute('aria-disabled') !== 'true'
-                };
-            }).filter(entry => entry.visible).slice(0, 100)"""
-        )
+        entries = await locator.evaluate_all(_SNAPSHOT_ELEMENTS_JS)
         revision = self._revisions[tab_id]
         snapshot_id = f"snapshot-{uuid4().hex}"
         refs = []
         handles: dict[str, Any] = {}
         for entry in entries:
             if (
-                not entry["visible"]
+                not entry.get("visible", True)
                 or entry["bbox_width"] <= 0
                 or entry["bbox_height"] <= 0
             ):
@@ -218,16 +380,22 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                     tab_id=tab_id,
                     frame_id="main",
                     node_id=f"{revision}:{entry['index']}",
-                    role=entry["role"],
-                    name=str(entry["name"])[:1000],
-                    tag=entry["tag"],
+                    role=entry.get("role"),
+                    name=str(entry.get("name") or "")[:1000],
+                    tag=entry.get("tag"),
                     ordinal=entry["index"],
                     bbox_x=entry["bbox_x"],
                     bbox_y=entry["bbox_y"],
                     bbox_width=entry["bbox_width"],
                     bbox_height=entry["bbox_height"],
-                    visible=entry["visible"],
-                    enabled=entry["enabled"],
+                    visible=entry.get("visible", True),
+                    enabled=entry.get("enabled", True),
+                    checked=entry.get("checked"),
+                    selected=entry.get("selected"),
+                    expanded=entry.get("expanded"),
+                    input_type=entry.get("input_type"),
+                    field_context=entry.get("field_context"),
+                    in_modal=bool(entry.get("in_modal", False)),
                 )
             )
             handles[ref] = handle
@@ -291,22 +459,23 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                     success=False, outcome="stale reference", error_code="stale_ref"
                 )
             handle = None
-            if action.kind in {"click", "type", "select", "hover"}:
+            if action.ref is not None:
                 handle = self._snapshot_handles.get(snapshot.snapshot_id, {}).get(
-                    action.ref or ""
+                    action.ref
                 )
-                if handle is None:
-                    return BrowserActionResult(
-                        success=False,
-                        outcome="stale reference",
-                        error_code="stale_ref",
-                    )
-                if not await handle.is_visible() or not await handle.is_enabled():
-                    return BrowserActionResult(
-                        success=False,
-                        outcome="stale reference",
-                        error_code="stale_ref",
-                    )
+                if action.kind in {"click", "type", "select", "hover"}:
+                    if handle is None:
+                        return BrowserActionResult(
+                            success=False,
+                            outcome="stale reference",
+                            error_code="stale_ref",
+                        )
+                    if not await handle.is_visible() or not await handle.is_enabled():
+                        return BrowserActionResult(
+                            success=False,
+                            outcome="stale reference",
+                            error_code="stale_ref",
+                        )
             if action.kind == "click":
                 assert handle is not None
                 await handle.click(timeout=self._config.timeout_ms)
@@ -328,10 +497,13 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 await handle.hover(timeout=self._config.timeout_ms)
             elif action.kind == "scroll":
                 direction = -1 if action.text == "up" else 1
-                await page.evaluate(
-                    "direction => window.scrollBy(0, direction * window.innerHeight)",
-                    direction,
-                )
+                if action.ref and handle is not None:
+                    await handle.evaluate(_CONTAINER_SCROLL_JS, direction)
+                else:
+                    await page.evaluate(
+                        "direction => window.scrollBy(0, direction * window.innerHeight)",
+                        direction,
+                    )
             elif action.kind == "navigate":
                 await page.goto(
                     action.url or "",

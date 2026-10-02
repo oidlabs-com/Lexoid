@@ -122,13 +122,13 @@ class BrowserToolset:
         """Wait briefly, or until visible text appears when text is supplied."""
         return await self._run(BrowserAction(kind="wait", text=text or None))
 
-    async def scroll(self, direction: str = "down") -> str:
-        """Scroll the current page up or down to reveal more observed controls."""
+    async def scroll(self, direction: str = "down", ref: str | None = None) -> str:
+        """Scroll the page or a specific container/modal up or down to reveal more observed controls."""
         if direction not in {"up", "down"}:
             return json.dumps(
                 {"success": False, "outcome": "direction must be up or down"}
             )
-        return await self._run(BrowserAction(kind="scroll", text=direction))
+        return await self._run(BrowserAction(kind="scroll", text=direction, ref=ref))
 
     async def back(self) -> str:
         """Navigate back within the same browser tab."""

@@ -209,6 +209,12 @@ class ElementRef(BaseModel):
     bbox_height: float | None = Field(default=None, gt=0, le=20_000)
     visible: bool = True
     enabled: bool = True
+    checked: bool | None = None
+    selected: bool | None = None
+    expanded: bool | None = None
+    input_type: str | None = Field(default=None, max_length=64)
+    field_context: str | None = Field(default=None, max_length=500)
+    in_modal: bool = False
 
 
 class BrowserSnapshot(BaseModel):

@@ -118,6 +118,51 @@ async def test_read_text_available_in_toolset_functions():
 
 
 @pytest.mark.asyncio
+async def test_scroll_tool_supports_optional_ref():
+    emitted = []
+
+    async def emit(trace):
+        emitted.append(trace)
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+    )
+
+    class _ScrollSession:
+        async def snapshot(self, tab_id: str):
+            from lexoid.core.browse.schemas import BrowserSnapshot
+
+            return BrowserSnapshot(
+                snapshot_id="s1",
+                tab_id=tab_id,
+                page_revision=0,
+                url="https://example.test/",
+                viewport_width=1280,
+                viewport_height=720,
+                scroll_x=0,
+                scroll_y=0,
+                content_hash="h1",
+            )
+
+        async def execute(self, action):
+            from lexoid.core.browse.schemas import BrowserActionResult
+
+            return BrowserActionResult(success=True, outcome="ok")
+
+    toolset = BrowserToolset(cast(Any, _ScrollSession()), task, "tab-1", emit)
+    await toolset.scroll(direction="down", ref="e1")
+    assert toolset.action_count == 1
+    assert toolset.successful_action_count == 1
+    action_trace = [e for e in emitted if e.event == "action"][-1]
+    assert action_trace.action is not None
+    assert action_trace.action.kind == "scroll"
+    assert action_trace.action.ref == "e1"
+    assert action_trace.action.text == "down"
+
+
+@pytest.mark.asyncio
 async def test_blocked_navigation_skips_collection(monkeypatch):
     from lexoid.core.browse import orchestrator
 
