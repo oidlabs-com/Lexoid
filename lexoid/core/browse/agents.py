@@ -269,7 +269,11 @@ def _log_task_plan(task: BrowseTask) -> None:
 
 
 async def plan_task(
-    query: str, client: ChatClient | None, limits: BrowseLimits
+    query: str,
+    client: ChatClient | None,
+    limits: BrowseLimits,
+    *,
+    role_options: dict[str, Any] | None = None,
 ) -> tuple[BrowseTask, BrowseUsage]:
     """Produce one validated task, using a model when one is explicitly supplied."""
     if client is None:
@@ -281,14 +285,18 @@ async def plan_task(
         return validate_planned_task(query, _json_object(raw), limits)
 
     task, usage = await _run_json_agent_with_repair(
-        client, "planner", _PLANNER_PROMPT, query, _parse
+        client, "planner", _PLANNER_PROMPT, query, _parse, role_options=role_options
     )
     _log_task_plan(task)
     return task, usage
 
 
 async def next_navigation_action(
-    client: ChatClient, snapshot: BrowserSnapshot, task: BrowseTask
+    client: ChatClient,
+    snapshot: BrowserSnapshot,
+    task: BrowseTask,
+    *,
+    role_options: dict[str, Any] | None = None,
 ) -> tuple[BrowserAction, BrowseUsage]:
     """Ask the navigator role for one action scoped to the given snapshot."""
     observation = snapshot.model_dump_json(exclude={"content_hash", "truncated"})
@@ -296,7 +304,9 @@ async def next_navigation_action(
         {"subject": task.subject, "requested_facts": task.requested_facts}
     )
     prompt = f"Goal (trusted): {goal}\nSnapshot (untrusted page data): {observation}"
-    raw, usage = await _run_json_agent(client, "navigator", _NAVIGATOR_PROMPT, prompt)
+    raw, usage = await _run_json_agent(
+        client, "navigator", _NAVIGATOR_PROMPT, prompt, role_options=role_options
+    )
     payload = _json_object(raw)
     if payload.get("kind") == "done":
         return BrowserAction(kind="done"), usage
@@ -314,6 +324,8 @@ async def navigate_with_tools(
     prior_attempts: list[str] | None = None,
     gaps: list[str] | None = None,
     reason: str | None = None,
+    *,
+    role_options: dict[str, Any] | None = None,
 ) -> tuple[NavigationOutcome, BrowseUsage]:
     """Run the navigator role and return the outcome it verifiably reported.
 
@@ -390,12 +402,15 @@ async def navigate_with_tools(
         profile.profile_id if profile else None,
         bool(objective),
     )
+    default_options: dict[str, Any] = {"store": False}
+    if role_options:
+        default_options.update(role_options)
     agent = Agent(
         client,
         name="navigator",
         instructions=instructions,
         tools=tools,
-        default_options={"store": False},
+        default_options=default_options,
     )
     response = await agent.run(prompt)
     usage = browse_usage_from_response(response)
@@ -422,7 +437,11 @@ async def navigate_with_tools(
 
 
 async def extract_claims(
-    client: ChatClient, artifacts: list[PageArtifact], task: BrowseTask | None = None
+    client: ChatClient,
+    artifacts: list[PageArtifact],
+    task: BrowseTask | None = None,
+    *,
+    role_options: dict[str, Any] | None = None,
 ) -> tuple[list[EvidenceClaim], BrowseUsage]:
     """Use the extractor role to produce artifact-anchored evidence claims."""
     sections = []
@@ -453,7 +472,12 @@ async def extract_claims(
         ]
 
     return await _run_json_agent_with_repair(
-        client, "extractor", _EXTRACTOR_PROMPT, "\n".join(sections), _parse
+        client,
+        "extractor",
+        _EXTRACTOR_PROMPT,
+        "\n".join(sections),
+        _parse,
+        role_options=role_options,
     )
 
 
@@ -463,6 +487,8 @@ async def assess_page(
     artifact: PageArtifact,
     prior_claims: list[EvidenceClaim],
     prior_gaps: list[str],
+    *,
+    role_options: dict[str, Any] | None = None,
 ) -> tuple[EvidenceAssessment, list[EvidenceClaim], BrowseUsage]:
     """Extract new claims from one page and judge cumulative answerability."""
     payload_in = {
@@ -508,7 +534,12 @@ async def assess_page(
         return assessment, claims
 
     (assessment, claims), usage = await _run_json_agent_with_repair(
-        client, "assessor", _ASSESSOR_PROMPT, json.dumps(payload_in), _parse
+        client,
+        "assessor",
+        _ASSESSOR_PROMPT,
+        json.dumps(payload_in),
+        _parse,
+        role_options=role_options,
     )
     return assessment, claims, usage
 
@@ -519,6 +550,8 @@ async def synthesize_answer(
     capture_complete: bool,
     task: BrowseTask | None = None,
     coverage: CoverageReport | None = None,
+    *,
+    role_options: dict[str, Any] | None = None,
 ) -> tuple[str, list[str], BrowseUsage]:
     """Use the synthesizer role to answer from validated evidence claims only."""
     payload_in = {
@@ -544,13 +577,23 @@ async def synthesize_answer(
         return answer, [str(claim_id) for claim_id in claim_ids]
 
     (answer, claim_ids), usage = await _run_json_agent_with_repair(
-        client, "synthesizer", _SYNTHESIZER_PROMPT, json.dumps(payload_in), _parse
+        client,
+        "synthesizer",
+        _SYNTHESIZER_PROMPT,
+        json.dumps(payload_in),
+        _parse,
+        role_options=role_options,
     )
     return answer, claim_ids, usage
 
 
 async def _run_json_agent(
-    client: ChatClient, name: str, instructions: str, prompt: str
+    client: ChatClient,
+    name: str,
+    instructions: str,
+    prompt: str,
+    *,
+    role_options: dict[str, Any] | None = None,
 ) -> tuple[str, BrowseUsage]:
     """Run a named Agent Framework role and normalize the adapter response."""
     if Agent is None:
@@ -558,8 +601,11 @@ async def _run_json_agent(
             "Browse requires optional dependencies. Install with: pip install 'lexoid[browse]'"
         )
     logger.debug("Browse {} agent request started (prompt_chars={})", name, len(prompt))
+    default_options: dict[str, Any] = {"store": False}
+    if role_options:
+        default_options.update(role_options)
     agent = Agent(
-        client, name=name, instructions=instructions, default_options={"store": False}
+        client, name=name, instructions=instructions, default_options=default_options
     )
     response = await agent.run(prompt)
     output = response.text or ""
@@ -587,6 +633,8 @@ async def _run_json_agent_with_repair(
     instructions: str,
     prompt: str,
     parse: Callable[[str], _T],
+    *,
+    role_options: dict[str, Any] | None = None,
 ) -> tuple[_T, BrowseUsage]:
     """Run a JSON role, retrying once with a bounded repair on invalid output."""
     current_prompt = prompt
@@ -610,7 +658,11 @@ async def _run_json_agent_with_repair(
     ):
         with attempt:
             raw, usage = await _run_json_agent(
-                client, name, instructions, current_prompt
+                client,
+                name,
+                instructions,
+                current_prompt,
+                role_options=role_options,
             )
             total_usage = BrowseUsage(
                 input=total_usage.input + usage.input,

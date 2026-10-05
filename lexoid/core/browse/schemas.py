@@ -142,22 +142,92 @@ class CoverageReport(BaseModel):
     )
 
 
+def is_reasoning_model(model: str) -> bool:
+    """Return whether a model identifier represents an OpenAI reasoning model."""
+    name = model.split("/")[-1].lower()
+    return name.startswith("gpt-5")
+
+
+class RoleModelConfig(BaseModel):
+    """Configuration for a specific browse role, including model and options."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model: str = Field(min_length=1, max_length=200)
+    reasoning: dict[str, Any] | None = None
+    options: dict[str, Any] = Field(default_factory=dict)
+
+    def resolved_options(self, is_reasoning: bool = False) -> dict[str, Any]:
+        """Compile effective agent default_options."""
+        opts = dict(self.options)
+        if self.reasoning is not None:
+            opts["reasoning"] = dict(self.reasoning)
+        elif is_reasoning:
+            opts.setdefault("reasoning", {"effort": "medium"})
+        return opts
+
+
 class BrowseModelConfig(BaseModel):
     """Configuration mapping roles to LLM model identifiers for browse()."""
 
     model_config = ConfigDict(extra="forbid")
 
-    default: str | None = Field(default=None, min_length=1, max_length=200)
-    planner: str | None = Field(default=None, min_length=1, max_length=200)
-    navigator: str | None = Field(default=None, min_length=1, max_length=200)
-    extractor: str | None = Field(default=None, min_length=1, max_length=200)
-    synthesizer: str | None = Field(default=None, min_length=1, max_length=200)
+    default: str | RoleModelConfig | None = None
+    planner: str | RoleModelConfig | None = None
+    navigator: str | RoleModelConfig | None = None
+    extractor: str | RoleModelConfig | None = None
+    synthesizer: str | RoleModelConfig | None = None
+
+    @property
+    def default_model(self) -> str | None:
+        """Get the model name configured for default, if any."""
+        if isinstance(self.default, RoleModelConfig):
+            return self.default.model
+        return self.default
 
     def for_role(self, role: str) -> str | None:
         """Get the effective model for a specific role, falling back to default."""
         if role not in {"planner", "navigator", "extractor", "synthesizer"}:
             raise ValueError(f"Unknown browse role: {role}")
-        return getattr(self, role) or self.default
+        val = getattr(self, role)
+        if val is None:
+            val = self.default
+        if isinstance(val, RoleModelConfig):
+            return val.model
+        return val
+
+    def options_for_role(self, role: str) -> dict[str, Any]:
+        """Get effective Agent default_options for a specific role."""
+        if role not in {"planner", "navigator", "extractor", "synthesizer"}:
+            raise ValueError(f"Unknown browse role: {role}")
+        model = self.for_role(role)
+        if not model:
+            return {}
+        is_reasoning = is_reasoning_model(model)
+        default_opts = (
+            self.default.resolved_options(is_reasoning)
+            if isinstance(self.default, RoleModelConfig)
+            else ({"reasoning": {"effort": "medium"}} if is_reasoning else {})
+        )
+        role_val = getattr(self, role)
+        if isinstance(role_val, RoleModelConfig):
+            role_opts = role_val.resolved_options(is_reasoning)
+            merged = {**default_opts, **role_opts}
+            if "reasoning" in default_opts and "reasoning" in role_opts:
+                merged["reasoning"] = {
+                    **default_opts["reasoning"],
+                    **role_opts["reasoning"],
+                }
+            return merged
+        return default_opts
+
+    def reasoning_effort_for_role(self, role: str) -> str | None:
+        """Get the effective reasoning effort for a specific role."""
+        opts = self.options_for_role(role)
+        reasoning = opts.get("reasoning")
+        if isinstance(reasoning, dict):
+            return reasoning.get("effort")
+        return None
 
     @classmethod
     def from_value(

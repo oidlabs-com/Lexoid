@@ -57,8 +57,11 @@ async def run_task(
     event_listener: BrowseEventListener | None = None,
     html_fetcher: HtmlFetcher | None = None,
     navigator_client: ChatClient | None = None,
+    navigator_options: dict[str, Any] | None = None,
     extractor_client: ChatClient | None = None,
+    extractor_options: dict[str, Any] | None = None,
     synthesizer_client: ChatClient | None = None,
+    synthesizer_options: dict[str, Any] | None = None,
 ) -> BrowseResult:
     """Capture one allowlisted page and return a typed, grounded task result.
 
@@ -179,7 +182,12 @@ async def run_task(
                 )
                 if navigator_client is not None:
                     navigation_outcome, navigator_usage = await navigate_with_tools(
-                        navigator_client, toolset, task, snapshot, profile
+                        navigator_client,
+                        toolset,
+                        task,
+                        snapshot,
+                        profile,
+                        role_options=navigator_options,
                     )
                     agent_usage = _add_usage(agent_usage, navigator_usage)
                     if navigation_outcome is NavigationOutcome.UNKNOWN:
@@ -245,7 +253,12 @@ async def run_task(
                                 new_claims,
                                 assess_usage,
                             ) = await assess_page(
-                                extractor_client, task, artifact, claims, gaps
+                                extractor_client,
+                                task,
+                                artifact,
+                                claims,
+                                gaps,
+                                role_options=extractor_options,
                             )
                             agent_usage = _add_usage(agent_usage, assess_usage)
                             claims = validated_claims(claims + new_claims, artifacts)
@@ -292,6 +305,7 @@ async def run_task(
                                 prior_attempts=list(attempted_objectives),
                                 gaps=list(gaps),
                                 reason=assessment.next_action_reason,
+                                role_options=navigator_options,
                             )
                             agent_usage = _add_usage(agent_usage, investigate_usage)
                             attempted_objectives.append(
@@ -448,7 +462,7 @@ async def run_task(
     answer = ""
     if html_fetcher is not None and extractor_client is not None:
         claims, extractor_usage = await extract_claims(
-            extractor_client, artifacts, task
+            extractor_client, artifacts, task, role_options=extractor_options
         )
         agent_usage = _add_usage(agent_usage, extractor_usage)
         claims = validated_claims(claims, artifacts)
@@ -479,7 +493,12 @@ async def run_task(
     )
     if synthesizer_client is not None:
         answer, cited_claim_ids, synthesizer_usage = await synthesize_answer(
-            synthesizer_client, claims, capture_complete, task, coverage
+            synthesizer_client,
+            claims,
+            capture_complete,
+            task,
+            coverage,
+            role_options=synthesizer_options,
         )
         agent_usage = _add_usage(agent_usage, synthesizer_usage)
         valid_claim_ids = {claim.claim_id for claim in claims}

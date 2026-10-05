@@ -6,6 +6,7 @@ from lexoid.core.browse.schemas import (
     BrowseTask,
     PlanOutcomeRecord,
     PlanStrategy,
+    RoleModelConfig,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "BrowseTask",
     "PlanOutcomeRecord",
     "PlanStrategy",
+    "RoleModelConfig",
 ]

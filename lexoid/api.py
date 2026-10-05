@@ -90,7 +90,7 @@ async def browse(
     models_to_validate = {
         model
         for model in (
-            cfg.default,
+            cfg.default_model,
             resolved_models["planner"],
             resolved_models["navigator"],
             resolved_models["extractor"],
@@ -111,7 +111,12 @@ async def browse(
     else:
         planner_model = resolved_models["planner"]
         client = create_chat_client(planner_model) if planner_model else None
-        task, _ = await plan_task(query, client, effective_limits)
+        task, _ = await plan_task(
+            query,
+            client,
+            effective_limits,
+            role_options=cfg.options_for_role("planner"),
+        )
     return await run_task(
         task,
         cdp_url=cdp_url,
@@ -122,16 +127,19 @@ async def browse(
             if resolved_models["navigator"]
             else None
         ),
+        navigator_options=cfg.options_for_role("navigator"),
         extractor_client=(
             create_chat_client(resolved_models["extractor"])
             if resolved_models["extractor"]
             else None
         ),
+        extractor_options=cfg.options_for_role("extractor"),
         synthesizer_client=(
             create_chat_client(resolved_models["synthesizer"])
             if resolved_models["synthesizer"]
             else None
         ),
+        synthesizer_options=cfg.options_for_role("synthesizer"),
     )
 
 

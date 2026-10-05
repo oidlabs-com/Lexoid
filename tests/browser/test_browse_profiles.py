@@ -299,7 +299,9 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
 
     assess_calls: list[str] = []
 
-    async def fake_assess_page(client, task, artifact, prior_claims, prior_gaps):
+    async def fake_assess_page(
+        client, task, artifact, prior_claims, prior_gaps, **kwargs
+    ):
         assess_calls.append(artifact.artifact_id)
         if len(assess_calls) == 1:
             assessment = EvidenceAssessment(
