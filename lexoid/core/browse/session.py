@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 from contextlib import AbstractAsyncContextManager
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from loguru import logger
@@ -234,6 +235,18 @@ _CONTAINER_SCROLL_JS = """
 """
 
 
+def _normalize_tab_url(url: str) -> str:
+    if not url or url.startswith("about:"):
+        return ""
+    parsed = urlparse(url)
+    scheme = parsed.scheme.lower()
+    netloc = parsed.netloc.lower()
+    path = parsed.path
+    query = f"?{parsed.query}" if parsed.query else ""
+    fragment = f"#{parsed.fragment}" if parsed.fragment else ""
+    return f"{scheme}://{netloc}{path}{query}{fragment}"
+
+
 class GhostBrowserSession(AbstractAsyncContextManager):
     """Own only pages opened by Lexoid during an async browser session."""
 
@@ -247,6 +260,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         self._revisions: dict[str, int] = {}
         self._snapshots: dict[str, BrowserSnapshot] = {}
         self._snapshot_handles: dict[str, dict[str, Any]] = {}
+        self._pending_popups: list[tuple[str, str]] = []
         self._settle_idle_ms = 500
         self._settle_timeout_ms = min(config.timeout_ms, 15_000)
 
@@ -272,16 +286,35 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         if self._playwright is not None:
             await self._playwright.stop()
 
+    def _on_popup(self, opener_tab_id: str, popup_page: object) -> None:
+        popup_tab_id = self._register_page(popup_page)
+        self._pending_popups.append((opener_tab_id, popup_tab_id))
+
+    def _register_page(self, page: object, tab_id: str | None = None) -> str:
+        tid = tab_id or f"tab-{uuid4().hex}"
+        self._owned_pages[tid] = page
+        self._revisions[tid] = 0
+        page.on("popup", lambda popup: self._on_popup(tid, popup))
+        return tid
+
     async def open_page(self, url: str) -> OpenTab:
         """Open and navigate a Lexoid-owned page without adopting user tabs."""
         page = await self._context.new_page()
-        tab_id = f"tab-{uuid4().hex}"
-        self._owned_pages[tab_id] = page
-        self._revisions[tab_id] = 0
+        tab_id = self._register_page(page)
         await page.goto(
             url, wait_until="domcontentloaded", timeout=self._config.timeout_ms
         )
         return await self.tab(tab_id)
+
+    async def list_tabs(self) -> list[OpenTab]:
+        """Return metadata for all active Lexoid-owned tabs."""
+        tabs: list[OpenTab] = []
+        for tab_id in list(self._owned_pages.keys()):
+            try:
+                tabs.append(await self.tab(tab_id))
+            except (TabGoneError, Exception):
+                continue
+        return tabs
 
     async def tab(self, tab_id: str) -> OpenTab:
         """Return metadata for an active owned tab or raise ``TabGoneError``."""
@@ -526,20 +559,70 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         except Exception as error:
             return BrowserActionResult(success=False, outcome=str(error)[:1000])
         await self._settle_page(page)
+        opened_tab_id: str | None = None
+        opened_url: str | None = None
+        reused_existing_tab = False
+        matching_popups = [
+            (opener, tid)
+            for opener, tid in self._pending_popups
+            if opener == snapshot.tab_id
+        ]
+        self._pending_popups = [
+            (opener, tid)
+            for opener, tid in self._pending_popups
+            if opener != snapshot.tab_id
+        ]
+        for _, popup_tab_id in matching_popups:
+            popup_page = self._owned_pages.get(popup_tab_id)
+            if popup_page is None or popup_page.is_closed():
+                continue
+            await self._settle_page(popup_page)
+            popup_url = popup_page.url
+            norm_url = _normalize_tab_url(popup_url)
+            existing_tab_id = None
+            if norm_url:
+                for owned_id, owned_page in self._owned_pages.items():
+                    if (
+                        owned_id != popup_tab_id
+                        and not owned_page.is_closed()
+                        and _normalize_tab_url(owned_page.url) == norm_url
+                    ):
+                        existing_tab_id = owned_id
+                        break
+            if existing_tab_id is not None:
+                try:
+                    await popup_page.close()
+                    self._owned_pages.pop(popup_tab_id, None)
+                    self._revisions.pop(popup_tab_id, None)
+                    opened_tab_id = existing_tab_id
+                    opened_url = self._owned_pages[existing_tab_id].url
+                    reused_existing_tab = True
+                except Exception:
+                    logger.debug("Failed to close duplicate popup tab {}", popup_tab_id)
+                    opened_tab_id = popup_tab_id
+                    opened_url = popup_url
+                    reused_existing_tab = False
+            else:
+                opened_tab_id = popup_tab_id
+                opened_url = popup_url
+                reused_existing_tab = False
         self._revisions[snapshot.tab_id] += 1
         return BrowserActionResult(
             success=True,
-            outcome="action executed",
+            outcome="action executed (reused existing tab)"
+            if reused_existing_tab
+            else "action executed",
             before_url=before_url,
-            after_url=page.url,
+            after_url=opened_url or page.url,
             target_bbox_x=element.bbox_x if element else None,
             target_bbox_y=element.bbox_y if element else None,
             target_bbox_width=element.bbox_width if element else None,
             target_bbox_height=element.bbox_height if element else None,
+            opened_tab_id=opened_tab_id,
         )
 
     async def cleanup(self) -> None:
-        """Close temporary Lexoid pages while preserving explicitly retained tabs."""
+        """Close temporary pages while preserving explicitly retained tabs."""
         for tab_id, page in list(self._owned_pages.items()):
             if tab_id not in self._retained_tabs and not page.is_closed():
                 await page.close()

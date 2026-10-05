@@ -9,6 +9,7 @@ from lexoid.core.browse.schemas import (
     BrowseTask,
     BrowseTerminalState,
     NavigationOutcome,
+    OpenTab,
 )
 from lexoid.core.browse.tools import BrowserToolset
 
@@ -43,6 +44,16 @@ class _OutcomeSession:
 
     async def text_content(self, tab_id: str) -> str:
         return self.text
+
+    async def list_tabs(self) -> list[OpenTab]:
+        from lexoid.core.browse.schemas import OpenTab
+
+        return [OpenTab(tab_id="tab-1", target_id="t1", url="https://example.test/")]
+
+    async def tab(self, tab_id: str) -> OpenTab:
+        from lexoid.core.browse.schemas import OpenTab
+
+        return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
 
 
 def _toolset(page_text: str) -> BrowserToolset:
@@ -115,6 +126,8 @@ async def test_read_text_available_in_toolset_functions():
     tool_names = [func.__name__ for func in toolset.functions()]
     assert "read_text" in tool_names
     assert "observe" in tool_names
+    assert "list_tabs" in tool_names
+    assert "switch_tab" in tool_names
 
 
 @pytest.mark.asyncio
@@ -258,6 +271,12 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
                 tab_id=tab_id, target_id="t1", url="https://tmsearch.uspto.gov/"
             )
 
+        async def advance_to_next_result_page(self, tab_id):
+            return False
+
+        async def list_tabs(self):
+            return [await self.tab("tab-1")]
+
     monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
 
     async def _observation():
@@ -339,3 +358,117 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
     ]
     assert task_result.coverage.stop_reason == "sufficient"
     assert task_result.status is BrowseTerminalState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkeypatch):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import (
+        BrowseUsage,
+        EvidenceAssessment,
+        OpenTab,
+        PageArtifact,
+    )
+
+    captured_tab_ids: list[str] = []
+    advanced_tab_ids: list[str] = []
+    settled_tab_ids: list[str] = []
+    retained_tab_ids: list[str] = []
+
+    class _MultiTabSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-seed", target_id="t1", url=url)
+
+        async def tab(self, tab_id):
+            return OpenTab(
+                tab_id=tab_id, target_id=tab_id, url=f"https://example.com/{tab_id}"
+            )
+
+        async def list_tabs(self):
+            return [
+                OpenTab(
+                    tab_id="tab-seed", target_id="t1", url="https://example.com/search"
+                ),
+                OpenTab(
+                    tab_id="tab-listing",
+                    target_id="t2",
+                    url="https://example.com/listing/1",
+                ),
+            ]
+
+        async def settle(self, tab_id):
+            settled_tab_ids.append(tab_id)
+
+        async def retain_page(self, tab_id):
+            retained_tab_ids.append(tab_id)
+            return OpenTab(
+                tab_id=tab_id, target_id=tab_id, url=f"https://example.com/{tab_id}"
+            )
+
+        async def advance_to_next_result_page(self, tab_id):
+            advanced_tab_ids.append(tab_id)
+            return False
+
+    monkeypatch.setattr(
+        orchestrator, "GhostBrowserSession", lambda cfg: _MultiTabSession()
+    )
+    monkeypatch.setattr(
+        orchestrator.BrowserToolset, "observe", lambda self: _dummy_obs()
+    )
+
+    async def _dummy_obs():
+        return "{}"
+
+    async def navigate_and_switch(client, toolset, task, obs, profile=None, **kwargs):
+        toolset._tab_id = "tab-listing"
+        toolset.successful_action_count = 1
+        return NavigationOutcome.RESULTS_READY, BrowseUsage()
+
+    monkeypatch.setattr(orchestrator, "navigate_with_tools", navigate_and_switch)
+
+    async def fake_capture(session, tab_id, index, max_chars):
+        captured_tab_ids.append(tab_id)
+        return PageArtifact(
+            artifact_id=f"art-{index}",
+            url=f"https://example.com/{tab_id}",
+            tab_id=tab_id,
+            content_hash=f"hash-{index}",
+            text="evidence text",
+        )
+
+    monkeypatch.setattr(orchestrator, "capture_page", fake_capture)
+
+    async def fake_assess(client, task, artifact, prior_claims, prior_gaps, **kwargs):
+        return (
+            EvidenceAssessment(answerability="partial", next_action="paginate"),
+            [],
+            BrowseUsage(),
+        )
+
+    monkeypatch.setattr(orchestrator, "assess_page", fake_assess)
+
+    task = BrowseTask(
+        seed_urls=["https://example.com/search"],
+        subject="test",
+        allowed_domains=["example.com"],
+        retain_final_page=True,
+    )
+
+    result = await orchestrator.run_task(
+        task,
+        cdp_url="http://localhost:9222",
+        navigator_client=object(),
+        extractor_client=object(),
+    )
+
+    assert captured_tab_ids == ["tab-listing"]
+    assert advanced_tab_ids == ["tab-listing"]
+    assert settled_tab_ids == ["tab-listing"]
+    assert retained_tab_ids == ["tab-listing"]
+    assert result.task_results[0].status is BrowseTerminalState.LIMIT_REACHED

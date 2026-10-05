@@ -252,7 +252,7 @@ class BrowseLimits(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_steps: int = Field(default=20, ge=1, le=100)
+    max_steps: int = Field(default=20, ge=1, le=150)
     max_pages: int = Field(default=5, ge=1, le=100)
     max_snapshot_chars: int = Field(default=20_000, ge=1_000, le=200_000)
     max_artifact_chars: int = Field(default=100_000, ge=1_000, le=2_000_000)
@@ -403,6 +403,7 @@ class BrowserActionResult(BaseModel):
     target_bbox_y: float | None = None
     target_bbox_width: float | None = None
     target_bbox_height: float | None = None
+    opened_tab_id: str | None = None
 
 
 class BrowserActionTrace(BaseModel):

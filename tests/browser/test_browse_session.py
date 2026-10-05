@@ -81,11 +81,22 @@ class _FakeNextLocators:
 
 
 class _FakePaginationPage:
+    url = "https://example.com/search"
+
     def __init__(self, controls: list[_FakeNextControl]) -> None:
         self.controls = controls
 
     def is_closed(self) -> bool:
         return False
+
+    async def title(self) -> str:
+        return "Search"
+
+    async def close(self) -> None:
+        pass
+
+    def on(self, event: str, handler: object) -> None:
+        pass
 
     def locator(self, selector: str) -> _FakeNextLocators:
         assert selector
@@ -215,6 +226,12 @@ class _FakeSnapshotPage:
 
     async def wait_for_timeout(self, timeout: int) -> None:
         return None
+
+    async def close(self) -> None:
+        pass
+
+    def on(self, event: str, handler: object) -> None:
+        pass
 
 
 @pytest.mark.asyncio
@@ -402,3 +419,246 @@ async def test_scroll_with_ref_targets_container_handle():
     )
     assert result_window.success is True
     assert any("window.scrollBy" in call[0] for call in page.evaluated)
+
+
+class _FakePopupPage:
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.closed = False
+        self._handlers: dict[str, list] = {}
+
+    def is_closed(self) -> bool:
+        return self.closed
+
+    async def title(self) -> str:
+        return f"Title of {self.url}"
+
+    async def close(self) -> None:
+        self.closed = True
+
+    async def wait_for_load_state(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    async def evaluate(self, script: str, *args: object) -> object:
+        if "innerWidth" in script:
+            return {"width": 1280, "height": 720, "scrollX": 0, "scrollY": 0}
+        return True
+
+    def on(self, event: str, handler: object) -> None:
+        self._handlers.setdefault(event, []).append(handler)
+
+    def locator(self, selector: str) -> _FakeSnapshotLocator:
+        return _FakeSnapshotLocator([_FakeSnapshotHandle(), _FakeSnapshotHandle()])
+
+
+class _FakePageWithPopup(_FakeSnapshotPage):
+    def __init__(self) -> None:
+        super().__init__()
+        self._handlers: dict[str, list] = {}
+        self.closed = False
+        self.popup_to_trigger: _FakePopupPage | None = None
+
+    def on(self, event: str, handler: object) -> None:
+        self._handlers.setdefault(event, []).append(handler)
+
+    def trigger_popup(self, popup: _FakePopupPage) -> None:
+        for handler in self._handlers.get("popup", []):
+            handler(popup)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class _FakeClickTriggersPopupHandle(_FakeSnapshotHandle):
+    def __init__(self, page: _FakePageWithPopup) -> None:
+        super().__init__()
+        self.page = page
+
+    async def click(self, **kwargs: int) -> None:
+        await super().click(**kwargs)
+        if self.page.popup_to_trigger is not None:
+            self.page.trigger_popup(self.page.popup_to_trigger)
+
+
+@pytest.mark.asyncio
+async def test_click_adopts_popup_and_prevents_duplicate_tabs():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    search_page = _FakePageWithPopup()
+    search_page.handles = [
+        _FakeSnapshotHandle(),
+        _FakeClickTriggersPopupHandle(search_page),
+    ]
+    search_tab_id = session._register_page(search_page, "tab-search")
+
+    popup1 = _FakePopupPage("https://example.com/listing/35626269/")
+    search_page.popup_to_trigger = popup1
+
+    snapshot1 = await session.snapshot(search_tab_id)
+    result1 = await session.execute(
+        BrowserAction(kind="click", snapshot_id=snapshot1.snapshot_id, ref="e1")
+    )
+
+    assert result1.success is True
+    assert result1.opened_tab_id is not None
+    assert result1.opened_tab_id != search_tab_id
+    assert result1.after_url == "https://example.com/listing/35626269/"
+    assert "reused" not in result1.outcome
+    assert result1.opened_tab_id in session._owned_pages
+    assert popup1.closed is False
+    opened_listing_tab_id = result1.opened_tab_id
+
+    # Second click opens the same listing
+    popup2 = _FakePopupPage("https://example.com/listing/35626269/")
+    search_page.popup_to_trigger = popup2
+
+    snapshot2 = await session.snapshot(search_tab_id)
+    result2 = await session.execute(
+        BrowserAction(kind="click", snapshot_id=snapshot2.snapshot_id, ref="e1")
+    )
+
+    assert result2.success is True
+    assert result2.opened_tab_id == opened_listing_tab_id
+    assert result2.after_url == "https://example.com/listing/35626269/"
+    assert "reused existing tab" in result2.outcome
+    assert popup2.closed is True
+    assert len(session._owned_pages) == 2
+
+    # Cleanup closes both initial page and adopted popups
+    await session.cleanup()
+    assert search_page.closed is True
+    assert popup1.closed is True
+
+
+@pytest.mark.asyncio
+async def test_fragment_routed_urls_are_not_merged_as_duplicates():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    search_page = _FakePageWithPopup()
+    search_page.handles = [
+        _FakeSnapshotHandle(),
+        _FakeClickTriggersPopupHandle(search_page),
+    ]
+    search_tab_id = session._register_page(search_page, "tab-search")
+
+    popup1 = _FakePopupPage("https://example.com/app/#/listing/1")
+    search_page.popup_to_trigger = popup1
+
+    snapshot1 = await session.snapshot(search_tab_id)
+    result1 = await session.execute(
+        BrowserAction(kind="click", snapshot_id=snapshot1.snapshot_id, ref="e1")
+    )
+    assert result1.success is True
+    tab1_id = result1.opened_tab_id
+
+    popup2 = _FakePopupPage("https://example.com/app/#/listing/2")
+    search_page.popup_to_trigger = popup2
+
+    snapshot2 = await session.snapshot(search_tab_id)
+    result2 = await session.execute(
+        BrowserAction(kind="click", snapshot_id=snapshot2.snapshot_id, ref="e1")
+    )
+    assert result2.success is True
+    tab2_id = result2.opened_tab_id
+    assert tab2_id != tab1_id
+    assert result2.after_url == "https://example.com/app/#/listing/2"
+    assert "reused" not in result2.outcome
+    assert len(session._owned_pages) == 3
+
+
+@pytest.mark.asyncio
+async def test_popup_opened_outside_action_is_owned_and_cleaned_up():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    main_page = _FakePageWithPopup()
+    session._register_page(main_page, "tab-main")
+
+    popup = _FakePopupPage("https://example.com/external")
+    main_page.trigger_popup(popup)
+
+    # Popup was immediately owned upon trigger
+    assert len(session._owned_pages) == 2
+    assert popup.closed is False
+
+    await session.cleanup()
+    assert main_page.closed is True
+    assert popup.closed is True
+
+
+@pytest.mark.asyncio
+async def test_popup_from_other_tab_not_consumed_by_unrelated_tab_action():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page1 = _FakePageWithPopup()
+    page1.handles = [_FakeSnapshotHandle(), _FakeSnapshotHandle()]
+    tab1_id = session._register_page(page1, "tab-1")
+
+    page2 = _FakePageWithPopup()
+    page2.handles = [_FakeSnapshotHandle(), _FakeClickTriggersPopupHandle(page2)]
+    tab2_id = session._register_page(page2, "tab-2")
+
+    # page1 triggers a popup outside of execute
+    popup1 = _FakePopupPage("https://example.com/from-page1")
+    page1.trigger_popup(popup1)
+
+    # Now execute an action on tab2 that does not trigger a popup
+    page2.popup_to_trigger = None
+    snapshot2 = await session.snapshot(tab2_id)
+    result2 = await session.execute(
+        BrowserAction(kind="click", snapshot_id=snapshot2.snapshot_id, ref="e1")
+    )
+    assert result2.success is True
+    # result2 should NOT have consumed tab1's popup
+    assert result2.opened_tab_id is None
+    assert len(session._pending_popups) == 1
+
+
+@pytest.mark.asyncio
+async def test_toolset_active_tab_tracking_and_switching():
+    import json
+    from lexoid.core.browse.schemas import BrowseTask
+    from lexoid.core.browse.tools import BrowserToolset
+
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    search_page = _FakePageWithPopup()
+    search_page.handles = [
+        _FakeSnapshotHandle(),
+        _FakeClickTriggersPopupHandle(search_page),
+    ]
+    search_tab_id = session._register_page(search_page, "tab-search")
+
+    popup = _FakePopupPage("https://example.com/listing/1")
+    search_page.popup_to_trigger = popup
+
+    traces = []
+
+    async def emit_trace(trace):
+        traces.append(trace)
+
+    task = BrowseTask(
+        seed_urls=["https://example.com/search"],
+        subject="test",
+        allowed_domains=["example.com"],
+    )
+    toolset = BrowserToolset(session, task, search_tab_id, emit_trace)
+    assert toolset.tab_id == search_tab_id
+
+    # Clicking the link switches toolset.tab_id to the popup tab
+    await toolset.click("e1")
+    assert toolset.tab_id != search_tab_id
+    listing_tab_id = toolset.tab_id
+
+    # list_tabs shows both tabs with active indicator
+    tabs_raw = await toolset.list_tabs()
+    tabs = json.loads(tabs_raw)
+    assert len(tabs) == 2
+    listing_entry = next(t for t in tabs if t["tab_id"] == listing_tab_id)
+    assert listing_entry["active"] is True
+    search_entry = next(t for t in tabs if t["tab_id"] == search_tab_id)
+    assert search_entry["active"] is False
+
+    # switch_tab back to search tab
+    switch_res = json.loads(await toolset.switch_tab(search_tab_id))
+    assert switch_res["success"] is True
+    assert toolset.tab_id == search_tab_id
+
+    # switch_tab with invalid id fails and preserves active tab
+    invalid_res = json.loads(await toolset.switch_tab("tab-nonexistent"))
+    assert invalid_res["success"] is False
+    assert toolset.tab_id == search_tab_id

@@ -83,6 +83,9 @@ of collecting every record yourself.
 Use read_text to inspect visible text, messages, results tables, or error
 banners on the page when interactive controls alone do not show whether results
 loaded or what records appeared.
+Clicking a link may open a new tab; observation automatically switches to it.
+Use list_tabs and switch_tab to inspect or return to open tabs. Avoid opening
+pages that are already open in another tab.
 Do not return an action as text: call a tool for each browser interaction.
 Before finishing you must call report_outcome exactly once with results_ready,
 no_results, blocked, or timeout, quoting visible page text as evidence. Report

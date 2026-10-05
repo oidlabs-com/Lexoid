@@ -59,6 +59,11 @@ class BrowserToolset:
         self.step_limit_reached = False
         self.last_error_code: BrowseErrorCode | None = None
 
+    @property
+    def tab_id(self) -> str:
+        """Return the currently active tab ID."""
+        return self._tab_id
+
     async def observe(self) -> str:
         """Return the current accessible elements available to navigation tools."""
         self._snapshot = await self._session.snapshot(self._tab_id)
@@ -142,6 +147,50 @@ class BrowserToolset:
         """Navigate to an allowlisted URL only."""
         return await self._run(BrowserAction(kind="navigate", url=url))
 
+    async def list_tabs(self) -> str:
+        """List active Lexoid-owned tabs to inspect open pages."""
+        tabs = await self._session.list_tabs()
+        return json.dumps(
+            [
+                {
+                    "tab_id": tab.tab_id,
+                    "url": tab.url,
+                    "title": tab.title,
+                    "active": tab.tab_id == self._tab_id,
+                }
+                for tab in tabs
+            ]
+        )
+
+    async def switch_tab(self, tab_id: str) -> str:
+        """Switch active interaction to an open Lexoid-owned tab."""
+        tabs = await self._session.list_tabs()
+        matched = next((t for t in tabs if t.tab_id == tab_id), None)
+        if matched is None:
+            return json.dumps(
+                {
+                    "success": False,
+                    "outcome": f"tab {tab_id} not found among active owned tabs",
+                }
+            )
+        self._tab_id = tab_id
+        await self._emit(
+            BrowserActionTrace(
+                event="observation",
+                task_id=self._task.task_id,
+                tab_id=self._tab_id,
+                metadata={"action": "switch_tab", "switched_to": tab_id},
+            )
+        )
+        obs = json.loads(await self.observe())
+        return json.dumps(
+            {
+                "success": True,
+                "outcome": f"switched to tab {tab_id} ({matched.url})",
+                "observation": obs,
+            }
+        )
+
     async def report_outcome(self, outcome: str, evidence: str) -> str:
         """Report the final navigation state, quoting visible page text as evidence."""
         try:
@@ -195,6 +244,8 @@ class BrowserToolset:
             self.back,
             self.refresh,
             self.navigate,
+            self.list_tabs,
+            self.switch_tab,
             self.report_outcome,
         ]
 
@@ -237,5 +288,7 @@ class BrowserToolset:
         )
         payload = {"action": action.model_dump(), "result": result.model_dump()}
         if result.success:
+            if result.opened_tab_id:
+                self._tab_id = result.opened_tab_id
             payload["observation"] = json.loads(await self.observe())
         return json.dumps(payload)

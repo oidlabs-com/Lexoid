@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from collections.abc import Callable
+from typing import Any
 
 from lexoid.core.browse.agents import (
     assess_page,
@@ -195,7 +196,7 @@ async def run_task(
                             "Navigator did not report a verified outcome; collected "
                             "page state may not reflect the requested search."
                         )
-                current_tab = await session.tab(tab.tab_id)
+                current_tab = await session.tab(toolset.tab_id)
                 page_reached = current_tab.url != url or (
                     toolset.successful_action_count > 0
                 )
@@ -210,7 +211,7 @@ async def run_task(
                 ):
                     stop_reason = "blocked"
                 else:
-                    await session.settle(tab.tab_id)
+                    await session.settle(toolset.tab_id)
                     if navigation_outcome in {
                         NavigationOutcome.BLOCKED,
                         NavigationOutcome.TIMEOUT,
@@ -236,7 +237,7 @@ async def run_task(
                     for index in range(max_iterations):
                         artifact = await capture_page(
                             session,
-                            tab.tab_id,
+                            toolset.tab_id,
                             len(artifacts) + 1,
                             task.limits.max_artifact_chars,
                         )
@@ -329,14 +330,16 @@ async def run_task(
                                     "investigation objective; continuing with "
                                     "evidence captured so far."
                                 )
-                            await session.settle(tab.tab_id)
+                            await session.settle(toolset.tab_id)
                             continue
-                        if not await session.advance_to_next_result_page(tab.tab_id):
+                        if not await session.advance_to_next_result_page(
+                            toolset.tab_id
+                        ):
                             stop_reason = "no_next_action"
                             break
                 html = artifacts[0].text if artifacts else None
                 retained_tabs = (
-                    [await session.retain_page(tab.tab_id)]
+                    [await session.retain_page(toolset.tab_id)]
                     if task.retain_final_page and cdp_url
                     else []
                 )
