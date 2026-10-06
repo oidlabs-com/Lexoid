@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Awaitable, Callable
 
-from lexoid.core.browse.policy import PolicyDecision, authorize
+from lexoid.core.browse.policy import PolicyDecision, authorize, is_allowed_url
 from lexoid.core.browse.schemas import (
     BrowseErrorCode,
     BrowseTask,
@@ -148,7 +148,7 @@ class BrowserToolset:
         return await self._run(BrowserAction(kind="navigate", url=url))
 
     async def list_tabs(self) -> str:
-        """List active Lexoid-owned tabs to inspect open pages."""
+        """List active tabs to inspect open pages."""
         tabs = await self._session.list_tabs()
         return json.dumps(
             [
@@ -163,7 +163,7 @@ class BrowserToolset:
         )
 
     async def switch_tab(self, tab_id: str) -> str:
-        """Switch active interaction to an open Lexoid-owned tab."""
+        """Switch active interaction to an open tab."""
         tabs = await self._session.list_tabs()
         matched = next((t for t in tabs if t.tab_id == tab_id), None)
         if matched is None:
@@ -171,6 +171,13 @@ class BrowserToolset:
                 {
                     "success": False,
                     "outcome": f"tab {tab_id} not found among active owned tabs",
+                }
+            )
+        if not is_allowed_url(matched.url, self._task.allowed_domains):
+            return json.dumps(
+                {
+                    "success": False,
+                    "outcome": f"tab {tab_id} destination outside allowlist",
                 }
             )
         self._tab_id = tab_id
@@ -272,6 +279,32 @@ class BrowserToolset:
                 outcome=decision.reason,
                 error_code=decision.error_code,
             )
+        if result.success:
+            if result.opened_tab_id:
+                if not is_allowed_url(result.after_url, self._task.allowed_domains):
+                    await self._session.close_tab(result.opened_tab_id)
+                    result = BrowserActionResult(
+                        success=False,
+                        outcome="popup destination outside allowlist",
+                        error_code=BrowseErrorCode.POLICY_DENIED,
+                        before_url=result.before_url,
+                        after_url=result.before_url,
+                    )
+            else:
+                try:
+                    current_tab_info = await self._session.tab(self._tab_id)
+                    if not is_allowed_url(
+                        current_tab_info.url, self._task.allowed_domains
+                    ):
+                        result = BrowserActionResult(
+                            success=False,
+                            outcome="navigation destination outside allowlist",
+                            error_code=BrowseErrorCode.POLICY_DENIED,
+                            before_url=result.before_url,
+                            after_url=current_tab_info.url,
+                        )
+                except Exception:
+                    pass
         self.action_count += 1
         if result.success:
             self.successful_action_count += 1

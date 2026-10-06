@@ -9,8 +9,6 @@ from typing import Any
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from loguru import logger
-
 from lexoid.core.browse.schemas import (
     BrowserAction,
     BrowserActionResult,
@@ -19,10 +17,11 @@ from lexoid.core.browse.schemas import (
     OpenTab,
 )
 from lexoid.core.ghost import GhostConfig, _get_async_playwright
+from loguru import logger
 
 
 class TabGoneError(RuntimeError):
-    """Raised when an action targets a closed Lexoid-owned tab."""
+    """Raised when an action targets a closed  tab."""
 
 
 _DOM_QUIET_JS = """
@@ -298,7 +297,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         return tid
 
     async def open_page(self, url: str) -> OpenTab:
-        """Open and navigate a Lexoid-owned page without adopting user tabs."""
+        """Open and navigate a page without adopting user tabs."""
         page = await self._context.new_page()
         tab_id = self._register_page(page)
         await page.goto(
@@ -307,7 +306,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         return await self.tab(tab_id)
 
     async def list_tabs(self) -> list[OpenTab]:
-        """Return metadata for all active Lexoid-owned tabs."""
+        """Return metadata for all active  tabs."""
         tabs: list[OpenTab] = []
         for tab_id in list(self._owned_pages.keys()):
             try:
@@ -330,10 +329,21 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         )
 
     async def retain_page(self, tab_id: str) -> OpenTab:
-        """Preserve one Lexoid-owned page after session cleanup."""
+        """Preserve one  page after session cleanup."""
         tab = await self.tab(tab_id)
         self._retained_tabs.add(tab_id)
         return tab
+
+    async def close_tab(self, tab_id: str) -> None:
+        """Close an owned tab and release its registered state."""
+        page = self._owned_pages.pop(tab_id, None)
+        self._revisions.pop(tab_id, None)
+        self._retained_tabs.discard(tab_id)
+        if page is not None and not page.is_closed():
+            try:
+                await page.close()
+            except Exception:
+                pass
 
     async def content(self, tab_id: str) -> str:
         """Return the current HTML for an owned tab."""

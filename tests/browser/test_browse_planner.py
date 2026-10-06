@@ -251,3 +251,160 @@ async def test_run_task_emits_plan_trace_event_and_records_outcome(monkeypatch):
     assert task_res.plan_outcome.intent == "Search USPTO for Arash Samadani"
     assert task_res.plan_outcome.stop_reason == "sufficient"
     assert task_res.plan_outcome.pages_captured == 1
+
+
+def test_extract_query_sources_parentheses_and_punctuation():
+    from lexoid.core.browse.policy import extract_query_sources
+
+    query = (
+        "First, on Google (https://www.google.com/), search for Baltimore weather. "
+        "Then go to Wunderground (https://www.wunderground.com/) and Syracuse."
+    )
+    sources = extract_query_sources(query)
+    assert "https://www.google.com/" in sources
+    assert "https://www.wunderground.com/" in sources
+
+
+def test_extract_query_sources_literal_domains():
+    from lexoid.core.browse.policy import extract_query_sources
+
+    query = (
+        "Check weather.gov and forecast.weather.gov for alerts. "
+        "Do not email support@example.com, e.g. for questions."
+    )
+    sources = extract_query_sources(query)
+    assert "https://weather.gov/" in sources
+    assert "https://forecast.weather.gov/" in sources
+    assert not any("example.com" in s for s in sources)
+
+
+def test_validate_seed_url_security_checks():
+    from lexoid.core.browse.policy import validate_seed_url
+
+    with pytest.raises(ValueError, match="must use https"):
+        validate_seed_url("http://insecure.example.com/")
+
+    with pytest.raises(ValueError, match="embedded credentials"):
+        validate_seed_url("https://user:pass@example.com/")
+
+    with pytest.raises(ValueError, match="unsupported port"):
+        validate_seed_url("https://example.com:8080/")
+
+    with pytest.raises(ValueError, match="IP address or localhost"):
+        validate_seed_url("https://127.0.0.1/")
+
+    with pytest.raises(ValueError, match="IP address or localhost"):
+        validate_seed_url("https://localhost/")
+
+    with pytest.raises(ValueError, match="at least two labels"):
+        validate_seed_url("https://gov/")
+
+    with pytest.raises(ValueError, match="public suffix or shared hosting"):
+        validate_seed_url("https://co.uk/")
+
+    with pytest.raises(ValueError, match="public suffix or shared hosting"):
+        validate_seed_url("https://github.io/")
+
+
+def test_derive_allowed_domains_strips_www_and_subdomain_scope():
+    from lexoid.core.browse.policy import derive_allowed_domains, is_allowed_url
+
+    allowed = derive_allowed_domains(["https://www.wunderground.com/"])
+    assert allowed == ["wunderground.com"]
+    assert is_allowed_url("https://wunderground.com/page", allowed)
+    assert is_allowed_url("https://www.wunderground.com/page", allowed)
+    assert is_allowed_url("https://sub.wunderground.com/page", allowed)
+    assert not is_allowed_url("https://other.com/page", allowed)
+    assert not is_allowed_url("https://wunderground.com.evil.com/page", allowed)
+
+
+def test_planner_with_inferred_seeds():
+    weather_query = (
+        "First, on Google (https://www.google.com/), search for Baltimore weather. "
+        "Then go to Wunderground (https://www.wunderground.com/) and Syracuse. "
+        "After that, use the National Weather Service forecast page for Rittman."
+    )
+    payload = {
+        "seed_urls": ["https://www.google.com/", "https://www.wunderground.com/"],
+        "inferred_seeds": [
+            {
+                "url": "https://weather.gov/",
+                "source_text": "National Weather Service",
+                "rationale": "Official domain for NWS",
+            }
+        ],
+        "subject": "weather risk snapshot",
+        "allowed_domains": ["google.com", "wunderground.com", "weather.gov"],
+    }
+    task = validate_planned_task(weather_query, payload, BrowseLimits())
+    assert len(task.seed_urls) == 2
+    assert len(task.inferred_seeds) == 1
+    assert task.inferred_seeds[0].url == "https://weather.gov/"
+    assert task.inferred_seeds[0].source_text == "National Weather Service"
+    assert "google.com" in task.allowed_domains
+    assert "wunderground.com" in task.allowed_domains
+    assert "weather.gov" in task.allowed_domains
+
+
+def test_planner_rejects_inferred_seed_not_in_query():
+    weather_query = (
+        "First, on Google (https://www.google.com/), search for Baltimore weather."
+    )
+    payload = {
+        "seed_urls": ["https://www.google.com/"],
+        "inferred_seeds": [
+            {
+                "url": "https://accuweather.com/",
+                "source_text": "AccuWeather",
+                "rationale": "Commercial weather",
+            }
+        ],
+        "subject": "weather",
+        "allowed_domains": ["google.com", "accuweather.com"],
+    }
+    with pytest.raises(ValueError, match="without source text in query"):
+        validate_planned_task(weather_query, payload, BrowseLimits())
+
+
+def test_planner_rejects_inferred_seed_when_restricted():
+    restricted_query = "Only use https://www.google.com/ and search for weather."
+    payload = {
+        "seed_urls": ["https://www.google.com/"],
+        "inferred_seeds": [
+            {
+                "url": "https://weather.gov/",
+                "source_text": "weather",
+                "rationale": "NWS",
+            }
+        ],
+        "subject": "weather",
+        "allowed_domains": ["google.com", "weather.gov"],
+    }
+    with pytest.raises(
+        ValueError, match="planner inferred seeds despite user restriction"
+    ):
+        validate_planned_task(restricted_query, payload, BrowseLimits())
+
+
+def test_render_task_plan_shows_inferred_seeds():
+    from lexoid.core.browse.agents import render_task_plan
+
+    task = validate_planned_task(
+        "Check National Weather Service for rain",
+        {
+            "seed_urls": [],
+            "inferred_seeds": [
+                {
+                    "url": "https://weather.gov/",
+                    "source_text": "National Weather Service",
+                    "rationale": "NWS",
+                }
+            ],
+            "subject": "rain",
+            "allowed_domains": ["weather.gov"],
+        },
+        BrowseLimits(),
+    )
+    rendered = render_task_plan(task)
+    assert "Inferred Seeds:" in rendered
+    assert "inferred, not verified" in rendered

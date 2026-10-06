@@ -1,9 +1,11 @@
 """Isolated session ownership tests using fakes instead of a browser."""
 
+import json
 import pytest
 
-from lexoid.core.browse.schemas import BrowserAction
+from lexoid.core.browse.schemas import BrowserAction, BrowseTask
 from lexoid.core.browse.session import GhostBrowserSession
+from lexoid.core.browse.tools import BrowserToolset
 from lexoid.core.ghost import GhostConfig
 
 
@@ -661,4 +663,38 @@ async def test_toolset_active_tab_tracking_and_switching():
     # switch_tab with invalid id fails and preserves active tab
     invalid_res = json.loads(await toolset.switch_tab("tab-nonexistent"))
     assert invalid_res["success"] is False
+    assert toolset.tab_id == search_tab_id
+
+
+@pytest.mark.asyncio
+async def test_browser_toolset_blocks_off_domain_popup():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    search_page = _FakePageWithPopup()
+    search_page.handles = [
+        _FakeSnapshotHandle(),
+        _FakeClickTriggersPopupHandle(search_page),
+    ]
+    search_tab_id = session._register_page(search_page, "tab-search")
+
+    off_domain_popup = _FakePopupPage("https://evil.example/malicious")
+    search_page.popup_to_trigger = off_domain_popup
+
+    task = BrowseTask(
+        seed_urls=["https://example.com/"],
+        subject="test",
+        allowed_domains=["example.com"],
+    )
+    events = []
+
+    async def emit_trace(trace: object) -> None:
+        events.append(trace)
+
+    toolset = BrowserToolset(session, task, search_tab_id, emit_trace)
+
+    raw_res = await toolset.click("e1")
+    res = json.loads(raw_res)
+    assert res["result"]["success"] is False
+    assert res["result"]["error_code"] == "policy_denied"
+    assert "outside allowlist" in res["result"]["outcome"]
+    assert off_domain_popup.closed is True
     assert toolset.tab_id == search_tab_id

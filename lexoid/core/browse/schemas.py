@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BrowseTerminalState(str, Enum):
@@ -376,7 +376,7 @@ class EvidenceClaim(BaseModel):
 
 
 class OpenTab(BaseModel):
-    """A Lexoid-owned retained page."""
+    """A retained page."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -421,6 +421,16 @@ class BrowserActionTrace(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class InferredSeed(BaseModel):
+    """A destination seed inferred from user-named organizations or sites."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str = Field(min_length=1, max_length=8_192)
+    source_text: str = Field(min_length=1, max_length=500)
+    rationale: str = Field(default="", max_length=1_000)
+
+
 class BrowseTask(BaseModel):
     """Validated single-task input and execution state."""
 
@@ -429,7 +439,8 @@ class BrowseTask(BaseModel):
     task_id: str = Field(default="task-1", min_length=1, max_length=128)
     schema_version: int = Field(default=1, ge=1)
     task_type: Literal["search", "navigate", "capture"] = "search"
-    seed_urls: list[str] = Field(min_length=1, max_length=20)
+    seed_urls: list[str] = Field(default_factory=list, max_length=20)
+    inferred_seeds: list[InferredSeed] = Field(default_factory=list, max_length=10)
     subject: str = Field(min_length=1, max_length=4_000)
     requested_facts: list[str] = Field(default_factory=list, max_length=100)
     completion_criteria: list[str] = Field(default_factory=list, max_length=20)
@@ -443,6 +454,14 @@ class BrowseTask(BaseModel):
     status: BrowseTerminalState | None = None
     warnings: list[str] = Field(default_factory=list, max_length=100)
     unanswered_questions: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def _validate_has_seeds(self) -> Self:
+        if not self.seed_urls and not self.inferred_seeds:
+            raise ValueError(
+                "browse task requires at least one explicit or inferred seed URL"
+            )
+        return self
 
 
 class BrowseRequest(BaseModel):

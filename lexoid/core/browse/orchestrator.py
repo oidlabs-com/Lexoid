@@ -84,6 +84,7 @@ async def run_task(
                 "navigation_guidance": task.strategy.navigation_guidance,
                 "assumptions": task.strategy.assumptions,
                 "seed_urls": task.seed_urls,
+                "inferred_seeds": [s.model_dump() for s in task.inferred_seeds],
                 "allowed_domains": task.allowed_domains,
                 "requested_facts": task.requested_facts,
                 "completion_criteria": task.completion_criteria,
@@ -103,7 +104,12 @@ async def run_task(
     gaps: list[str] = []
     attempted_objectives: list[str] = []
     assessment: EvidenceAssessment | None = None
-    url = task.seed_urls[0]
+    url = task.seed_urls[0] if task.seed_urls else task.inferred_seeds[0].url
+    if not task.seed_urls and task.inferred_seeds:
+        warnings.append(
+            f"Starting seed URL was inferred from {task.inferred_seeds[0].source_text!r} "
+            "(inferred, not verified)."
+        )
     profile = find_profile(url, task.task_type)
     logger.debug(
         "Browse task {} started for {} (profile={})",

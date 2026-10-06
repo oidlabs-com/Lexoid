@@ -42,12 +42,12 @@ def test_browse_model_config_resolution():
 
     # Dict with default baseline + role override
     cfg_dict = BrowseModelConfig.from_value(
-        {"default": "gpt-4o", "navigator": "gpt-5.6-sol"}
+        {"default": "gpt-6-luna", "navigator": "gpt-5.6-sol"}
     )
-    assert cfg_dict.for_role("planner") == "gpt-4o"
+    assert cfg_dict.for_role("planner") == "gpt-6-luna"
     assert cfg_dict.for_role("navigator") == "gpt-5.6-sol"
-    assert cfg_dict.for_role("extractor") == "gpt-4o"
-    assert cfg_dict.for_role("synthesizer") == "gpt-4o"
+    assert cfg_dict.for_role("extractor") == "gpt-6-luna"
+    assert cfg_dict.for_role("synthesizer") == "gpt-6-luna"
 
     # Selective role with no default
     cfg_selective = BrowseModelConfig.from_value({"navigator": "gpt-5.6-sol"})
@@ -69,15 +69,15 @@ def test_browse_model_config_resolution():
 def test_browse_model_config_reasoning_effort():
     # Case 1: default with explicit dict containing model and reasoning
     cfg1 = BrowseModelConfig.from_value(
-        {"default": {"model": "gpt-5.6-mini", "reasoning": {"effort": "low"}}}
+        {"default": {"model": "gpt-6-luna", "reasoning": {"effort": "low"}}}
     )
-    assert cfg1.for_role("planner") == "gpt-5.6-mini"
+    assert cfg1.for_role("planner") == "gpt-6-luna"
     assert cfg1.reasoning_effort_for_role("planner") == "low"
-    assert cfg1.for_role("navigator") == "gpt-5.6-mini"
+    assert cfg1.for_role("navigator") == "gpt-6-luna"
     assert cfg1.reasoning_effort_for_role("navigator") == "low"
-    assert cfg1.for_role("extractor") == "gpt-5.6-mini"
+    assert cfg1.for_role("extractor") == "gpt-6-luna"
     assert cfg1.reasoning_effort_for_role("extractor") == "low"
-    assert cfg1.for_role("synthesizer") == "gpt-5.6-mini"
+    assert cfg1.for_role("synthesizer") == "gpt-6-luna"
     assert cfg1.reasoning_effort_for_role("synthesizer") == "low"
 
     # Case 2: default as string with reasoning model ("medium" by default)
@@ -95,15 +95,15 @@ def test_browse_model_config_reasoning_effort():
     # Case 3: default is non-reasoning, navigator role override has reasoning dict
     cfg3 = BrowseModelConfig.from_value(
         {
-            "default": "gpt-4o",
+            "default": "gpt-6-luna",
             "navigator": {"model": "gpt-5.6-sol", "reasoning": {"effort": "low"}},
         }
     )
-    assert cfg3.for_role("planner") == "gpt-4o"
+    assert cfg3.for_role("planner") == "gpt-6-luna"
     assert cfg3.reasoning_effort_for_role("planner") is None
     assert cfg3.for_role("navigator") == "gpt-5.6-sol"
     assert cfg3.reasoning_effort_for_role("navigator") == "low"
-    assert cfg3.for_role("extractor") == "gpt-4o"
+    assert cfg3.for_role("extractor") == "gpt-6-luna"
     assert cfg3.reasoning_effort_for_role("extractor") is None
 
     # Case 4: explicit reasoning dictionary and options
@@ -138,13 +138,13 @@ def test_browse_model_config_validation():
     # Invalid reasoning format (must be dict) is rejected
     with pytest.raises(ValidationError):
         BrowseModelConfig.from_value(
-            {"default": {"model": "gpt-5.6-mini", "reasoning": "invalid"}}
+            {"default": {"model": "gpt-6-luna", "reasoning": "invalid"}}
         )
 
     # Extra keys inside role config are rejected
     with pytest.raises(ValidationError):
         BrowseModelConfig.from_value(
-            {"default": {"model": "gpt-5.6-mini", "unknown_key": "val"}}
+            {"default": {"model": "gpt-6-luna", "unknown_key": "val"}}
         )
 
     # Invalid type is rejected
@@ -356,27 +356,27 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
 @pytest.mark.parametrize(
     "query, expected_text",
     [
-        # (
-        #     """Go to https://tmsearch.uspto.gov/ and retrieve all cases related to Arash Samadani (as attorney)""",
-        #     "158",
-        # ),
-        # (
-        #     """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
-        #     "44",
-        # ),
+        (
+            """Go to https://tmsearch.uspto.gov/ and retrieve all cases related to Arash Samadani (as attorney)""",
+            "158",
+        ),
+        (
+            """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
+            "44",
+        ),
         (
             """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
             information for alien number: 123-456-789, country of origin - Mexico""",
             "No case found",
         ),
-        # (
-        #     """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
-        #     Additional criteria:
-        #     - 'Minimum Size'>='5,000 SF'
-        #     Give me street addresses (sorted by price low to high).
-        #     """,
-        #     "2626–2646 Dupont Dr, Irvine, CA 92612",
-        # ),
+        (
+            """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
+            Additional criteria:
+            - 'Minimum Size'>='5,000 SF'
+            Give me street addresses (sorted by price low to high).
+            """,
+            "2626–2646 Dupont Dr, Irvine, CA 92612",
+        ),
     ],
 )
 async def test_end_to_end(query, expected_text):

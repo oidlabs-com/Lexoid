@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Any, TypeVar
 from urllib.parse import urlparse
@@ -21,6 +22,12 @@ except ImportError:  # pragma: no cover - exercised by a clean core install
     Agent = None
 
 from lexoid.core.browse.model_provider import ChatClient, browse_usage_from_response
+from lexoid.core.browse.policy import (
+    derive_allowed_domains,
+    extract_query_sources,
+    normalize_domain,
+    validate_seed_url,
+)
 from lexoid.core.browse.profiles import SiteProfile
 from lexoid.core.browse.schemas import (
     BrowseErrorCode,
@@ -32,21 +39,24 @@ from lexoid.core.browse.schemas import (
     CoverageReport,
     EvidenceAssessment,
     EvidenceClaim,
+    InferredSeed,
     NavigationOutcome,
     PageArtifact,
     PlanStrategy,
 )
-from lexoid.core.browse.tools import BrowserToolset
+from lexoid.core.browse.tools import BrowserToolset, _contains_normalized
 
 _PLANNER_PROMPT = """Return one JSON object matching this shape exactly:
-{"seed_urls":["https://..."],"subject":"...","requested_facts":["..."],
+{"seed_urls":["https://..."],"inferred_seeds":[{"url":"https://...","source_text":"...","rationale":"..."}],"subject":"...","requested_facts":["..."],
 "completion_criteria":["..."],"allowed_domains":["host"],
 "constraints":{"filters":[{"field":"...","operator":"equals|contains|unspecified",
 "value":"..."}],"coverage":"all_matches|first_page|count"},
 "strategy":{"intent":"...","approach":["..."],"navigation_guidance":["..."],"assumptions":["..."]}}.
 `subject` is the target entity, concept, or topic from the request.
+For `seed_urls`: Only use URLs or literal domains explicitly supplied in the user request.
+For `inferred_seeds`: When the user explicitly names a specific organization or service (e.g. "National Weather Service" or "NWS") without providing a URL, propose a verified https root URL for that organization. Set `source_text` to the exact user naming wording from the request. Never invent organizations or sites the user did not mention. If the user explicitly restricts sources (e.g. "only use X"), leave `inferred_seeds` empty.
 Only use URLs, domains, and facts explicitly supplied by the user for `seed_urls`,
-`allowed_domains`, `requested_facts`, and `constraints`. Do not browse, invent URLs/domains,
+`allowed_domains`, `requested_facts`, and `constraints`. Do not browse, invent unmentioned URLs/domains,
 or infer unstated constraints.
 `completion_criteria`: Concrete, observable on-page conditions indicating success
 (e.g. matching records visible with verified relationship and requested coverage reached).
@@ -147,17 +157,23 @@ Requirements for `answer`:
 Return JSON only."""
 
 
+_RESTRICTED_SOURCE_RE = re.compile(
+    r"\b(only\s+(?:use|on|from)|restricted\s+to|solely\s+on)\b", re.IGNORECASE
+)
+
+
 def task_from_query(query: str, limits: BrowseLimits) -> BrowseTask:
-    """Create a conservative task only when the query supplies an HTTPS URL."""
-    urls = [word.rstrip(".,)") for word in query.split() if word.startswith("https://")]
-    if not urls:
-        raise ValueError("clarification_needed: browse requires an explicit https URL")
-    seed_url = urls[0]
-    host = urlparse(seed_url).hostname
-    if not host:
+    """Create a conservative task only when the query supplies an HTTPS URL or domain."""
+    seeds = extract_query_sources(query)
+    if not seeds:
+        raise ValueError(
+            "clarification_needed: browse requires an explicit https URL or domain"
+        )
+    allowed_domains = derive_allowed_domains(seeds)
+    if not allowed_domains:
         raise ValueError("clarification_needed: supplied URL has no hostname")
     return BrowseTask(
-        seed_urls=[seed_url],
+        seed_urls=seeds,
         subject=query,
         requested_facts=[],
         completion_criteria=["The requested results are visibly displayed."],
@@ -173,7 +189,7 @@ def task_from_query(query: str, limits: BrowseLimits) -> BrowseTask:
                 "Verify result relevance before reporting results_ready",
             ],
         ),
-        allowed_domains=[host],
+        allowed_domains=allowed_domains,
         limits=limits,
     )
 
@@ -204,25 +220,62 @@ def validate_planned_task(
         if raw_strategy
         else PlanStrategy(intent=payload.get("subject", query))
     )
+
+    raw_seed_urls = payload.get("seed_urls", [])
+    validated_seed_urls: list[str] = [validate_seed_url(u) for u in raw_seed_urls]
+
+    raw_inferred = payload.get("inferred_seeds", [])
+    validated_inferred: list[InferredSeed] = []
+    if _RESTRICTED_SOURCE_RE.search(query) and raw_inferred:
+        raise ValueError("planner inferred seeds despite user restriction")
+
+    for item in raw_inferred:
+        url = validate_seed_url(item["url"])
+        source_text = item.get("source_text", "").strip()
+        if not source_text or not _contains_normalized(query, source_text):
+            raise ValueError(
+                f"planner inferred seed without source text in query: {source_text}"
+            )
+        validated_inferred.append(
+            InferredSeed(
+                url=url,
+                source_text=source_text,
+                rationale=item.get("rationale", ""),
+            )
+        )
+
+    # Validate explicit seeds against user-supplied sources
+    extracted_sources = extract_query_sources(query)
+    extracted_normalized = {validate_seed_url(s) for s in extracted_sources}
+    if not set(validated_seed_urls).issubset(extracted_normalized):
+        raise ValueError("planner invented a seed URL")
+
+    # Compute allowed domains from both explicit and inferred seeds
+    all_seeds = list(validated_seed_urls) + [s.url for s in validated_inferred]
+    computed_allowed_domains = derive_allowed_domains(all_seeds)
+
+    if payload.get("allowed_domains"):
+        for domain in payload["allowed_domains"]:
+            norm_d = normalize_domain(domain)
+            if not any(
+                norm_d == cd or norm_d.endswith(f".{cd}")
+                for cd in computed_allowed_domains
+            ):
+                raise ValueError("planner invented an allowed domain")
+
     task = BrowseTask(
-        seed_urls=payload["seed_urls"],
+        seed_urls=validated_seed_urls,
+        inferred_seeds=validated_inferred,
         subject=payload["subject"],
         requested_facts=payload.get("requested_facts", []),
         completion_criteria=payload.get("completion_criteria", []),
         constraints=payload.get("constraints", {}),
         strategy=strategy,
         collection=payload.get("collection", {}),
-        allowed_domains=payload["allowed_domains"],
+        allowed_domains=computed_allowed_domains,
         limits=limits,
     )
-    query_urls = {
-        word.rstrip(".,)") for word in query.split() if word.startswith("https://")
-    }
-    if not set(task.seed_urls).issubset(query_urls):
-        raise ValueError("planner invented a seed URL")
-    query_hosts = {urlparse(url).hostname for url in query_urls}
-    if any(domain not in query_hosts for domain in task.allowed_domains):
-        raise ValueError("planner invented an allowed domain")
+
     normalized_query = " ".join(query.split()).lower()
     for item in task.constraints.filters:
         if " ".join(item.value.split()).lower() not in normalized_query:
@@ -260,9 +313,15 @@ def render_task_plan(task: BrowseTask) -> str:
     lines.append(
         f"Constraints & Coverage:\n  Filters: {constraints_part}\n  Coverage: {task.constraints.coverage}"
     )
-    lines.append(
-        f"Target:\n  Seed URLs: {task.seed_urls}\n  Allowed Domains: {task.allowed_domains}"
-    )
+    target_lines = [f"  Seed URLs: {task.seed_urls}"]
+    if task.inferred_seeds:
+        inferred_strs = [
+            f"{s.url} (source: {s.source_text!r}, inferred, not verified)"
+            for s in task.inferred_seeds
+        ]
+        target_lines.append(f"  Inferred Seeds: {inferred_strs}")
+    target_lines.append(f"  Allowed Domains: {task.allowed_domains}")
+    lines.append("Target:\n" + "\n".join(target_lines))
     return "\n".join(lines)
 
 
@@ -597,6 +656,7 @@ async def _run_json_agent(
     prompt: str,
     *,
     role_options: dict[str, Any] | None = None,
+    verbose: bool = False,
 ) -> tuple[str, BrowseUsage]:
     """Run a named Agent Framework role and normalize the adapter response."""
     if Agent is None:
@@ -613,7 +673,8 @@ async def _run_json_agent(
     response = await agent.run(prompt)
     output = response.text or ""
     usage = browse_usage_from_response(response)
-    logger.debug(f"Browse {name} agent output: {output}")
+    if verbose:
+        logger.debug(f"Browse {name} agent output: {output}")
     logger.debug(f"Browse {name} agent usage: {usage.model_dump()}")
     return output, usage
 
