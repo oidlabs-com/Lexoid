@@ -56,6 +56,13 @@ Optionally, to use `Playwright` for retrieving web content (instead of the `requ
 playwright install --with-deps --only-shell chromium
 ```
 
+For the strongest anti-bot stealth in [Ghost Browsing](#ghost-browsing-url-parsing), install the optional `ghost` extra (Lexoid falls back to built-in stealth patches when it isn't installed):
+
+```
+pip install "lexoid[ghost]"
+patchright install chromium
+```
+
 ### Building `.whl` from source
 
 > [!NOTE]
@@ -116,6 +123,88 @@ print(parsed_md)
 - pages_per_split (int, optional): Number of pages per split for chunking. Defaults to 4.
 - max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
 - \*\*kwargs: Additional arguments for the parser.
+
+## Ghost Browsing (URL parsing)
+
+By default, Lexoid fetches web pages with a headless Playwright browser. For pages that are bot-protected (Cloudflare/DataDome), render content with client-side JavaScript, or hide the target content behind interactions, enable **ghost browsing** — an opt-in, stealth/agentic mode that drives a stealthy (and optionally *real*) browser. It adds three capabilities:
+
+1. **Bot-detection bypass** — stealth patches so headless automation isn't fingerprinted.
+2. **Reliable JS rendering** — `networkidle` waits, auto-scroll for lazy-loaded content, and optional `wait_for_selector`.
+3. **Agentic navigation** — an optional vision-LLM loop that clicks/scrolls/navigates toward a goal before extraction, using *set-of-marks* prompting (numbered element boxes drawn on the screenshot, as in AutoGen's MultimodalWebSurfer).
+
+Ghost browsing is fully opt-in; without it the default behavior is unchanged.
+
+```python
+from lexoid.api import parse
+
+# 1. Enable with defaults (stealth + reliable JS rendering)
+result = parse("https://example.com/spa-page", ghost=True)
+
+# 2. Tune behavior with a dict
+result = parse(
+    "https://example.com/spa-page",
+    ghost={
+        "wait_until": "networkidle",  # domcontentloaded | load | networkidle
+        "auto_scroll": True,           # trigger lazy-loaded content
+        "headless": False,             # strongest stealth runs headful
+        "timeout_ms": 30000,
+    },
+)
+
+# 3. Agentic navigation: reach content behind a click before parsing.
+#    The LLM's token usage is reported in result["token_usage"].
+result = parse(
+    "https://example.com/pricing",
+    ghost={
+        "navigate": True,
+        "nav_instruction": "open the Enterprise pricing tab",
+        "nav_model": "gpt-4o",        # defaults to DEFAULT_LLM
+        "nav_max_steps": 8,
+    },
+)
+print(result["token_usage"])  # {"input": ..., "output": ..., "total": ...}
+```
+
+### Attach to a real browser (truest "ghost")
+
+The most powerful mode attaches over the Chrome DevTools Protocol (CDP) to an **already-running** browser (e.g. Chrome) started with a remote-debugging port. This reuses the real browser's profile, cookies, fingerprint, and **logged-in sessions** — and Lexoid only opens/closes its own tab, never closing your browser.
+
+```bash
+# Start a browser with remote debugging
+google-chrome --remote-debugging-port=9222 --user-data-dir=/path/to/profile
+
+# Point Lexoid at it
+export LEXOID_CDP_URL=http://localhost:9222
+```
+
+```python
+result = parse("https://example.com/members-only", ghost=True)  # picks up LEXOID_CDP_URL
+# or pass it inline:
+result = parse("https://example.com/members-only", ghost={"cdp_url": "http://localhost:9222"})
+```
+
+If the CDP endpoint is unreachable, Lexoid falls back gracefully to the legacy fetch.
+
+### Ghost options & environment variables
+
+| Option (dict key) | Env var | Default | Description |
+|---|---|---|---|
+| `cdp_url` | `LEXOID_CDP_URL` | – | Attach to a running browser over CDP. |
+| `user_data_dir` | `LEXOID_GHOST_PROFILE_DIR` | – | Persistent profile dir (cookies/fingerprint persist across runs). |
+| — | `LEXOID_GHOST=1` | – | Enable ghost browsing without a per-call `ghost` kwarg. |
+| `headless` | – | `True` | Set `False` for the strongest anti-bot stealth. |
+| `stealth` | – | `True` | Apply anti-detection patches (skipped in CDP mode). |
+| `wait_until` | – | `networkidle` | Page-load wait strategy. |
+| `auto_scroll` / `scroll_max_rounds` | – | `True` / `15` | Scroll to trigger lazy-loaded content. |
+| `wait_for_selector` | – | – | Wait for a CSS selector before extracting. |
+| `timeout_ms` | – | `30000` | Per-step navigation timeout. |
+| `navigate` / `nav_instruction` | – | `False` / – | Enable the agentic-navigation loop and its goal. |
+| `nav_model` / `nav_max_steps` | – | `DEFAULT_LLM` / `8` | Model and step cap for agentic navigation. |
+| `set_of_marks` | – | `True` | Draw numbered element boxes on the screenshot for the agentic loop. |
+
+> Acquisition mode is auto-selected: **CDP attach** when `cdp_url` is set, else a **persistent** profile when `user_data_dir` is set, else a **fresh** stealth browser.
+
+For the strongest anti-bot stealth, install the optional [`patchright`](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright) extra (see Installation); Lexoid falls back to built-in stealth patches if it isn't installed. The agentic loop only runs on the root URL during recursive crawls, and never types into credential fields or submits login forms.
 
 ## Command Line Usage
 

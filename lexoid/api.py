@@ -8,7 +8,7 @@ from enum import Enum
 from functools import wraps
 from glob import glob
 from time import time
-from typing import Dict, List, Optional, Type, Union
+from typing import Any, Dict, List, Optional, Type, Union
 
 from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
@@ -44,6 +44,17 @@ from lexoid.core.utils import (
     router,
     split_pdf,
 )
+from lexoid.core.browse.agents import plan_task
+from lexoid.core.browse.events import BrowseEventListener
+from lexoid.core.browse.model_provider import create_chat_client
+from lexoid.core.browse.orchestrator import run_task
+from lexoid.core.browse.schemas import (
+    BrowseErrorCode,
+    BrowseLimits,
+    BrowseModelConfig,
+    BrowseResult,
+    BrowseTask,
+)
 from loguru import logger
 
 
@@ -51,6 +62,85 @@ class ParserType(Enum):
     LLM_PARSE = "LLM_PARSE"
     STATIC_PARSE = "STATIC_PARSE"
     AUTO = "AUTO"
+
+
+async def browse(
+    query: str | BrowseTask,
+    *,
+    model_config: str | BrowseModelConfig | dict[str, Any] | None = None,
+    cdp_url: str | None = None,
+    headless: bool = True,
+    limits: BrowseLimits | None = None,
+    event_listener: BrowseEventListener | None = None,
+) -> BrowseResult:
+    """Run one read-only browser task from an explicit URL or validated task.
+
+    The ``model_config`` parameter controls which LLM model is used for each
+    role: planner interprets the task, navigator drives browser actions,
+    extractor creates evidence claims, and synthesizer writes from validated
+    claims. Pass a single model string to use that model for all roles, or a
+    mapping/BrowseModelConfig to override individual roles. Lexoid retains browser
+    lifecycle, policy, provenance, pagination, and tab ownership.
+    """
+    cfg = BrowseModelConfig.from_value(model_config)
+    resolved_models = {
+        role: cfg.for_role(role)
+        for role in ("planner", "navigator", "extractor", "synthesizer")
+    }
+    models_to_validate = {
+        model
+        for model in (
+            cfg.default_model,
+            resolved_models["planner"],
+            resolved_models["navigator"],
+            resolved_models["extractor"],
+            resolved_models["synthesizer"],
+        )
+        if model is not None
+    }
+    for model in models_to_validate:
+        try:
+            get_api_provider_for_model(model)
+        except ValueError as error:
+            raise ValueError(
+                f"{BrowseErrorCode.MODEL_UNSUPPORTED.value}: {model}"
+            ) from error
+    effective_limits = limits or BrowseLimits()
+    if isinstance(query, BrowseTask):
+        task = query
+    else:
+        planner_model = resolved_models["planner"]
+        client = create_chat_client(planner_model) if planner_model else None
+        task, _ = await plan_task(
+            query,
+            client,
+            effective_limits,
+            role_options=cfg.options_for_role("planner"),
+        )
+    return await run_task(
+        task,
+        cdp_url=cdp_url,
+        headless=headless,
+        event_listener=event_listener,
+        navigator_client=(
+            create_chat_client(resolved_models["navigator"])
+            if resolved_models["navigator"]
+            else None
+        ),
+        navigator_options=cfg.options_for_role("navigator"),
+        extractor_client=(
+            create_chat_client(resolved_models["extractor"])
+            if resolved_models["extractor"]
+            else None
+        ),
+        extractor_options=cfg.options_for_role("extractor"),
+        synthesizer_client=(
+            create_chat_client(resolved_models["synthesizer"])
+            if resolved_models["synthesizer"]
+            else None
+        ),
+        synthesizer_options=cfg.options_for_role("synthesizer"),
+    )
 
 
 def retry_with_different_parser_type(func):
@@ -247,7 +337,21 @@ def parse(
         parser_type (Union[str, ParserType], optional): Parser type ("LLM_PARSE", "STATIC_PARSE", or "AUTO").
         pages_per_split (int, optional): Number of pages per split for chunking.
         max_processes (int, optional): Maximum number of processes for parallel processing.
-        **kwargs: Additional arguments for the parser.
+        **kwargs: Additional arguments for the parser. Notable URL-parsing option:
+            ghost (bool | dict): Opt-in stealth/agentic "ghost" browsing for URLs.
+                ``True`` enables stealth + reliable JS rendering using sensible
+                defaults; a dict overrides any GhostConfig field, e.g.
+                ``{"wait_until": "networkidle", "auto_scroll": True,
+                "headless": False, "navigate": True,
+                "nav_instruction": "open the pricing tab", "nav_model": "gpt-4o"}``.
+                To attach to an already-running real browser (e.g. Chrome started
+                with ``--remote-debugging-port``) over CDP — reusing its profile,
+                cookies and logged-in sessions — set ``LEXOID_CDP_URL`` to its
+                remote-debugging endpoint, or pass ``{"cdp_url": "http://localhost:9222"}``.
+                A persistent profile is used when ``LEXOID_GHOST_PROFILE_DIR`` /
+                ``{"user_data_dir": ...}`` is set. Requires the optional
+                ``patchright`` package for the strongest anti-bot stealth; falls
+                back gracefully otherwise.
 
     Returns:
         Dict: Dictionary containing:
@@ -292,12 +396,13 @@ def parse(
         kwargs["temp_dir"] = temp_dir
         if path.startswith(("http://", "https://")):
             kwargs["url"] = path
+            ghost_opts = kwargs.get("ghost")
             download_dir = kwargs.get("save_dir", os.path.join(temp_dir, "downloads/"))
             os.makedirs(download_dir, exist_ok=True)
             if is_supported_url_file_type(path):
                 path = download_file(path, download_dir)
             elif as_pdf:
-                soup = get_webpage_soup(path)
+                soup = get_webpage_soup(path, ghost_opts=ghost_opts)
                 kwargs["title"] = str(soup.title).strip() if soup.title else "Untitled"
                 pdf_filename = kwargs.get("save_filename", f"webpage_{int(time())}.pdf")
                 if not pdf_filename.endswith(".pdf"):
@@ -306,7 +411,7 @@ def parse(
                 logger.debug("Converting webpage to PDF...")
                 path = convert_to_pdf(path, pdf_path)
             else:
-                return recursive_read_html(path, depth)
+                return recursive_read_html(path, depth, ghost_opts=ghost_opts)
 
         assert is_supported_file_type(path), (
             f"Unsupported file type {os.path.splitext(path)[1]}"
