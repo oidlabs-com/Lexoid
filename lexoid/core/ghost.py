@@ -337,8 +337,11 @@ async def acquire_page(p, cfg: GhostConfig, patchright_active: bool):
         finally:
             try:
                 await context.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(
+                    "Failed to close persistent context during teardown: {}",
+                    e,
+                )
 
     else:
         # Fresh stealth launch — throwaway browser, closest to the legacy path.
@@ -359,8 +362,10 @@ async def acquire_page(p, cfg: GhostConfig, patchright_active: bool):
         finally:
             try:
                 await browser.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(
+                    "Failed to close fresh browser during teardown; continuing: {}", e
+                )
 
 
 async def _settle(page, cfg: GhostConfig, wait_for_load_state: bool = True):

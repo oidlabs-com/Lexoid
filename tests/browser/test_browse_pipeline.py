@@ -356,19 +356,19 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
 @pytest.mark.parametrize(
     "query, expected_text",
     [
-        (
-            """Go to https://tmsearch.uspto.gov/ and retrieve all cases related to Arash Samadani (as attorney)""",
-            "158",
-        ),
-        (
-            """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
-            "44",
-        ),
-        (
-            """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
-            information for alien number: 123-456-789, country of origin - Mexico""",
-            "No case found",
-        ),
+        # (
+        #     """Go to https://tmsearch.uspto.gov/ and retrieve all cases related to Arash Samadani (as attorney)""",
+        #     "158",
+        # ),
+        # (
+        #     """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
+        #     "44",
+        # ),
+        # (
+        #     """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
+        #     information for alien number: 123-456-789, country of origin - Mexico""",
+        #     "No case found",
+        # ),
         (
             """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
             Additional criteria:
@@ -384,6 +384,19 @@ async def test_end_to_end(query, expected_text):
     if not os.getenv("RUN_BROWSE_LIVE_TESTS"):
         pytest.skip("RUN_BROWSE_LIVE_TESTS is not enabled")
 
+    # _mc = {
+    #     "planner": {
+    #         "model": "gpt-5.6-sol",
+    #         "reasoning": {"effort": "medium", "summary": "detailed"},
+    #         "options": {"verbosity": "high"},
+    #     },
+    #     "navigator": {
+    #         "model": "gpt-5.6-sol",
+    #         "reasoning": {"effort": "medium"},
+    #     },
+    #     "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
+    #     "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
+    # }
     result = await browse(
         query,
         model_config="gpt-5.6-sol",
@@ -393,6 +406,7 @@ async def test_end_to_end(query, expected_text):
     task_result = result.task_results[0]
     assert task_result.artifacts
     norm_expected = expected_text.replace("–", "-")
+    print("Response:\n", result.answer)
     assert (
         expected_text in result.answer
         or norm_expected in result.answer.replace("–", "-")

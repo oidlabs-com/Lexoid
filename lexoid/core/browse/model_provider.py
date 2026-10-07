@@ -10,13 +10,11 @@ try:
         BaseChatClient,
         ChatResponse,
         Message,
-        SupportsChatGetResponse,
     )
 except ImportError:  # pragma: no cover - exercised by a clean core install
     BaseChatClient = object  # type: ignore[misc,assignment]
     ChatResponse = Any  # type: ignore[misc,assignment]
     Message = Any  # type: ignore[misc,assignment]
-    SupportsChatGetResponse = Any  # type: ignore[misc,assignment]
 
 try:
     from agent_framework.openai import OpenAIChatClient
@@ -27,7 +25,7 @@ from lexoid.core.browse.schemas import BrowseUsage
 from lexoid.core.parse_type.llm_parser import create_response
 from lexoid.core.utils import get_api_provider_for_model
 
-ChatClient = SupportsChatGetResponse[Any]
+ChatClient = BaseChatClient
 
 
 def create_chat_client(model: str) -> ChatClient:

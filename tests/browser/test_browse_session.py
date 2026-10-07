@@ -1,8 +1,8 @@
 """Isolated session ownership tests using fakes instead of a browser."""
 
 import json
-import pytest
 
+import pytest
 from lexoid.core.browse.schemas import BrowserAction, BrowseTask
 from lexoid.core.browse.session import GhostBrowserSession
 from lexoid.core.browse.tools import BrowserToolset
@@ -613,10 +613,6 @@ async def test_popup_from_other_tab_not_consumed_by_unrelated_tab_action():
 
 @pytest.mark.asyncio
 async def test_toolset_active_tab_tracking_and_switching():
-    import json
-    from lexoid.core.browse.schemas import BrowseTask
-    from lexoid.core.browse.tools import BrowserToolset
-
     session = GhostBrowserSession(GhostConfig.from_kwargs(True))
     search_page = _FakePageWithPopup()
     search_page.handles = [

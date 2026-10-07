@@ -6,7 +6,6 @@ import json
 import re
 from collections.abc import Callable
 from typing import Any, TypeVar
-from urllib.parse import urlparse
 
 from loguru import logger
 from tenacity import (

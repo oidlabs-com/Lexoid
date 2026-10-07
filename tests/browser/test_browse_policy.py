@@ -28,6 +28,12 @@ def test_subdomains_are_allowlisted_but_suffixes_are_not():
     )
 
 
+def test_allowlisted_hosts_require_https():
+    allowed = ["tmsearch.uspto.gov"]
+    assert not is_allowed_url("http://tmsearch.uspto.gov/search", allowed)
+    assert is_allowed_url("https://tmsearch.uspto.gov/search", allowed)
+
+
 def test_legal_agreement_requires_confirmation():
     result = authorize(BrowserAction(kind="accept_terms"), ["tmsearch.uspto.gov"])
     assert result.decision is PolicyDecision.CONFIRM

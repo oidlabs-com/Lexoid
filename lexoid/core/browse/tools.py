@@ -16,6 +16,7 @@ from lexoid.core.browse.schemas import (
     NavigationOutcome,
 )
 from lexoid.core.browse.session import GhostBrowserSession
+from loguru import logger
 
 TraceEmitter = Callable[[BrowserActionTrace], Awaitable[None]]
 
@@ -303,8 +304,19 @@ class BrowserToolset:
                             before_url=result.before_url,
                             after_url=current_tab_info.url,
                         )
-                except Exception:
-                    pass
+                except Exception as error:
+                    logger.warning(
+                        "Could not verify navigation destination for tab {}: {}",
+                        self._tab_id,
+                        error,
+                    )
+                    result = BrowserActionResult(
+                        success=False,
+                        outcome="unable to verify navigation destination",
+                        error_code=BrowseErrorCode.POLICY_DENIED,
+                        before_url=result.before_url,
+                        after_url=result.after_url,
+                    )
         self.action_count += 1
         if result.success:
             self.successful_action_count += 1

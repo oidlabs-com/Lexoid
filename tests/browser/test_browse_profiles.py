@@ -164,6 +164,9 @@ async def test_scroll_tool_supports_optional_ref():
 
             return BrowserActionResult(success=True, outcome="ok")
 
+        async def tab(self, tab_id: str):
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
+
     toolset = BrowserToolset(cast(Any, _ScrollSession()), task, "tab-1", emit)
     await toolset.scroll(direction="down", ref="e1")
     assert toolset.action_count == 1
@@ -173,6 +176,50 @@ async def test_scroll_tool_supports_optional_ref():
     assert action_trace.action.kind == "scroll"
     assert action_trace.action.ref == "e1"
     assert action_trace.action.text == "down"
+
+
+@pytest.mark.asyncio
+async def test_action_is_denied_when_destination_cannot_be_verified():
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+    )
+
+    class _UninspectableSession:
+        async def snapshot(self, tab_id: str):
+            from lexoid.core.browse.schemas import BrowserSnapshot
+
+            return BrowserSnapshot(
+                snapshot_id="s1",
+                tab_id=tab_id,
+                page_revision=0,
+                url="https://example.test/",
+                viewport_width=1280,
+                viewport_height=720,
+                scroll_x=0,
+                scroll_y=0,
+                content_hash="h1",
+            )
+
+        async def execute(self, action):
+            from lexoid.core.browse.schemas import BrowserActionResult
+
+            return BrowserActionResult(success=True, outcome="ok")
+
+        async def tab(self, tab_id: str):
+            raise RuntimeError("tab metadata unavailable")
+
+    async def emit(_trace):
+        return None
+
+    toolset = BrowserToolset(cast(Any, _UninspectableSession()), task, "tab-1", emit)
+
+    result = json.loads(await toolset.scroll(direction="down"))
+
+    assert result["result"]["success"] is False
+    assert result["result"]["error_code"] == "policy_denied"
+    assert toolset.successful_action_count == 0
 
 
 @pytest.mark.asyncio
@@ -233,6 +280,208 @@ async def test_blocked_navigation_skips_collection(monkeypatch):
     assert task_result.navigation_outcome is NavigationOutcome.BLOCKED
     assert task_result.site_profile_id is None
     assert task_result.artifacts == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "landing_url",
+    ["https://evil.example/", "http://tmsearch.uspto.gov/"],
+)
+async def test_initial_redirect_outside_https_allowlist_is_blocked(
+    monkeypatch, landing_url
+):
+    from lexoid.core.browse import orchestrator
+
+    class _Session:
+        def __init__(self):
+            self.closed_tabs = []
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-1", target_id="t1", url=landing_url)
+
+        async def close_tab(self, tab_id):
+            self.closed_tabs.append(tab_id)
+
+    session = _Session()
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: session)
+
+    async def fail_if_observed(self):
+        raise AssertionError("redirected page was observed")
+
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", fail_if_observed)
+
+    task = BrowseTask(
+        seed_urls=["https://tmsearch.uspto.gov/"],
+        subject="subject",
+        allowed_domains=["tmsearch.uspto.gov"],
+    )
+    result = await orchestrator.run_task(task)
+
+    assert result.task_results[0].status is BrowseTerminalState.BLOCKED
+    assert session.closed_tabs == ["tab-1"]
+    assert result.task_results[0].trace[-1].event == "terminal"
+
+
+@pytest.mark.asyncio
+async def test_initial_redirect_preserves_inferred_seed_warning(monkeypatch):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import InferredSeed
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-1", target_id="t1", url="https://evil.example/")
+
+        async def close_tab(self, tab_id):
+            return None
+
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
+
+    task = BrowseTask(
+        inferred_seeds=[
+            InferredSeed(
+                url="https://weather.gov/",
+                source_text="NWS",
+                rationale="official forecast",
+            )
+        ],
+        subject="forecast",
+        allowed_domains=["weather.gov"],
+    )
+    result = await orchestrator.run_task(task)
+
+    assert result.task_results[0].status is BrowseTerminalState.BLOCKED
+    assert any("inferred, not verified" in w for w in result.warnings)
+    assert any("outside the HTTPS task allowlist" in w for w in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_capture_is_skipped_if_active_tab_navigated_off_domain(monkeypatch):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import BrowseUsage
+
+    class _Session:
+        def __init__(self):
+            self._tab_url = "https://tmsearch.uspto.gov/"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-1", target_id="t1", url=self._tab_url)
+
+        async def tab(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url=self._tab_url)
+
+        async def settle(self, tab_id):
+            return None
+
+        async def retain_page(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url=self._tab_url)
+
+    session = _Session()
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: session)
+
+    async def observe(self):
+        return "{}"
+
+    async def fail_if_captured(*args, **kwargs):
+        raise AssertionError("capture_page was called for an off-domain tab")
+
+    async def fake_navigate(client, toolset, task, snapshot, profile, **kwargs):
+        # Simulate an off-domain navigation that altered tab destination
+        session._tab_url = "https://evil.example/phish"
+        return NavigationOutcome.BLOCKED, BrowseUsage()
+
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", observe)
+    monkeypatch.setattr(orchestrator, "capture_page", fail_if_captured)
+    monkeypatch.setattr(orchestrator, "navigate_with_tools", fake_navigate)
+
+    task = BrowseTask(
+        seed_urls=["https://tmsearch.uspto.gov/"],
+        subject="search",
+        allowed_domains=["tmsearch.uspto.gov"],
+    )
+
+    result = await orchestrator.run_task(task, navigator_client=object())
+
+    assert result.task_results[0].status is BrowseTerminalState.BLOCKED
+    assert result.task_results[0].artifacts == []
+    assert any(
+        "current tab URL is outside the HTTPS task allowlist" in w
+        for w in result.warnings
+    )
+
+
+@pytest.mark.asyncio
+async def test_allowed_subdomain_landing_is_observed(monkeypatch):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import PageArtifact
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(
+                tab_id="tab-1", target_id="t1", url="https://api.tmsearch.uspto.gov/"
+            )
+
+        async def tab(self, tab_id):
+            return OpenTab(
+                tab_id=tab_id, target_id="t1", url="https://api.tmsearch.uspto.gov/"
+            )
+
+        async def settle(self, tab_id):
+            return None
+
+        async def advance_to_next_result_page(self, tab_id):
+            return False
+
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
+    observed = []
+
+    async def observe(self):
+        observed.append(True)
+        return "{}"
+
+    async def capture(*args, **kwargs):
+        return PageArtifact(
+            artifact_id="artifact-1",
+            url="https://api.tmsearch.uspto.gov/",
+            tab_id="tab-1",
+            content_hash="hash",
+            text="page",
+        )
+
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", observe)
+    monkeypatch.setattr(orchestrator, "capture_page", capture)
+    task = BrowseTask(
+        seed_urls=["https://tmsearch.uspto.gov/"],
+        subject="subject",
+        allowed_domains=["tmsearch.uspto.gov"],
+    )
+
+    await orchestrator.run_task(task)
+
+    assert observed == [True]
 
 
 @pytest.mark.asyncio

@@ -223,8 +223,11 @@ def normalize_domain(value: str) -> str:
 
 
 def is_allowed_url(url: str, allowed_domains: list[str]) -> bool:
-    """Return whether a URL host is on an exact or subdomain allowlist entry."""
-    host = normalize_domain(url)
+    """Return whether an HTTPS URL host matches an allowlist entry."""
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower().rstrip(".")
     return bool(host) and any(
         host == domain or host.endswith(f".{domain}")
         for domain in (normalize_domain(item) for item in allowed_domains)

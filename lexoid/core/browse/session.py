@@ -342,8 +342,8 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         if page is not None and not page.is_closed():
             try:
                 await page.close()
-            except Exception:
-                pass
+            except Exception as error:
+                logger.warning("Could not close browser tab {}: {}", tab_id, error)
 
     async def content(self, tab_id: str) -> str:
         """Return the current HTML for an owned tab."""

@@ -50,6 +50,50 @@ def _add_usage(left: BrowseUsage, right: BrowseUsage) -> BrowseUsage:
     )
 
 
+async def _blocked_result(
+    task: BrowseTask,
+    publisher: BrowseEventPublisher,
+    reason: str,
+    warning: str,
+    warnings: list[str] | None = None,
+) -> BrowseResult:
+    """Return a terminal BLOCKED task result with a recorded plan outcome."""
+    task.status = BrowseTerminalState.BLOCKED
+    plan_outcome = PlanOutcomeRecord(
+        task_id=task.task_id,
+        intent=task.strategy.intent or task.subject,
+        assumptions=task.strategy.assumptions,
+        navigation_guidance=task.strategy.navigation_guidance,
+        coverage_requested=task.constraints.coverage,
+        stop_reason="blocked",
+        answerability="insufficient",
+        unresolved_gaps=[reason],
+        validated_claims_count=0,
+        pages_captured=0,
+    )
+    await publisher.emit(
+        BrowserActionTrace(
+            event="terminal",
+            task_id=task.task_id,
+            metadata={"plan_outcome": plan_outcome.model_dump(mode="json")},
+        )
+    )
+    combined_warnings = list(warnings or [])
+    if warning not in combined_warnings:
+        combined_warnings.append(warning)
+    return BrowseResult(
+        task_results=[
+            BrowseTaskResult(
+                task=task,
+                status=task.status,
+                trace=publisher.events,
+                plan_outcome=plan_outcome,
+            )
+        ],
+        warnings=combined_warnings,
+    )
+
+
 async def run_task(
     task: BrowseTask,
     *,
@@ -121,29 +165,12 @@ async def run_task(
         logger.debug(
             "Browse task {} blocked: seed URL is outside allowlist", task.task_id
         )
-        task.status = BrowseTerminalState.BLOCKED
-        plan_outcome = PlanOutcomeRecord(
-            task_id=task.task_id,
-            intent=task.strategy.intent or task.subject,
-            assumptions=task.strategy.assumptions,
-            navigation_guidance=task.strategy.navigation_guidance,
-            coverage_requested=task.constraints.coverage,
-            stop_reason="blocked",
-            answerability="insufficient",
-            unresolved_gaps=["Seed URL outside allowlist"],
-            validated_claims_count=0,
-            pages_captured=0,
-        )
-        return BrowseResult(
-            task_results=[
-                BrowseTaskResult(
-                    task=task,
-                    status=task.status,
-                    trace=publisher.events,
-                    plan_outcome=plan_outcome,
-                )
-            ],
-            warnings=["Seed URL is outside the task allowlist."],
+        return await _blocked_result(
+            task,
+            publisher,
+            "Seed URL outside HTTPS allowlist",
+            "Seed URL is outside the HTTPS task allowlist.",
+            warnings=warnings,
         )
 
     cfg = GhostConfig.from_kwargs(
@@ -180,6 +207,20 @@ async def run_task(
         else:
             async with GhostBrowserSession(cfg) as session:
                 tab = await session.open_page(url)
+                if not is_allowed_url(tab.url, task.allowed_domains):
+                    logger.debug(
+                        "Browse task {} blocked: initial landing URL {} is outside allowlist",
+                        task.task_id,
+                        tab.url,
+                    )
+                    await session.close_tab(tab.tab_id)
+                    return await _blocked_result(
+                        task,
+                        publisher,
+                        "Initial landing URL outside HTTPS allowlist",
+                        "Initial navigation landed outside the HTTPS task allowlist.",
+                        warnings=warnings,
+                    )
                 toolset = BrowserToolset(session, task, tab.tab_id, publisher.emit)
                 snapshot = await toolset.observe()
                 logger.debug(
@@ -241,6 +282,19 @@ async def run_task(
 
                     seen_hashes: set[str] = set()
                     for index in range(max_iterations):
+                        current_tab = await session.tab(toolset.tab_id)
+                        if not is_allowed_url(current_tab.url, task.allowed_domains):
+                            logger.debug(
+                                "Browse task {} capture blocked: tab {} URL {} outside allowlist",
+                                task.task_id,
+                                toolset.tab_id,
+                                current_tab.url,
+                            )
+                            stop_reason = "blocked"
+                            warnings.append(
+                                "Page capture skipped: current tab URL is outside the HTTPS task allowlist."
+                            )
+                            break
                         artifact = await capture_page(
                             session,
                             toolset.tab_id,
