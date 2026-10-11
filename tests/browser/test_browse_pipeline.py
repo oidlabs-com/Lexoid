@@ -526,27 +526,27 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
 @pytest.mark.parametrize(
     "query, expected_text",
     [
-        # (
-        #     """Go to https://tmsearch.uspto.gov/ and retrieve all cases related to Arash Samadani (as attorney)""",
-        #     "158",
-        # ),
-        # (
-        #     """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
-        #     "44",
-        # ),
-        # (
-        #     """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
-        #     information for alien number: 123-456-789, country of origin - Mexico""",
-        #     "No case found",
-        # ),
-        # (
-        #     """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
-        #     Additional criteria:
-        #     - 'Minimum Size'>='5,000 SF'
-        #     Give me street addresses (sorted by price low to high).
-        #     """,
-        #     "2626–2646 Dupont Dr, Irvine",
-        # ),
+        (
+            """Go to https://tmsearch.uspto.gov/ and retrieve all cases related to Arash Samadani (as attorney)""",
+            "158",
+        ),
+        (
+            """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
+            "44",
+        ),
+        (
+            """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
+            information for alien number: 123-456-789, country of origin - Mexico""",
+            "No case found",
+        ),
+        (
+            """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
+            Additional criteria:
+            - 'Minimum Size'>='5,000 SF'
+            Give me street addresses (sorted by price low to high).
+            """,
+            "2626–2646 Dupont Dr, Irvine",
+        ),
         (
             """I’m trying to decide whether driving this week is a bad idea,
                 so can you build me a quick weather risk snapshot that starts with what it feels like right now and then widens out to the bigger trouble spots?
@@ -558,7 +558,7 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
                 In the end, send me a short location-by-location summary with the key weather risk for Baltimore, Syracuse, Rittman/Marshallville, and the Mount Holly region.
             """,
             "Rittman",
-        )
+        ),
     ],
 )
 async def test_end_to_end(query, expected_text):
