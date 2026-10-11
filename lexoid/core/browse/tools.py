@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 from collections.abc import Awaitable, Callable
 
@@ -15,7 +16,7 @@ from lexoid.core.browse.schemas import (
     BrowseTask,
     NavigationOutcome,
 )
-from lexoid.core.browse.session import GhostBrowserSession
+from lexoid.core.browse.session import GhostBrowserSession, TabGoneError
 from loguru import logger
 
 TraceEmitter = Callable[[BrowserActionTrace], Awaitable[None]]
@@ -26,6 +27,11 @@ def _contains_normalized(haystack: str, needle: str) -> bool:
     if not needle.strip():
         return False
     return " ".join(needle.split()).lower() in " ".join(haystack.split()).lower()
+
+
+def _denied_json(outcome: str) -> str:
+    """Return a serialized tool failure with a standard failure shape."""
+    return json.dumps({"success": False, "outcome": outcome})
 
 
 # Per-element identifiers are constant across a snapshot, so send them once.
@@ -49,8 +55,10 @@ class BrowserToolset:
         self._session = session
         self._task = task
         self._tab_id = tab_id
+        self._openers: dict[str, str] = {}
         self._emit = emit
         self._snapshot: BrowserSnapshot | None = None
+        self._quarantined = False
         self.action_count = 0
         self.successful_action_count = 0
         self.outcome = NavigationOutcome.UNKNOWN
@@ -65,9 +73,105 @@ class BrowserToolset:
         """Return the currently active tab ID."""
         return self._tab_id
 
+    @property
+    def is_quarantined(self) -> bool:
+        """Return whether this toolset has stopped access after a policy failure."""
+        return self._quarantined
+
+    async def _get_tab_url(self, tab_id: str) -> str:
+        if hasattr(self._session, "tab_url"):
+            res = self._session.tab_url(tab_id)
+            if inspect.isawaitable(res):
+                return await res
+            return res  # type: ignore[return-value]
+        tab = await self._session.tab(tab_id)
+        return tab.url
+
+    async def _handle_bad_tab(self, bad_tab_id: str) -> None:
+        try:
+            await self._session.close_tab(bad_tab_id)
+        except Exception as error:
+            logger.warning("Could not close bad tab {}: {}", bad_tab_id, error)
+
+        fallback_tab_id = self._openers.pop(bad_tab_id, None)
+        candidate_id = None
+        if fallback_tab_id:
+            try:
+                url = await self._get_tab_url(fallback_tab_id)
+                if is_allowed_url(url, self._task.allowed_domains):
+                    candidate_id = fallback_tab_id
+            except Exception:
+                candidate_id = None
+
+        if not candidate_id:
+            try:
+                open_tabs = await self._session.list_tabs()
+                for t in open_tabs:
+                    if t.tab_id != bad_tab_id and is_allowed_url(
+                        t.url, self._task.allowed_domains
+                    ):
+                        candidate_id = t.tab_id
+                        break
+            except Exception as error:
+                logger.warning("Failed to list tabs while handling bad tab: {}", error)
+
+        if candidate_id:
+            logger.info(
+                "Closed off-scope tab {} and switched back to safe tab {}",
+                bad_tab_id,
+                candidate_id,
+            )
+            self._tab_id = candidate_id
+            self._snapshot = None
+        else:
+            logger.warning(
+                "No safe tabs remain after closing bad tab {}; quarantining toolset",
+                bad_tab_id,
+            )
+            self._quarantined = True
+            self.outcome = NavigationOutcome.BLOCKED
+            self.last_error_code = BrowseErrorCode.TAB_GONE
+
+    async def _active_tab_allowed(self) -> bool:
+        if self._quarantined:
+            return False
+        try:
+            url = await self._get_tab_url(self._tab_id)
+        except TabGoneError:
+            logger.warning("Active tab {} is gone", self._tab_id)
+            await self._handle_bad_tab(self._tab_id)
+            return False
+        except Exception as error:
+            logger.warning("Could not verify active tab {}: {}", self._tab_id, error)
+            return False
+        if not is_allowed_url(url, self._task.allowed_domains):
+            logger.warning(
+                "Active tab {} is outside the task allowlist: {}", self._tab_id, url
+            )
+            await self._handle_bad_tab(self._tab_id)
+            return False
+        return True
+
+    async def quarantine(self) -> None:
+        """Close the active tab and stop further navigation after an unrecoverable policy failure."""
+        self._quarantined = True
+        self.outcome = NavigationOutcome.BLOCKED
+        self.last_error_code = BrowseErrorCode.TAB_GONE
+        try:
+            await self._session.close_tab(self._tab_id)
+        except Exception as error:
+            logger.warning(
+                "Could not close quarantined tab {}: {}", self._tab_id, error
+            )
+
     async def observe(self) -> str:
         """Return the current accessible elements available to navigation tools."""
-        self._snapshot = await self._session.snapshot(self._tab_id)
+        if not await self._active_tab_allowed():
+            return _denied_json("active tab is outside the task allowlist")
+        snapshot = await self._session.snapshot(self._tab_id)
+        if not await self._active_tab_allowed():
+            return _denied_json("active tab is outside the task allowlist")
+        self._snapshot = snapshot
         await self._emit(
             BrowserActionTrace(
                 event="observation",
@@ -84,8 +188,12 @@ class BrowserToolset:
         Does not count toward the browser action modification count. Returns bounded
         visible text from the current page.
         """
+        if not await self._active_tab_allowed():
+            return _denied_json("active tab is outside the task allowlist")
         clamped_chars = max(100, min(max_chars, 20_000))
         full_text = await self._session.text_content(self._tab_id)
+        if not await self._active_tab_allowed():
+            return _denied_json("active tab is outside the task allowlist")
         bounded_text = full_text[:clamped_chars]
         truncated = len(full_text) > clamped_chars
         payload = {
@@ -150,6 +258,8 @@ class BrowserToolset:
 
     async def list_tabs(self) -> str:
         """List active tabs to inspect open pages."""
+        if self._quarantined:
+            return _denied_json("browser toolset is quarantined")
         tabs = await self._session.list_tabs()
         return json.dumps(
             [
@@ -165,6 +275,8 @@ class BrowserToolset:
 
     async def switch_tab(self, tab_id: str) -> str:
         """Switch active interaction to an open tab."""
+        if self._quarantined:
+            return _denied_json("browser toolset is quarantined")
         tabs = await self._session.list_tabs()
         matched = next((t for t in tabs if t.tab_id == tab_id), None)
         if matched is None:
@@ -201,6 +313,8 @@ class BrowserToolset:
 
     async def report_outcome(self, outcome: str, evidence: str) -> str:
         """Report the final navigation state, quoting visible page text as evidence."""
+        if not await self._active_tab_allowed():
+            return _denied_json("active tab is outside the task allowlist")
         try:
             reported = NavigationOutcome(outcome)
         except ValueError:
@@ -218,6 +332,8 @@ class BrowserToolset:
         # A reported outcome is only accepted when the page still shows the quote.
         if reported in {NavigationOutcome.RESULTS_READY, NavigationOutcome.NO_RESULTS}:
             page_text = await self._session.text_content(self._tab_id)
+            if not await self._active_tab_allowed():
+                return _denied_json("active tab is outside the task allowlist")
             if not _contains_normalized(page_text, evidence):
                 return json.dumps(
                     {
@@ -258,6 +374,15 @@ class BrowserToolset:
         ]
 
     async def _run(self, action: BrowserAction) -> str:
+        if not await self._active_tab_allowed():
+            result = BrowserActionResult(
+                success=False,
+                outcome="active tab is outside the task allowlist",
+                error_code=BrowseErrorCode.POLICY_DENIED,
+            )
+            return json.dumps(
+                {"action": action.model_dump(), "result": result.model_dump()}
+            )
         if self.action_count >= self._task.limits.max_steps:
             self.step_limit_reached = True
             return json.dumps(
@@ -311,43 +436,50 @@ class BrowserToolset:
                 outcome=decision.reason,
                 error_code=decision.error_code,
             )
-        if result.success:
-            if result.opened_tab_id:
-                if not is_allowed_url(result.after_url, self._task.allowed_domains):
-                    await self._session.close_tab(result.opened_tab_id)
+        if result.opened_tab_id:
+            if not is_allowed_url(result.after_url, self._task.allowed_domains):
+                await self._session.close_tab(result.opened_tab_id)
+                result = BrowserActionResult(
+                    success=False,
+                    outcome="popup destination outside allowlist",
+                    error_code=BrowseErrorCode.POLICY_DENIED,
+                    before_url=result.before_url,
+                    after_url=result.before_url,
+                )
+        else:
+            try:
+                current_url = await self._get_tab_url(self._tab_id)
+                if not is_allowed_url(current_url, self._task.allowed_domains):
+                    await self._handle_bad_tab(self._tab_id)
                     result = BrowserActionResult(
                         success=False,
-                        outcome="popup destination outside allowlist",
+                        outcome="navigation destination outside allowlist",
                         error_code=BrowseErrorCode.POLICY_DENIED,
                         before_url=result.before_url,
-                        after_url=result.before_url,
+                        after_url=current_url,
                     )
-            else:
-                try:
-                    current_tab_info = await self._session.tab(self._tab_id)
-                    if not is_allowed_url(
-                        current_tab_info.url, self._task.allowed_domains
-                    ):
-                        result = BrowserActionResult(
-                            success=False,
-                            outcome="navigation destination outside allowlist",
-                            error_code=BrowseErrorCode.POLICY_DENIED,
-                            before_url=result.before_url,
-                            after_url=current_tab_info.url,
-                        )
-                except Exception as error:
-                    logger.warning(
-                        "Could not verify navigation destination for tab {}: {}",
-                        self._tab_id,
-                        error,
-                    )
-                    result = BrowserActionResult(
-                        success=False,
-                        outcome="unable to verify navigation destination",
-                        error_code=BrowseErrorCode.POLICY_DENIED,
-                        before_url=result.before_url,
-                        after_url=result.after_url,
-                    )
+            except TabGoneError:
+                await self._handle_bad_tab(self._tab_id)
+                result = BrowserActionResult(
+                    success=False,
+                    outcome="active tab closed",
+                    error_code=BrowseErrorCode.TAB_GONE,
+                    before_url=result.before_url,
+                    after_url=result.after_url,
+                )
+            except Exception as error:
+                logger.warning(
+                    "Could not verify navigation destination for tab {}: {}",
+                    self._tab_id,
+                    error,
+                )
+                result = BrowserActionResult(
+                    success=False,
+                    outcome="unable to verify navigation destination",
+                    error_code=BrowseErrorCode.POLICY_DENIED,
+                    before_url=result.before_url,
+                    after_url=result.after_url,
+                )
         self.action_count += 1
         if result.success:
             self.successful_action_count += 1
@@ -357,7 +489,9 @@ class BrowserToolset:
                 event="action",
                 task_id=self._task.task_id,
                 tab_id=self._tab_id,
-                snapshot_id=self._snapshot.snapshot_id,
+                snapshot_id=self._snapshot.snapshot_id
+                if self._snapshot is not None
+                else None,
                 action=action,
                 result=result,
             )
@@ -365,6 +499,7 @@ class BrowserToolset:
         payload = {"action": action.model_dump(), "result": result.model_dump()}
         if result.success:
             if result.opened_tab_id:
+                self._openers[result.opened_tab_id] = self._tab_id
                 self._tab_id = result.opened_tab_id
             payload["observation"] = json.loads(await self.observe())
         return json.dumps(payload)

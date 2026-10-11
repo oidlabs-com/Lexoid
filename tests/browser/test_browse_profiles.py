@@ -792,20 +792,21 @@ async def test_orchestrator_routes_explicit_assessor_client_and_options(monkeypa
             return False
 
     monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
-    monkeypatch.setattr(
-        orchestrator.BrowserToolset, "observe", lambda self: '{"elements": []}'
-    )
-    monkeypatch.setattr(
-        orchestrator,
-        "capture_page",
-        lambda *args, **kwargs: PageArtifact(
+
+    async def fake_observe(self):
+        return '{"elements": []}'
+
+    async def fake_capture(*args, **kwargs):
+        return PageArtifact(
             artifact_id="art-1",
             url="https://example.test/",
             tab_id="tab-1",
             content_hash="hash-1",
             text="Verified text",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", fake_observe)
+    monkeypatch.setattr(orchestrator, "capture_page", fake_capture)
 
     seen_client = []
     seen_options = []
@@ -889,20 +890,21 @@ async def test_orchestrator_assessor_falls_back_to_extractor(monkeypatch):
             return False
 
     monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
-    monkeypatch.setattr(
-        orchestrator.BrowserToolset, "observe", lambda self: '{"elements": []}'
-    )
-    monkeypatch.setattr(
-        orchestrator,
-        "capture_page",
-        lambda *args, **kwargs: PageArtifact(
+
+    async def fake_observe(self):
+        return '{"elements": []}'
+
+    async def fake_capture(*args, **kwargs):
+        return PageArtifact(
             artifact_id="art-1",
             url="https://example.test/",
             tab_id="tab-1",
             content_hash="hash-1",
             text="Verified text",
-        ),
-    )
+        )
+
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", fake_observe)
+    monkeypatch.setattr(orchestrator, "capture_page", fake_capture)
 
     seen_client = []
     seen_options = []

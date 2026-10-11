@@ -404,7 +404,7 @@ async def run_task(
                     task.task_id,
                     tab.tab_id,
                 )
-                if navigator_client is not None:
+                if navigator_client is not None and not toolset.is_quarantined:
                     navigation_outcome, navigator_usage = await navigate_with_tools(
                         navigator_client,
                         toolset,
@@ -419,12 +419,21 @@ async def run_task(
                             "Navigator did not report a verified outcome; collected "
                             "page state may not reflect the requested search."
                         )
-                current_tab = await session.tab(toolset.tab_id)
-                page_reached = current_tab.url != url or (
-                    toolset.successful_action_count > 0
+                if toolset.is_quarantined:
+                    navigation_outcome = NavigationOutcome.BLOCKED
+                    current_tab = None
+                else:
+                    current_tab = await session.tab(toolset.tab_id)
+                page_reached = current_tab is not None and (
+                    current_tab.url != url or toolset.successful_action_count > 0
                 )
                 artifacts: list[PageArtifact] = []
-                if (
+                if toolset.is_quarantined:
+                    stop_reason = "blocked"
+                    warnings.append(
+                        "Active tab was quarantined after an allowlist verification failure."
+                    )
+                elif (
                     navigation_outcome
                     in {
                         NavigationOutcome.BLOCKED,
@@ -466,6 +475,8 @@ async def run_task(
                                 toolset.tab_id,
                                 current_tab.url,
                             )
+                            await toolset.quarantine()
+                            navigation_outcome = NavigationOutcome.BLOCKED
                             stop_reason = "blocked"
                             warnings.append(
                                 "Page capture skipped: current tab URL is outside the HTTPS task allowlist."
@@ -619,7 +630,7 @@ async def run_task(
                 html = artifacts[0].text if artifacts else None
                 retained_tabs = (
                     [await session.retain_page(toolset.tab_id)]
-                    if task.retain_final_page and cdp_url
+                    if task.retain_final_page and cdp_url and not toolset.is_quarantined
                     else []
                 )
                 usage = {"input": 0, "output": 0, "total": 0}

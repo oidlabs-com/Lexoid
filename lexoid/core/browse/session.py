@@ -321,12 +321,24 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         if page is None or page.is_closed():
             raise TabGoneError(tab_id)
         target_id = getattr(page, "guid", tab_id)
+        title = ""
+        try:
+            title = await page.title()
+        except Exception as error:
+            logger.debug("Failed to retrieve title for tab {}: {}", tab_id, error)
         return OpenTab(
             tab_id=tab_id,
             target_id=str(target_id),
             url=page.url,
-            title=await page.title(),
+            title=title,
         )
+
+    async def tab_url(self, tab_id: str) -> str:
+        """Return current URL of an owned page without querying title or DOM."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            raise TabGoneError(tab_id)
+        return page.url
 
     async def retain_page(self, tab_id: str) -> OpenTab:
         """Preserve one  page after session cleanup."""
