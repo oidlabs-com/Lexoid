@@ -1,36 +1,36 @@
 <div align="center">
-
-<img src="assets/logo.png">
-
+  <img src="assets/logo.png">
 </div>
 
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/oidlabs-com/Lexoid/blob/main/examples/example_notebook_colab.ipynb)
-[![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-yellow)](https://huggingface.co/spaces/oidlabs/Lexoid)
-[![GitHub license](https://img.shields.io/badge/License-Apache_2.0-turquoise.svg)](https://github.com/oidlabs-com/Lexoid/blob/main/LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/lexoid)](https://pypi.org/project/lexoid/)
-[![Docs](https://github.com/oidlabs-com/Lexoid/actions/workflows/deploy_docs.yml/badge.svg)](https://oidlabs-com.github.io/Lexoid/)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/oidlabs-com/Lexoid/blob/main/examples/example_notebook_colab.ipynb) [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-yellow)](https://huggingface.co/spaces/oidlabs/Lexoid) [![GitHub license](https://img.shields.io/badge/License-Apache_2.0-turquoise.svg)](https://github.com/oidlabs-com/Lexoid/blob/main/LICENSE) [![PyPI](https://img.shields.io/pypi/v/lexoid)](https://pypi.org/project/lexoid/) [![Docs](https://github.com/oidlabs-com/Lexoid/actions/workflows/deploy_docs.yml/badge.svg)](https://oidlabs-com.github.io/Lexoid/)
 
-Lexoid is an efficient document parsing library that supports both LLM-based and non-LLM-based (static) PDF document parsing.
+Lexoid is an efficient library for:
+
+- Parsing documents and web pages using LLM-based or non-LLM (static) methods.
+- Automating read-only browser tasks through evidence-grounded web operations.
 
 [Documentation](https://oidlabs-com.github.io/Lexoid/)
 
-## Motivation:
+## Why Lexoid?
 
-- Use the multi-modal advancement of LLMs
-- Enable convenience for users
-- Collaborate with a permissive license
+Useful information is buried in documents and scattered across websites. Getting it out shouldn't require expensive a custom pipeline for every task.
 
-## Installation
+- **Extract what matters:** Turn documents and web pages into usable text and structured data for downstream workflows.
+- **Automate the search, retain the evidence:** Automate browser tasks with evidence.
+- **Choose your approach:** Use static parsing, hosted LLMs, or supported local models.
+- **Build openly:** Collaborate under the Apache 2.0 license.
 
-### Installing with pip
+# Installation
 
-```
+## Installing with pip
+
+```bash
 pip install lexoid
 ```
 
 To use LLM-based parsing, define the following environment variables or create a `.env` file with the following definitions
 
-```
+```bash
 OPENAI_API_KEY=""
 GOOGLE_API_KEY=""
 ```
@@ -50,50 +50,48 @@ CPU example (will most likely be slower; remember to adjust `OLLAMA_TIMEOUT` as 
 - docker exec -it ollama ollama pull gemma4:latest
 ```
 
-Optionally, to use `Playwright` for retrieving web content (instead of the `requests` library):
+For webpage retrieval and URL-to-PDF conversion with `parse()`, install Playwright's Chromium browser binaries. The Playwright Python package is installed with Lexoid:
 
-```
+```bash
 playwright install --with-deps --only-shell chromium
 ```
 
-For the strongest anti-bot stealth in [Ghost Browsing](#ghost-browsing-url-parsing), install the optional `ghost` extra (Lexoid falls back to built-in stealth patches when it isn't installed):
+To use the autonomous browser tasks shown below with `browse()`, install the optional agent dependencies and Patchright's Chromium binaries:
 
+```bash
+pip install "lexoid[browse]"
+patchright install --with-deps chromium
 ```
-pip install "lexoid[ghost]"
-patchright install chromium
-```
 
-### Building `.whl` from source
+## Building `.whl` from source
 
-> [!NOTE]
-> Installing the package from within the virtual environment could cause unexpected behavior,
-> as Lexoid creates and activates its own environment in order to build the wheel.
+> [!NOTE] Installing the package from within the virtual environment could cause unexpected behavior, as Lexoid creates and activates its own environment in order to build the wheel.
 
 ```
 make build
 ```
 
-### Creating a local installation
+## Creating a local installation
 
 To install dependencies:
 
-```
+```bash
 make install
 ```
 
 or, to install with dev-dependencies:
 
-```
+```bash
 make dev
 ```
 
 To activate virtual environment:
 
-```
+```bash
 source .venv/bin/activate
 ```
 
-## Usage
+# Usage
 
 [Example Notebook](https://github.com/oidlabs-com/Lexoid/blob/main/examples/example_notebook.ipynb)
 
@@ -103,7 +101,6 @@ Here's a quick example to parse documents using Lexoid:
 
 ```python
 from lexoid.api import parse
-from lexoid.api import ParserType
 
 parsed_md = parse("https://www.justice.gov/eoir/immigration-law-advisor", parser_type="AUTO")["raw"]
 # or
@@ -116,7 +113,7 @@ parsed_md = parse(pdf_path, parser_type="STATIC_PARSE")["raw"]
 print(parsed_md)
 ```
 
-### Parameters
+## Parameters
 
 - path (str): The file path or URL.
 - parser_type (str, optional): The type of parser to use ("LLM_PARSE" or "STATIC_PARSE"). Defaults to "AUTO".
@@ -124,93 +121,48 @@ print(parsed_md)
 - max_threads (int, optional): Maximum number of threads for parallel processing. Defaults to 4.
 - \*\*kwargs: Additional arguments for the parser.
 
-## Ghost Browsing (URL parsing)
+# Web Pages and Browser Tasks
 
-By default, Lexoid fetches web pages with a headless Playwright browser. For pages that are bot-protected (Cloudflare/DataDome), render content with client-side JavaScript, or hide the target content behind interactions, enable **ghost browsing** — an opt-in, stealth/agentic mode that drives a stealthy (and optionally *real*) browser. It adds three capabilities:
-
-1. **Bot-detection bypass** — stealth patches so headless automation isn't fingerprinted.
-2. **Reliable JS rendering** — `networkidle` waits, auto-scroll for lazy-loaded content, and optional `wait_for_selector`.
-3. **Agentic navigation** — an optional vision-LLM loop that clicks/scrolls/navigates toward a goal before extraction, using *set-of-marks* prompting (numbered element boxes drawn on the screenshot, as in AutoGen's MultimodalWebSurfer).
-
-Ghost browsing is fully opt-in; without it the default behavior is unchanged.
+Use `parse()` when you have a URL to retrieve and parse. Set `as_pdf=True` to render the page to PDF before parsing; pass `save_dir` to keep the generated PDF after the call returns:
 
 ```python
 from lexoid.api import parse
 
-# 1. Enable with defaults (stealth + reliable JS rendering)
-result = parse("https://example.com/spa-page", ghost=True)
+# Retrieve and parse a webpage
+page = parse("https://example.com")
 
-# 2. Tune behavior with a dict
-result = parse(
-    "https://example.com/spa-page",
-    ghost={
-        "wait_until": "networkidle",  # domcontentloaded | load | networkidle
-        "auto_scroll": True,           # trigger lazy-loaded content
-        "headless": False,             # strongest stealth runs headful
-        "timeout_ms": 30000,
-    },
+# Render the webpage to PDF, then parse the PDF
+page_pdf = parse(
+    "https://example.com",
+    as_pdf=True,
+    save_dir="output/",
+    save_filename="example.pdf",
 )
-
-# 3. Agentic navigation: reach content behind a click before parsing.
-#    The LLM's token usage is reported in result["token_usage"].
-result = parse(
-    "https://example.com/pricing",
-    ghost={
-        "navigate": True,
-        "nav_instruction": "open the Enterprise pricing tab",
-        "nav_model": "gpt-4o",        # defaults to DEFAULT_LLM
-        "nav_max_steps": 8,
-    },
-)
-print(result["token_usage"])  # {"input": ..., "output": ..., "total": ...}
+print(page_pdf["pdf_path"])
 ```
 
-### Attach to a real browser (truest "ghost")
+## Web Operator: for browser tasks
 
-The most powerful mode attaches over the Chrome DevTools Protocol (CDP) to an **already-running** browser (e.g. Chrome) started with a remote-debugging port. This reuses the real browser's profile, cookies, fingerprint, and **logged-in sessions** — and Lexoid only opens/closes its own tab, never closing your browser.
-
-```bash
-# Start a browser with remote debugging
-google-chrome --remote-debugging-port=9222 --user-data-dir=/path/to/profile
-
-# Point Lexoid at it
-export LEXOID_CDP_URL=http://localhost:9222
-```
+Use `browse()` when the task requires goal-driven interaction with a website, such as searching, applying filters, or navigating pages to gather findings. It returns an evidence-backed answer; it does not convert the source URL to PDF:
 
 ```python
-result = parse("https://example.com/members-only", ghost=True)  # picks up LEXOID_CDP_URL
-# or pass it inline:
-result = parse("https://example.com/members-only", ghost={"cdp_url": "http://localhost:9222"})
+import asyncio
+from lexoid.api import browse
+
+async def main():
+    result = await browse(
+        "Visit https://example.com and find the current enterprise plan price."
+    )
+    print(result.answer)
+
+asyncio.run(main())
 ```
 
-If the CDP endpoint is unreachable, Lexoid falls back gracefully to the legacy fetch.
-
-### Ghost options & environment variables
-
-| Option (dict key) | Env var | Default | Description |
-|---|---|---|---|
-| `cdp_url` | `LEXOID_CDP_URL` | – | Attach to a running browser over CDP. |
-| `user_data_dir` | `LEXOID_GHOST_PROFILE_DIR` | – | Persistent profile dir (cookies/fingerprint persist across runs). |
-| — | `LEXOID_GHOST=1` | – | Enable ghost browsing without a per-call `ghost` kwarg. |
-| `headless` | – | `True` | Set `False` for the strongest anti-bot stealth. |
-| `stealth` | – | `True` | Apply anti-detection patches (skipped in CDP mode). |
-| `wait_until` | – | `networkidle` | Page-load wait strategy. |
-| `auto_scroll` / `scroll_max_rounds` | – | `True` / `15` | Scroll to trigger lazy-loaded content. |
-| `wait_for_selector` | – | – | Wait for a CSS selector before extracting. |
-| `timeout_ms` | – | `30000` | Per-step navigation timeout. |
-| `navigate` / `nav_instruction` | – | `False` / – | Enable the agentic-navigation loop and its goal. |
-| `nav_model` / `nav_max_steps` | – | `DEFAULT_LLM` / `8` | Model and step cap for agentic navigation. |
-| `set_of_marks` | – | `True` | Draw numbered element boxes on the screenshot for the agentic loop. |
-
-> Acquisition mode is auto-selected: **CDP attach** when `cdp_url` is set, else a **persistent** profile when `user_data_dir` is set, else a **fresh** stealth browser.
-
-For the strongest anti-bot stealth, install the optional [`patchright`](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright) extra (see Installation); Lexoid falls back to built-in stealth patches if it isn't installed. The agentic loop only runs on the root URL during recursive crawls, and never types into credential fields or submits login forms.
-
-## Command Line Usage
+# Command Line Usage
 
 Lexoid provides a command-line interface for document parsing without writing Python code.
 
-### Installation
+## Installation
 
 The CLI is automatically available after installing Lexoid:
 
@@ -225,7 +177,7 @@ Alternatively, use with Python module syntax:
 python -m lexoid --help
 ```
 
-### Parse Documents
+## Parse Documents
 
 Convert documents to markdown or JSON:
 
@@ -249,7 +201,7 @@ lexoid parse --input document.pdf --model gpt-4o
 lexoid parse --input document.pdf --verbose
 ```
 
-### Extract Structured Data with JSON Schema
+## Extract Structured Data with JSON Schema
 
 Extract data conforming to a JSON schema:
 
@@ -274,7 +226,7 @@ lexoid schema \
   --model gpt-4o
 ```
 
-### Convert to LaTeX
+## Convert to LaTeX
 
 Convert documents to LaTeX format:
 
@@ -289,15 +241,15 @@ lexoid latex --input document.pdf --output output.tex
 lexoid latex --input document.pdf --model gpt-4o
 ```
 
-### Command-line Options
+## Command-line Options
 
-#### Common Options
+### Common Options
 
 - `--input, -i`: Input file path (required) - Supports PDF, images, HTML, DOCX, XLSX, PPTX, or URLs
 - `--output, -o`: Output file path (optional) - If not specified, output is printed to stdout
 - `--verbose, -v`: Enable detailed logging
 
-#### Parse Command
+### Parse Command
 
 ```
 lexoid parse --help
@@ -310,7 +262,7 @@ lexoid parse --help
 - `--framework`: Static parser framework - `pdfplumber` or `paddleocr`
 - `--format`: Output format - `markdown` (default, plain markdown text) or `json` (full result with metadata, segments, token usage)
 
-#### Schema Command
+### Schema Command
 
 ```
 lexoid schema --help
@@ -322,7 +274,7 @@ lexoid schema --help
 - `--example-schema`: Provide example data for the schema
 - `--fill-single-schema`: Auto-fill single schemas
 
-#### LaTeX Command
+### LaTeX Command
 
 ```
 lexoid latex --help
@@ -331,7 +283,7 @@ lexoid latex --help
 - `--model, -m`: LLM model (default: gpt-4o-mini)
 - `--api`: API provider - openai, gemini, anthropic, ollama, etc. (auto-detected if not specified)
 
-## Supported API Providers
+# Supported API Providers
 
 - Google
 - OpenAI
@@ -341,7 +293,7 @@ lexoid latex --help
 - Fireworks
 - Ollama
 
-## Ollama Local Parsing
+# Ollama Local Parsing
 
 Lexoid supports local `LLM_PARSE` inference through Ollama. The initial recommended model is `gemma4:latest`.
 
@@ -349,11 +301,11 @@ Lexoid supports local `LLM_PARSE` inference through Ollama. The initial recommen
 from lexoid.api import parse
 
 result = parse(
-	"path/to/document.pdf",
-	parser_type="LLM_PARSE",
-	api_provider="ollama",
-	model="gemma4:latest",
-	max_processes=1,
+    "path/to/document.pdf",
+    parser_type="LLM_PARSE",
+    api_provider="ollama",
+    model="gemma4:latest",
+    max_processes=1,
 )
 
 print(result["raw"])
@@ -365,52 +317,52 @@ Notes:
 - Lexoid forces `max_processes=1` for Ollama-backed parsing to avoid local multiprocess contention.
 - `AUTO` routing does not select Ollama in this first version; choose it explicitly with `api_provider="ollama"`.
 
-## Benchmark
+# Benchmark
 
 Results aggregated across 14 documents.
 
 _Note:_ Benchmarks are currently done in the zero-shot setting.
 
-| Rank | Model | SequenceMatcher Similarity | TFIDF Similarity | Time (s) | Cost ($) |
-| --- | --- | --- | --- | --- | --- |
-| 1 | gemini-3-pro-preview | 0.917 (±0.127) | 0.943 (±0.159) | 46.92 | 0.06288 |
-| 2 | gemini-3.5-flash | 0.914 (±0.138) | 0.989 (±0.016) | 16.70 | 0.02936 |
-| 3 | AUTO | 0.901 (±0.134) | 0.988 (±0.016) | 11.53 | 0.02327 |
-| 4 | gemini-3.1-pro-preview | 0.900 (±0.183) | 0.978 (±0.043) | 45.49 | 0.02892 |
-| 5 | AUTO (with auto-selected model) | 0.899 (±0.131) | 0.960 (±0.066) | 21.17 | 0.00066 |
-| 6 | gpt-5.2 | 0.890 (±0.193) | 0.975 (±0.036) | 33.32 | 0.03959 |
-| 7 | gemini-2.5-flash | 0.886 (±0.164) | 0.986 (±0.027) | 52.55 | 0.01226 |
-| 8 | mistral-ocr-latest | 0.882 (±0.106) | 0.932 (±0.091) | 5.75 | 0.00121 |
-| 9 | gemini-2.5-pro | 0.876 (±0.195) | 0.976 (±0.049) | 22.65 | 0.02408 |
-| 10 | gemini-2.0-flash | 0.875 (±0.148) | 0.977 (±0.037) | 11.96 | 0.00079 |
-| 11 | gpt-5.5 | 0.874 (±0.209) | 0.939 (±0.138) | 72.11 | 0.14495 |
-| 12 | gemini-3.1-flash-lite | 0.869 (±0.211) | 0.969 (±0.050) | 14.98 | 0.00288 |
-| 13 | claude-3-5-sonnet-20241022 | 0.858 (±0.184) | 0.930 (±0.098) | 17.32 | 0.01804 |
-| 14 | gemini-1.5-flash | 0.842 (±0.214) | 0.969 (±0.037) | 15.58 | 0.00043 |
-| 15 | gpt-5.4-mini | 0.835 (±0.210) | 0.948 (±0.066) | 13.14 | 0.00902 |
-| 16 | gpt-5-mini | 0.819 (±0.201) | 0.917 (±0.104) | 52.84 | 0.00811 |
-| 17 | gpt-5 | 0.807 (±0.215) | 0.919 (±0.088) | 98.12 | 0.05505 |
-| 18 | gpt-5.4 | 0.803 (±0.238) | 0.936 (±0.150) | 31.98 | 0.03887 |
-| 19 | claude-sonnet-4-20250514 | 0.801 (±0.188) | 0.905 (±0.136) | 22.02 | 0.02056 |
-| 20 | claude-opus-4-20250514 | 0.789 (±0.220) | 0.886 (±0.148) | 29.55 | 0.09513 |
-| 21 | accounts/fireworks/models/llama4-maverick-instruct-basic | 0.772 (±0.203) | 0.930 (±0.117) | 16.02 | 0.00147 |
-| 22 | gemini-1.5-pro | 0.767 (±0.309) | 0.865 (±0.230) | 24.77 | 0.01139 |
-| 23 | gemini-3-flash-preview | 0.766 (±0.293) | 0.858 (±0.210) | 39.38 | 0.00969 |
-| 24 | claude-opus-4-8 | 0.764 (±0.254) | 0.863 (±0.154) | 11.10 | 0.03195 |
-| 25 | claude-sonnet-4-6 | 0.757 (±0.302) | 0.843 (±0.206) | 16.50 | 0.01804 |
-| 26 | gpt-4.1-mini | 0.754 (±0.249) | 0.803 (±0.193) | 23.28 | 0.00347 |
-| 27 | accounts/fireworks/models/llama4-scout-instruct-basic | 0.754 (±0.243) | 0.942 (±0.063) | 13.36 | 0.00087 |
-| 28 | gpt-4o | 0.752 (±0.269) | 0.896 (±0.123) | 28.87 | 0.01469 |
-| 29 | gpt-4o-mini | 0.728 (±0.241) | 0.850 (±0.128) | 18.96 | 0.00609 |
-| 30 | claude-haiku-4-5-20251001 | 0.683 (±0.300) | 0.841 (±0.187) | 7.86 | 0.00504 |
-| 31 | claude-3-7-sonnet-20250219 | 0.646 (±0.397) | 0.758 (±0.297) | 57.96 | 0.01730 |
-| 32 | gpt-4.1 | 0.637 (±0.301) | 0.787 (±0.185) | 35.37 | 0.01498 |
-| 33 | google/gemma-3-27b-it | 0.604 (±0.342) | 0.788 (±0.297) | 23.16 | 0.00020 |
-| 34 | ds4sd/SmolDocling-256M-preview | 0.603 (±0.292) | 0.705 (±0.262) | 507.74 | 0.00000 |
-| 35 | gpt-5.4-nano | 0.600 (±0.309) | 0.856 (±0.119) | 22.51 | 0.00321 |
-| 36 | microsoft/phi-4-multimodal-instruct | 0.589 (±0.273) | 0.820 (±0.197) | 14.00 | 0.00045 |
-| 37 | qwen/qwen-2.5-vl-7b-instruct | 0.498 (±0.378) | 0.630 (±0.445) | 14.73 | 0.00056 |
+| Rank | Model                                                    | SequenceMatcher Similarity | TFIDF Similarity | Time (s) | Cost ($) |
+| ---- | -------------------------------------------------------- | -------------------------- | ---------------- | -------- | -------- |
+| 1    | gemini-3-pro-preview                                     | 0.917 (±0.127)             | 0.943 (±0.159)   | 46.92    | 0.06288  |
+| 2    | gemini-3.5-flash                                         | 0.914 (±0.138)             | 0.989 (±0.016)   | 16.70    | 0.02936  |
+| 3    | AUTO                                                     | 0.901 (±0.134)             | 0.988 (±0.016)   | 11.53    | 0.02327  |
+| 4    | gemini-3.1-pro-preview                                   | 0.900 (±0.183)             | 0.978 (±0.043)   | 45.49    | 0.02892  |
+| 5    | AUTO (with auto-selected model)                          | 0.899 (±0.131)             | 0.960 (±0.066)   | 21.17    | 0.00066  |
+| 6    | gpt-5.2                                                  | 0.890 (±0.193)             | 0.975 (±0.036)   | 33.32    | 0.03959  |
+| 7    | gemini-2.5-flash                                         | 0.886 (±0.164)             | 0.986 (±0.027)   | 52.55    | 0.01226  |
+| 8    | mistral-ocr-latest                                       | 0.882 (±0.106)             | 0.932 (±0.091)   | 5.75     | 0.00121  |
+| 9    | gemini-2.5-pro                                           | 0.876 (±0.195)             | 0.976 (±0.049)   | 22.65    | 0.02408  |
+| 10   | gemini-2.0-flash                                         | 0.875 (±0.148)             | 0.977 (±0.037)   | 11.96    | 0.00079  |
+| 11   | gpt-5.5                                                  | 0.874 (±0.209)             | 0.939 (±0.138)   | 72.11    | 0.14495  |
+| 12   | gemini-3.1-flash-lite                                    | 0.869 (±0.211)             | 0.969 (±0.050)   | 14.98    | 0.00288  |
+| 13   | claude-3-5-sonnet-20241022                               | 0.858 (±0.184)             | 0.930 (±0.098)   | 17.32    | 0.01804  |
+| 14   | gemini-1.5-flash                                         | 0.842 (±0.214)             | 0.969 (±0.037)   | 15.58    | 0.00043  |
+| 15   | gpt-5.4-mini                                             | 0.835 (±0.210)             | 0.948 (±0.066)   | 13.14    | 0.00902  |
+| 16   | gpt-5-mini                                               | 0.819 (±0.201)             | 0.917 (±0.104)   | 52.84    | 0.00811  |
+| 17   | gpt-5                                                    | 0.807 (±0.215)             | 0.919 (±0.088)   | 98.12    | 0.05505  |
+| 18   | gpt-5.4                                                  | 0.803 (±0.238)             | 0.936 (±0.150)   | 31.98    | 0.03887  |
+| 19   | claude-sonnet-4-20250514                                 | 0.801 (±0.188)             | 0.905 (±0.136)   | 22.02    | 0.02056  |
+| 20   | claude-opus-4-20250514                                   | 0.789 (±0.220)             | 0.886 (±0.148)   | 29.55    | 0.09513  |
+| 21   | accounts/fireworks/models/llama4-maverick-instruct-basic | 0.772 (±0.203)             | 0.930 (±0.117)   | 16.02    | 0.00147  |
+| 22   | gemini-1.5-pro                                           | 0.767 (±0.309)             | 0.865 (±0.230)   | 24.77    | 0.01139  |
+| 23   | gemini-3-flash-preview                                   | 0.766 (±0.293)             | 0.858 (±0.210)   | 39.38    | 0.00969  |
+| 24   | claude-opus-4-8                                          | 0.764 (±0.254)             | 0.863 (±0.154)   | 11.10    | 0.03195  |
+| 25   | claude-sonnet-4-6                                        | 0.757 (±0.302)             | 0.843 (±0.206)   | 16.50    | 0.01804  |
+| 26   | gpt-4.1-mini                                             | 0.754 (±0.249)             | 0.803 (±0.193)   | 23.28    | 0.00347  |
+| 27   | accounts/fireworks/models/llama4-scout-instruct-basic    | 0.754 (±0.243)             | 0.942 (±0.063)   | 13.36    | 0.00087  |
+| 28   | gpt-4o                                                   | 0.752 (±0.269)             | 0.896 (±0.123)   | 28.87    | 0.01469  |
+| 29   | gpt-4o-mini                                              | 0.728 (±0.241)             | 0.850 (±0.128)   | 18.96    | 0.00609  |
+| 30   | claude-haiku-4-5-20251001                                | 0.683 (±0.300)             | 0.841 (±0.187)   | 7.86     | 0.00504  |
+| 31   | claude-3-7-sonnet-20250219                               | 0.646 (±0.397)             | 0.758 (±0.297)   | 57.96    | 0.01730  |
+| 32   | gpt-4.1                                                  | 0.637 (±0.301)             | 0.787 (±0.185)   | 35.37    | 0.01498  |
+| 33   | google/gemma-3-27b-it                                    | 0.604 (±0.342)             | 0.788 (±0.297)   | 23.16    | 0.00020  |
+| 34   | ds4sd/SmolDocling-256M-preview                           | 0.603 (±0.292)             | 0.705 (±0.262)   | 507.74   | 0.00000  |
+| 35   | gpt-5.4-nano                                             | 0.600 (±0.309)             | 0.856 (±0.119)   | 22.51    | 0.00321  |
+| 36   | microsoft/phi-4-multimodal-instruct                      | 0.589 (±0.273)             | 0.820 (±0.197)   | 14.00    | 0.00045  |
+| 37   | qwen/qwen-2.5-vl-7b-instruct                             | 0.498 (±0.378)             | 0.630 (±0.445)   | 14.73    | 0.00056  |
 
-## Citation
+# Citation
 
 If you use Lexoid in production or publications, please cite accordingly and acknowledge usage. We appreciate the support 🙏
