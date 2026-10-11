@@ -6,7 +6,7 @@ authors = []
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"
 click = "^8.0.0"
 openai = "^2.18.0"
 pikepdf = "^9.3.0"
