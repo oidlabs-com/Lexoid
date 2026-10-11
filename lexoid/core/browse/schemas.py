@@ -58,6 +58,7 @@ class TaskConstraints(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     filters: list[TaskFilter] = Field(default_factory=list, max_length=20)
+    evaluation_criteria: list[str] = Field(default_factory=list, max_length=20)
     coverage: Literal["all_matches", "first_page", "count"] = "all_matches"
     max_records: int | None = Field(default=None, ge=1, le=100_000)
 
@@ -106,6 +107,42 @@ class ConstraintCheck(BaseModel):
     supporting_claim_ids: list[str] = Field(default_factory=list, max_length=500)
 
 
+class CandidateConstraintEvidence(BaseModel):
+    """Per-candidate judgment for one hard constraint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str = Field(min_length=1, max_length=200)
+    status: Literal["supported", "missing", "contradicted"]
+    claim_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class CandidateCriterionEvidence(BaseModel):
+    """Evidence supporting an evaluative, non-filter criterion."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    criterion: str = Field(min_length=1, max_length=1_000)
+    assessment: Literal["supported", "mixed", "unsupported"]
+    claim_ids: list[str] = Field(default_factory=list, max_length=100)
+
+
+class CandidateAssessment(BaseModel):
+    """Structured, claim-linked assessment of one candidate record."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    label: str = Field(min_length=1, max_length=500)
+    source_url: str = Field(min_length=1, max_length=8_192)
+    hard_constraints: list[CandidateConstraintEvidence] = Field(
+        default_factory=list, max_length=20
+    )
+    criteria_support: list[CandidateCriterionEvidence] = Field(
+        default_factory=list, max_length=20
+    )
+    missing_facts: list[str] = Field(default_factory=list, max_length=20)
+
+
 class EvidenceAssessment(BaseModel):
     """One model judgement of whether captured evidence answers the task so far."""
 
@@ -118,6 +155,16 @@ class EvidenceAssessment(BaseModel):
     # Required when next_action is "investigate": what the navigator should do
     # next, e.g. "open the first record and confirm the attorney field".
     objective: str = Field(default="", max_length=2_000)
+    candidates: list[CandidateAssessment] = Field(default_factory=list, max_length=100)
+
+
+class SynthesisAssessment(BaseModel):
+    """A non-verbatim judgment grounded in validated evidence claims."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    statement: str = Field(min_length=1, max_length=2_000)
+    based_on_claim_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
 class CoverageReport(BaseModel):
@@ -175,6 +222,7 @@ class BrowseModelConfig(BaseModel):
     default: str | RoleModelConfig | None = None
     planner: str | RoleModelConfig | None = None
     navigator: str | RoleModelConfig | None = None
+    assessor: str | RoleModelConfig | None = None
     extractor: str | RoleModelConfig | None = None
     synthesizer: str | RoleModelConfig | None = None
 
@@ -187,9 +235,11 @@ class BrowseModelConfig(BaseModel):
 
     def for_role(self, role: str) -> str | None:
         """Get the effective model for a specific role, falling back to default."""
-        if role not in {"planner", "navigator", "extractor", "synthesizer"}:
+        if role not in {"planner", "navigator", "assessor", "extractor", "synthesizer"}:
             raise ValueError(f"Unknown browse role: {role}")
         val = getattr(self, role)
+        if val is None and role == "assessor":
+            val = self.extractor
         if val is None:
             val = self.default
         if isinstance(val, RoleModelConfig):
@@ -198,7 +248,7 @@ class BrowseModelConfig(BaseModel):
 
     def options_for_role(self, role: str) -> dict[str, Any]:
         """Get effective Agent default_options for a specific role."""
-        if role not in {"planner", "navigator", "extractor", "synthesizer"}:
+        if role not in {"planner", "navigator", "assessor", "extractor", "synthesizer"}:
             raise ValueError(f"Unknown browse role: {role}")
         model = self.for_role(role)
         if not model:
@@ -210,6 +260,8 @@ class BrowseModelConfig(BaseModel):
             else ({"reasoning": {"effort": "medium"}} if is_reasoning else {})
         )
         role_val = getattr(self, role)
+        if role_val is None and role == "assessor":
+            role_val = self.extractor
         if isinstance(role_val, RoleModelConfig):
             role_opts = role_val.resolved_options(is_reasoning)
             merged = {**default_opts, **role_opts}
@@ -411,7 +463,9 @@ class BrowserActionTrace(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    event: Literal["plan", "observation", "action", "artifact", "warning", "terminal"]
+    event: Literal[
+        "plan", "observation", "action", "decision", "artifact", "warning", "terminal"
+    ]
     task_id: str = Field(min_length=1, max_length=128)
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     tab_id: str | None = None
@@ -502,6 +556,8 @@ class BrowseTaskResult(BaseModel):
     coverage: CoverageReport = Field(default_factory=CoverageReport)
     artifacts: list[PageArtifact] = Field(default_factory=list)
     claims: list[EvidenceClaim] = Field(default_factory=list)
+    candidate_assessments: list[CandidateAssessment] = Field(default_factory=list)
+    assessments: list[SynthesisAssessment] = Field(default_factory=list)
     trace: list[BrowserActionTrace] = Field(default_factory=list)
     retained_tabs: list[OpenTab] = Field(default_factory=list)
     usage: BrowseUsage = Field(default_factory=BrowseUsage)

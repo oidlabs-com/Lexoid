@@ -8,11 +8,11 @@ from collections.abc import Awaitable, Callable
 from lexoid.core.browse.policy import PolicyDecision, authorize, is_allowed_url
 from lexoid.core.browse.schemas import (
     BrowseErrorCode,
-    BrowseTask,
     BrowserAction,
     BrowserActionResult,
     BrowserActionTrace,
     BrowserSnapshot,
+    BrowseTask,
     NavigationOutcome,
 )
 from lexoid.core.browse.session import GhostBrowserSession
@@ -271,6 +271,37 @@ class BrowserToolset:
             await self.observe()
         assert self._snapshot is not None
         action.snapshot_id = self._snapshot.snapshot_id
+        await self._emit(
+            BrowserActionTrace(
+                event="decision",
+                task_id=self._task.task_id,
+                tab_id=self._tab_id,
+                snapshot_id=self._snapshot.snapshot_id,
+                metadata={
+                    "role": "navigator",
+                    "question": "Choose the next safe browser operation and observed target, or stop.",
+                    "state_ref": {"snapshot_id": self._snapshot.snapshot_id},
+                    "options": {
+                        "operations": [
+                            "click",
+                            "type",
+                            "select",
+                            "keypress",
+                            "hover",
+                            "scroll",
+                            "navigate",
+                            "back",
+                            "refresh",
+                            "wait",
+                            "done",
+                        ],
+                        "element_count": len(self._snapshot.elements),
+                        "selected_ref": action.ref,
+                    },
+                    "selected": {"kind": action.kind, "ref": action.ref},
+                },
+            )
+        )
         decision = authorize(action, self._task.allowed_domains)
         if decision.decision is PolicyDecision.ALLOW:
             result = await self._session.execute(action)

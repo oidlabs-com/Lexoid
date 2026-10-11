@@ -73,19 +73,23 @@ async def browse(
     limits: BrowseLimits | None = None,
     event_listener: BrowseEventListener | None = None,
 ) -> BrowseResult:
-    """Run one read-only browser task from an explicit URL or validated task.
+    """Run read-only browser task.
 
     The ``model_config`` parameter controls which LLM model is used for each
-    role: planner interprets the task, navigator drives browser actions,
-    extractor creates evidence claims, and synthesizer writes from validated
-    claims. Pass a single model string to use that model for all roles, or a
-    mapping/BrowseModelConfig to override individual roles. Lexoid retains browser
-    lifecycle, policy, provenance, pagination, and tab ownership.
+    role:
+    - planner interprets the task,
+    - navigator drives browser actions,
+    - extractor creates evidence claims,
+    - assessor judges evidence and proposes follow-ups, and
+    - synthesizer writes from validated claims.
+    Pass a single model string to use that model for all roles, or a mapping/BrowseModelConfig
+      to override individual roles. Lexoid retains browser lifecycle, policy,
+      provenance, pagination, and tab ownership.
     """
     cfg = BrowseModelConfig.from_value(model_config)
     resolved_models = {
         role: cfg.for_role(role)
-        for role in ("planner", "navigator", "extractor", "synthesizer")
+        for role in ("planner", "navigator", "assessor", "extractor", "synthesizer")
     }
     models_to_validate = {
         model
@@ -93,6 +97,7 @@ async def browse(
             cfg.default_model,
             resolved_models["planner"],
             resolved_models["navigator"],
+            resolved_models["assessor"],
             resolved_models["extractor"],
             resolved_models["synthesizer"],
         )
@@ -128,6 +133,12 @@ async def browse(
             else None
         ),
         navigator_options=cfg.options_for_role("navigator"),
+        assessor_client=(
+            create_chat_client(resolved_models["assessor"])
+            if resolved_models["assessor"]
+            else None
+        ),
+        assessor_options=cfg.options_for_role("assessor"),
         extractor_client=(
             create_chat_client(resolved_models["extractor"])
             if resolved_models["extractor"]
