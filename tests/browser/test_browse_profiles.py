@@ -172,6 +172,14 @@ async def test_scroll_tool_supports_optional_ref():
     assert toolset.action_count == 1
     assert toolset.successful_action_count == 1
     action_trace = [e for e in emitted if e.event == "action"][-1]
+    decision_trace = [e for e in emitted if e.event == "decision"][-1]
+    assert decision_trace.metadata["role"] == "navigator"
+    assert decision_trace.metadata["state_ref"]["snapshot_id"] == "s1"
+    assert decision_trace.metadata["options"]["operations"]
+    assert decision_trace.metadata["options"]["element_count"] == 0
+    assert decision_trace.metadata["options"]["selected_ref"] == "e1"
+    assert "elements" not in decision_trace.metadata["options"]
+    assert decision_trace.metadata["selected"] == {"kind": "scroll", "ref": "e1"}
     assert action_trace.action is not None
     assert action_trace.action.kind == "scroll"
     assert action_trace.action.ref == "e1"
@@ -425,6 +433,523 @@ async def test_capture_is_skipped_if_active_tab_navigated_off_domain(monkeypatch
         "current tab URL is outside the HTTPS task allowlist" in w
         for w in result.warnings
     )
+
+
+def test_assessor_sufficiency_is_downgraded_when_a_claim_is_rejected():
+    from lexoid.core.browse.orchestrator import _validate_assessment
+    from lexoid.core.browse.schemas import (
+        CandidateAssessment,
+        CandidateConstraintEvidence,
+        CandidateCriterionEvidence,
+        EvidenceAssessment,
+        EvidenceClaim,
+        TaskConstraints,
+        TaskFilter,
+    )
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="restaurant property",
+        allowed_domains=["example.test"],
+        constraints=TaskConstraints(
+            filters=[TaskFilter(field="Minimum Size", value="5,000 SF")],
+            evaluation_criteria=["likely suited for Korean BBQ"],
+        ),
+    )
+    claims = [
+        EvidenceClaim(
+            claim_id="claim-1",
+            text="Listing is 5,200 SF.",
+            quote="5,200 SF",
+            artifact_id="artifact-1",
+            source_url="https://example.test/listing/1",
+        ),
+        EvidenceClaim(
+            claim_id="claim-2",
+            text="Former restaurant use.",
+            quote="Former restaurant use",
+            artifact_id="artifact-1",
+            source_url="https://example.test/listing/1",
+        ),
+    ]
+    assessment = EvidenceAssessment(
+        answerability="sufficient",
+        candidates=[
+            CandidateAssessment(
+                label="Listing 1",
+                source_url="https://example.test/listing/1",
+                hard_constraints=[
+                    CandidateConstraintEvidence(
+                        field="Minimum Size",
+                        status="supported",
+                        claim_ids=["claim-1"],
+                    )
+                ],
+                criteria_support=[
+                    CandidateCriterionEvidence(
+                        criterion="likely suited for Korean BBQ",
+                        assessment="supported",
+                        claim_ids=["claim-2"],
+                    )
+                ],
+            )
+        ],
+    )
+
+    checked, validation_warnings = _validate_assessment(
+        assessment, task, claims, rejected_claim_count=1
+    )
+
+    assert checked.answerability == "partial"
+    assert not any("validation" in gap for gap in checked.gaps)
+    assert any(
+        "failed exact-quote validation" in warning for warning in validation_warnings
+    )
+
+
+def test_assessor_sufficiency_requires_candidate_evidence_for_each_criterion():
+    from lexoid.core.browse.orchestrator import _validate_assessment
+    from lexoid.core.browse.schemas import (
+        CandidateAssessment,
+        CandidateConstraintEvidence,
+        CandidateCriterionEvidence,
+        EvidenceAssessment,
+        EvidenceClaim,
+        TaskConstraints,
+        TaskFilter,
+    )
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="restaurant property",
+        allowed_domains=["example.test"],
+        constraints=TaskConstraints(
+            filters=[TaskFilter(field="Minimum Size", value="5,000 SF")],
+            evaluation_criteria=["likely suited for Korean BBQ"],
+        ),
+    )
+    claims = [
+        EvidenceClaim(
+            claim_id="claim-1",
+            text="Listing is 5,200 SF.",
+            quote="5,200 SF",
+            artifact_id="artifact-1",
+            source_url="https://example.test/listing/1",
+        )
+    ]
+    assessment = EvidenceAssessment(
+        answerability="sufficient",
+        candidates=[
+            CandidateAssessment(
+                label="Listing 1",
+                source_url="https://example.test/listing/1",
+                hard_constraints=[
+                    CandidateConstraintEvidence(
+                        field=" minimum   size ",
+                        status="supported",
+                        claim_ids=["claim-1"],
+                    )
+                ],
+                criteria_support=[
+                    CandidateCriterionEvidence(
+                        criterion="LIKELY SUITED FOR KOREAN BBQ",
+                        assessment="unsupported",
+                        claim_ids=[],
+                    )
+                ],
+            )
+        ],
+    )
+
+    checked, _ = _validate_assessment(assessment, task, claims, rejected_claim_count=0)
+
+    assert checked.answerability == "partial"
+    assert checked.next_action == "paginate"
+    assert any("Only 0 candidate(s)" in gap for gap in checked.gaps)
+
+
+def test_requested_candidate_count_ignores_incomplete_extra_candidates():
+    from lexoid.core.browse.orchestrator import _validate_assessment
+    from lexoid.core.browse.schemas import (
+        CandidateAssessment,
+        CandidateConstraintEvidence,
+        CandidateCriterionEvidence,
+        EvidenceAssessment,
+        EvidenceClaim,
+        TaskConstraints,
+        TaskFilter,
+    )
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="restaurant property",
+        allowed_domains=["example.test"],
+        constraints=TaskConstraints(
+            filters=[TaskFilter(field="Minimum Size", value="5,000 SF")],
+            evaluation_criteria=["Korean BBQ suitability"],
+            max_records=2,
+        ),
+    )
+    claims = [
+        EvidenceClaim(
+            claim_id=f"claim-{index}",
+            text=f"Evidence {index}",
+            quote=f"Evidence {index}",
+            artifact_id=f"artifact-{index}",
+            source_url=f"https://example.test/listing/{index}",
+        )
+        for index in range(1, 4)
+    ]
+    candidates = []
+    for index in range(1, 4):
+        qualifies = index < 3
+        candidates.append(
+            CandidateAssessment(
+                label=f"Listing {index}",
+                source_url=f"https://example.test/listing/{index}",
+                hard_constraints=[
+                    CandidateConstraintEvidence(
+                        field="minimum size",
+                        status="supported" if qualifies else "missing",
+                        claim_ids=[f"claim-{index}"] if qualifies else [],
+                    )
+                ],
+                criteria_support=[
+                    CandidateCriterionEvidence(
+                        criterion="korean bbq suitability",
+                        assessment="supported" if qualifies else "unsupported",
+                        claim_ids=[f"claim-{index}"] if qualifies else [],
+                    )
+                ],
+            )
+        )
+    assessment = EvidenceAssessment(answerability="sufficient", candidates=candidates)
+
+    checked, warnings = _validate_assessment(
+        assessment, task, claims, rejected_claim_count=0
+    )
+
+    assert checked.answerability == "sufficient"
+    assert len(checked.candidates) == 3
+    assert warnings == []
+
+
+def test_synthesis_assessments_require_valid_claim_references():
+    from lexoid.core.browse.orchestrator import _validate_synthesis_assessments
+    from lexoid.core.browse.schemas import EvidenceClaim, SynthesisAssessment
+
+    claims = [
+        EvidenceClaim(
+            claim_id="claim-1",
+            text="A quoted fact",
+            quote="quoted fact",
+            artifact_id="artifact-1",
+            source_url="https://example.test/",
+        )
+    ]
+    proposals = [
+        SynthesisAssessment(
+            statement="Assessment with support.", based_on_claim_ids=["claim-1"]
+        ),
+        SynthesisAssessment(
+            statement="Assessment with unknown support.",
+            based_on_claim_ids=["claim-unknown"],
+        ),
+        SynthesisAssessment(statement="Assessment without support."),
+    ]
+
+    accepted, rejected = _validate_synthesis_assessments(proposals, claims)
+
+    assert [item.statement for item in accepted] == ["Assessment with support."]
+    assert len(rejected) == 2
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_keeps_only_valid_synthesis_assessments(monkeypatch):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import (
+        BrowseUsage,
+        EvidenceAssessment,
+        EvidenceClaim,
+        PageArtifact,
+        SynthesisAssessment,
+    )
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-1", target_id="t1", url=url)
+
+        async def tab(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
+
+        async def settle(self, tab_id):
+            return None
+
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
+
+    async def observe(self):
+        return "{}"
+
+    async def capture(*args, **kwargs):
+        return PageArtifact(
+            artifact_id="artifact-1",
+            url="https://example.test/",
+            tab_id="tab-1",
+            content_hash="hash-1",
+            text="Verified listing fact",
+        )
+
+    async def assess(*args, **kwargs):
+        return (
+            EvidenceAssessment(answerability="sufficient"),
+            [
+                EvidenceClaim(
+                    claim_id="claim-1",
+                    text="A listing fact.",
+                    quote="Verified listing fact",
+                    artifact_id="artifact-1",
+                    source_url="https://example.test/",
+                )
+            ],
+            BrowseUsage(),
+        )
+
+    async def synthesize(*args, **kwargs):
+        return (
+            "A verified listing fact.",
+            ["claim-1"],
+            [
+                SynthesisAssessment(
+                    statement="Likely relevant based on the listing fact.",
+                    based_on_claim_ids=["claim-1"],
+                ),
+                SynthesisAssessment(
+                    statement="Unsupported speculation.",
+                    based_on_claim_ids=["claim-unknown"],
+                ),
+            ],
+            BrowseUsage(),
+        )
+
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", observe)
+    monkeypatch.setattr(orchestrator, "capture_page", capture)
+    monkeypatch.setattr(orchestrator, "assess_page", assess)
+    monkeypatch.setattr(orchestrator, "synthesize_answer", synthesize)
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="listing",
+        allowed_domains=["example.test"],
+        retain_final_page=False,
+    )
+
+    result = await orchestrator.run_task(
+        task, extractor_client=object(), synthesizer_client=object()
+    )
+
+    task_result = result.task_results[0]
+    assert [item.statement for item in task_result.assessments] == [
+        "Likely relevant based on the listing fact."
+    ]
+    assert "Unsupported speculation." not in result.answer
+    assert any("Dropped unsupported assessment" in item for item in result.warnings)
+    assert '"Verified listing fact" - https://example.test/' in result.answer
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_routes_explicit_assessor_client_and_options(monkeypatch):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import (
+        BrowseUsage,
+        EvidenceAssessment,
+        EvidenceClaim,
+        OpenTab,
+        PageArtifact,
+    )
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-1", target_id="t1", url=url)
+
+        async def tab(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
+
+        async def settle(self, tab_id):
+            return None
+
+        async def advance_to_next_result_page(self, tab_id):
+            return False
+
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
+    monkeypatch.setattr(
+        orchestrator.BrowserToolset, "observe", lambda self: '{"elements": []}'
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "capture_page",
+        lambda *args, **kwargs: PageArtifact(
+            artifact_id="art-1",
+            url="https://example.test/",
+            tab_id="tab-1",
+            content_hash="hash-1",
+            text="Verified text",
+        ),
+    )
+
+    seen_client = []
+    seen_options = []
+
+    async def fake_assess(
+        client, task, artifact, claims, gaps, *, prior_context=None, role_options=None
+    ):
+        seen_client.append(client)
+        seen_options.append(role_options)
+        return (
+            EvidenceAssessment(
+                answerability="sufficient",
+                gaps=[],
+                next_action="stop",
+                next_action_reason="Sufficient",
+            ),
+            [
+                EvidenceClaim(
+                    claim_id="claim-1",
+                    text="Verified text",
+                    quote="Verified text",
+                    artifact_id="art-1",
+                    source_url="https://example.test/",
+                )
+            ],
+            BrowseUsage(),
+        )
+
+    monkeypatch.setattr(orchestrator, "assess_page", fake_assess)
+
+    custom_assessor = object()
+    custom_options = {"reasoning": {"effort": "high"}}
+    fallback_extractor = object()
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="listing",
+        allowed_domains=["example.test"],
+        retain_final_page=False,
+    )
+
+    await orchestrator.run_task(
+        task,
+        assessor_client=custom_assessor,
+        assessor_options=custom_options,
+        extractor_client=fallback_extractor,
+        extractor_options={"reasoning": {"effort": "low"}},
+    )
+
+    assert seen_client == [custom_assessor]
+    assert seen_options == [custom_options]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_assessor_falls_back_to_extractor(monkeypatch):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import (
+        BrowseUsage,
+        EvidenceAssessment,
+        EvidenceClaim,
+        OpenTab,
+        PageArtifact,
+    )
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-1", target_id="t1", url=url)
+
+        async def tab(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
+
+        async def settle(self, tab_id):
+            return None
+
+        async def advance_to_next_result_page(self, tab_id):
+            return False
+
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
+    monkeypatch.setattr(
+        orchestrator.BrowserToolset, "observe", lambda self: '{"elements": []}'
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "capture_page",
+        lambda *args, **kwargs: PageArtifact(
+            artifact_id="art-1",
+            url="https://example.test/",
+            tab_id="tab-1",
+            content_hash="hash-1",
+            text="Verified text",
+        ),
+    )
+
+    seen_client = []
+    seen_options = []
+
+    async def fake_assess(
+        client, task, artifact, claims, gaps, *, prior_context=None, role_options=None
+    ):
+        seen_client.append(client)
+        seen_options.append(role_options)
+        return (
+            EvidenceAssessment(
+                answerability="sufficient",
+                gaps=[],
+                next_action="stop",
+                next_action_reason="Sufficient",
+            ),
+            [
+                EvidenceClaim(
+                    claim_id="claim-1",
+                    text="Verified text",
+                    quote="Verified text",
+                    artifact_id="art-1",
+                    source_url="https://example.test/",
+                )
+            ],
+            BrowseUsage(),
+        )
+
+    monkeypatch.setattr(orchestrator, "assess_page", fake_assess)
+
+    extractor_client = object()
+    extractor_options = {"reasoning": {"effort": "low"}}
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="listing",
+        allowed_domains=["example.test"],
+        retain_final_page=False,
+    )
+
+    await orchestrator.run_task(
+        task,
+        extractor_client=extractor_client,
+        extractor_options=extractor_options,
+    )
+
+    assert seen_client == [extractor_client]
+    assert seen_options == [extractor_options]
 
 
 @pytest.mark.asyncio

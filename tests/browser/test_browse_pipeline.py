@@ -37,6 +37,7 @@ def test_browse_model_config_resolution():
     cfg_str = BrowseModelConfig.from_value("gpt-5.6-sol")
     assert cfg_str.for_role("planner") == "gpt-5.6-sol"
     assert cfg_str.for_role("navigator") == "gpt-5.6-sol"
+    assert cfg_str.for_role("assessor") == "gpt-5.6-sol"
     assert cfg_str.for_role("extractor") == "gpt-5.6-sol"
     assert cfg_str.for_role("synthesizer") == "gpt-5.6-sol"
 
@@ -46,6 +47,7 @@ def test_browse_model_config_resolution():
     )
     assert cfg_dict.for_role("planner") == "gpt-6-luna"
     assert cfg_dict.for_role("navigator") == "gpt-5.6-sol"
+    assert cfg_dict.for_role("assessor") == "gpt-6-luna"
     assert cfg_dict.for_role("extractor") == "gpt-6-luna"
     assert cfg_dict.for_role("synthesizer") == "gpt-6-luna"
 
@@ -53,13 +55,29 @@ def test_browse_model_config_resolution():
     cfg_selective = BrowseModelConfig.from_value({"navigator": "gpt-5.6-sol"})
     assert cfg_selective.for_role("planner") is None
     assert cfg_selective.for_role("navigator") == "gpt-5.6-sol"
+    assert cfg_selective.for_role("assessor") is None
     assert cfg_selective.for_role("extractor") is None
     assert cfg_selective.for_role("synthesizer") is None
+
+    # Assessor falls back to extractor when no assessor override is provided
+    cfg_extractor_fallback = BrowseModelConfig.from_value(
+        {"default": "gpt-5.6-sol", "extractor": "gpt-6-luna"}
+    )
+    assert cfg_extractor_fallback.for_role("extractor") == "gpt-6-luna"
+    assert cfg_extractor_fallback.for_role("assessor") == "gpt-6-luna"
+
+    # Assessor explicit override takes precedence over extractor
+    cfg_assessor_override = BrowseModelConfig.from_value(
+        {"extractor": "gpt-6-luna", "assessor": "gpt-5.6-sol"}
+    )
+    assert cfg_assessor_override.for_role("extractor") == "gpt-6-luna"
+    assert cfg_assessor_override.for_role("assessor") == "gpt-5.6-sol"
 
     # None value produces empty config
     cfg_none = BrowseModelConfig.from_value(None)
     assert cfg_none.for_role("planner") is None
     assert cfg_none.for_role("navigator") is None
+    assert cfg_none.for_role("assessor") is None
 
     # Unknown role lookup raises ValueError
     with pytest.raises(ValueError, match="Unknown browse role"):
@@ -77,6 +95,8 @@ def test_browse_model_config_reasoning_effort():
     assert cfg1.reasoning_effort_for_role("navigator") == "low"
     assert cfg1.for_role("extractor") == "gpt-6-luna"
     assert cfg1.reasoning_effort_for_role("extractor") == "low"
+    assert cfg1.for_role("assessor") == "gpt-6-luna"
+    assert cfg1.reasoning_effort_for_role("assessor") == "low"
     assert cfg1.for_role("synthesizer") == "gpt-6-luna"
     assert cfg1.reasoning_effort_for_role("synthesizer") == "low"
 
@@ -128,6 +148,26 @@ def test_browse_model_config_reasoning_effort():
     assert cfg4.reasoning_effort_for_role("planner") == "high"
     assert cfg4.options_for_role("navigator") == {"reasoning": {"effort": "low"}}
     assert cfg4.reasoning_effort_for_role("navigator") == "low"
+
+    # Case 5: assessor inherits extractor reasoning effort when not explicitly set
+    cfg5 = BrowseModelConfig.from_value(
+        {
+            "default": "gpt-6-luna",
+            "extractor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "low"}},
+        }
+    )
+    assert cfg5.for_role("assessor") == "gpt-5.6-sol"
+    assert cfg5.reasoning_effort_for_role("assessor") == "low"
+
+    # Case 6: assessor explicit reasoning overrides extractor
+    cfg6 = BrowseModelConfig.from_value(
+        {
+            "extractor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "low"}},
+            "assessor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "high"}},
+        }
+    )
+    assert cfg6.for_role("assessor") == "gpt-5.6-sol"
+    assert cfg6.reasoning_effort_for_role("assessor") == "high"
 
 
 def test_browse_model_config_validation():
@@ -270,7 +310,15 @@ async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatc
     import json
 
     from lexoid.core.browse import agents
-    from lexoid.core.browse.schemas import BrowseUsage, CoverageReport, PlanStrategy
+    from lexoid.core.browse.schemas import (
+        BrowseUsage,
+        CandidateAssessment,
+        CandidateCriterionEvidence,
+        CoverageReport,
+        PlanStrategy,
+        SynthesisAssessment,
+        TaskConstraints,
+    )
 
     captured_prompt = []
 
@@ -280,6 +328,12 @@ async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatc
             {
                 "answer": "Found 1 matching case for Arash Samadani as attorney.",
                 "claim_ids": ["claim-1"],
+                "assessments": [
+                    {
+                        "statement": "Likely relevant based on the attorney match.",
+                        "based_on_claim_ids": ["claim-1"],
+                    }
+                ],
             }
         )
         return answer_json, BrowseUsage(input=10, output=10, total=20)
@@ -290,6 +344,9 @@ async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatc
         seed_urls=["https://tmsearch.uspto.gov/"],
         subject="Arash Samadani as attorney",
         allowed_domains=["tmsearch.uspto.gov"],
+        constraints=TaskConstraints(
+            evaluation_criteria=["likely relevant to the request"]
+        ),
         strategy=PlanStrategy(
             intent="Find all trademark cases where Arash Samadani is listed as attorney."
         ),
@@ -310,23 +367,136 @@ async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatc
         validated_claims=1,
     )
 
-    answer, cited_ids, usage = await agents.synthesize_answer(
+    candidate_assessments = [
+        CandidateAssessment(
+            label="Record 1",
+            source_url="https://tmsearch.uspto.gov/",
+            criteria_support=[
+                CandidateCriterionEvidence(
+                    criterion="likely relevant to the request",
+                    assessment="supported",
+                    claim_ids=["claim-1"],
+                )
+            ],
+        )
+    ]
+    answer, cited_ids, assessments, usage = await agents.synthesize_answer(
         client=object(),
         claims=claims,
         capture_complete=True,
         task=task,
         coverage=coverage,
+        candidate_assessments=candidate_assessments,
     )
 
     assert "Direct answer first" in captured_prompt[0][0]
     payload = captured_prompt[0][1]
+    assert "must not repeat non-verbatim judgments" in captured_prompt[0][0]
     assert (
         payload["task"]["intent"]
         == "Find all trademark cases where Arash Samadani is listed as attorney."
     )
+    assert payload["task"]["constraints"]["evaluation_criteria"] == [
+        "likely relevant to the request"
+    ]
+    assert payload["candidate_assessments"][0]["label"] == "Record 1"
     assert answer == "Found 1 matching case for Arash Samadani as attorney."
     assert cited_ids == ["claim-1"]
+    assert assessments == [
+        SynthesisAssessment(
+            statement="Likely relevant based on the attorney match.",
+            based_on_claim_ids=["claim-1"],
+        )
+    ]
     assert usage.total == 20
+
+
+@pytest.mark.asyncio
+async def test_assessor_receives_existing_claim_and_attempt_context(monkeypatch):
+    import json
+
+    from lexoid.core.browse import agents
+    from lexoid.core.browse.schemas import BrowseUsage, PageArtifact
+
+    captured = []
+
+    async def fake_run_json_agent(client, name, instructions, prompt, **kwargs):
+        captured.append((instructions, json.loads(prompt)))
+        return json.dumps(
+            {
+                "claims": [
+                    {
+                        "text": "A former restaurant use is listed.",
+                        "quote": "Former restaurant use",
+                        "artifact_id": "artifact-2",
+                        "source_url": "https://example.test/listing/2",
+                    }
+                ],
+                "candidates": [
+                    {
+                        "label": "Listing B",
+                        "source_url": "https://example.test/listing/2",
+                        "criteria_support": [
+                            {
+                                "criterion": "Korean BBQ suitability",
+                                "assessment": "supported",
+                                "claim_ids": ["claim-4"],
+                            }
+                        ],
+                    }
+                ],
+                "answerability": "partial",
+                "gaps": ["Listing B: ventilation capacity is not stated"],
+                "next_action": "investigate",
+                "next_action_reason": "Check another relevant listing fact.",
+                "objective": "Inspect Listing B for kitchen ventilation details.",
+            }
+        ), BrowseUsage()
+
+    monkeypatch.setattr(agents, "_run_json_agent", fake_run_json_agent)
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="Korean BBQ properties",
+        allowed_domains=["example.test"],
+    )
+    prior = EvidenceClaim(
+        claim_id="claim-3",
+        text="Listing A is 5,200 SF.",
+        quote="5,200 SF",
+        artifact_id="artifact-1",
+        source_url="https://example.test/listing/1",
+    )
+    artifact = PageArtifact(
+        artifact_id="artifact-2",
+        url="https://example.test/listing/2",
+        tab_id="tab-1",
+        content_hash="hash-2",
+        text="Former restaurant use",
+    )
+    older_claim = prior.model_copy(
+        update={"claim_id": "claim-1", "text": "Older verified listing fact."}
+    )
+
+    assessment, claims, _ = await agents.assess_page(
+        object(),
+        task,
+        artifact,
+        [older_claim, prior],
+        [],
+        prior_context={
+            "captured_urls": [prior.source_url, artifact.url],
+            "attempted_objectives": ["Inspect Listing A -> results_ready"],
+        },
+    )
+
+    payload = captured[0][1]
+    assert "Return every" in captured[0][0]
+    assert payload["prior_claims"][0]["source_url"] == prior.source_url
+    assert payload["captured_urls"] == [prior.source_url, artifact.url]
+    assert payload["attempted_objectives"] == ["Inspect Listing A -> results_ready"]
+    assert payload["next_claim_id"] == "claim-4"
+    assert claims[0].claim_id == "claim-4"
+    assert assessment.candidates[0].criteria_support[0].claim_ids == ["claim-4"]
 
 
 @pytest.mark.asyncio
@@ -369,14 +539,26 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
         #     information for alien number: 123-456-789, country of origin - Mexico""",
         #     "No case found",
         # ),
+        # (
+        #     """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
+        #     Additional criteria:
+        #     - 'Minimum Size'>='5,000 SF'
+        #     Give me street addresses (sorted by price low to high).
+        #     """,
+        #     "2626–2646 Dupont Dr, Irvine",
+        # ),
         (
-            """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
-            Additional criteria:
-            - 'Minimum Size'>='5,000 SF'
-            Give me street addresses (sorted by price low to high).
+            """I’m trying to decide whether driving this week is a bad idea,
+                so can you build me a quick weather risk snapshot that starts with what it feels like right now and then widens out to the bigger trouble spots?
+                First, on Google (https://www.google.com/), search for Baltimore, Maryland weather and grab the current temperature plus the plain-English condition like cloudy, sunny, rain, or whatever it says,
+                just so I have a baseline for home conditions.
+                Then go to Wunderground (https://www.wunderground.com/) and look up Syracuse, New York, and check the 10-day/7-day style forecast to find the lowest temperature expected over the next 7 days, including which day it happens, because I want to compare that colder destination against Baltimore.
+                After that, use the National Weather Service forecast page for the Rittman, Ohio area near Marshallville and tell me what the current forecast says and whether there are any active alerts posted there, since that would really affect an Ohio leg of the drive; please open the actual forecast page and leave it visible so I can see the alert area and forecast text myself.
+                Finally, go to the NWS Mount Holly page, find the winter forecast graphic, and report the snowfall amount shown there so I can tell whether the Mid-Atlantic part looks like a nuisance event or something more serious; if the graphic opens separately, leave that tab open too so I can look at the map.
+                In the end, send me a short location-by-location summary with the key weather risk for Baltimore, Syracuse, Rittman/Marshallville, and the Mount Holly region.
             """,
-            "2626–2646 Dupont Dr, Irvine, CA 92612",
-        ),
+            "Rittman",
+        )
     ],
 )
 async def test_end_to_end(query, expected_text):
@@ -384,22 +566,26 @@ async def test_end_to_end(query, expected_text):
     if not os.getenv("RUN_BROWSE_LIVE_TESTS"):
         pytest.skip("RUN_BROWSE_LIVE_TESTS is not enabled")
 
-    # _mc = {
-    #     "planner": {
-    #         "model": "gpt-5.6-sol",
-    #         "reasoning": {"effort": "medium", "summary": "detailed"},
-    #         "options": {"verbosity": "high"},
-    #     },
-    #     "navigator": {
-    #         "model": "gpt-5.6-sol",
-    #         "reasoning": {"effort": "medium"},
-    #     },
-    #     "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
-    #     "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
-    # }
+    _mc = {
+        "planner": {
+            "model": "gpt-5.6-sol",
+            "reasoning": {"effort": "medium", "summary": "detailed"},
+            "options": {"verbosity": "high"},
+        },
+        "navigator": {
+            "model": "gpt-5.6-sol",
+            "reasoning": {"effort": "medium"},
+            "options": {"verbosity": "high"},
+        },
+        "assessor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
+        "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
+        "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
+    }
+    # or
+    # _mc = "gpt-5.6-sol"
     result = await browse(
         query,
-        model_config="gpt-5.6-sol",
+        model_config=_mc,
         headless=False,
     )
 

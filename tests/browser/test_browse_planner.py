@@ -61,6 +61,57 @@ def test_planner_preserves_user_filters():
     assert task.constraints.coverage == "all_matches"
 
 
+def test_planner_separates_evaluation_criteria_from_hard_filters():
+    query = (
+        "Use https://www.loopnet.com/ to shortlist properties likely suited for "
+        "opening a Korean BBQ restaurant. Minimum Size >= 5,000 SF"
+    )
+    task = validate_planned_task(
+        query,
+        {
+            "seed_urls": ["https://www.loopnet.com/"],
+            "subject": "Korean BBQ restaurant properties",
+            "allowed_domains": ["loopnet.com"],
+            "constraints": {
+                "filters": [
+                    {
+                        "field": "Minimum Size",
+                        "operator": "unspecified",
+                        "value": "5,000 SF",
+                    }
+                ],
+                "evaluation_criteria": [
+                    "likely suited for opening a Korean BBQ restaurant"
+                ],
+            },
+        },
+        BrowseLimits(),
+    )
+
+    assert len(task.constraints.filters) == 1
+    assert task.constraints.filters[0].value == "5,000 SF"
+    assert task.constraints.evaluation_criteria == [
+        "likely suited for opening a Korean BBQ restaurant"
+    ]
+
+
+def test_planner_drops_invented_evaluation_criteria_with_warning():
+    query = "Use https://www.loopnet.com/ and find commercial listings."
+    payload = {
+        "seed_urls": ["https://www.loopnet.com/"],
+        "subject": "commercial listings",
+        "allowed_domains": ["loopnet.com"],
+        "constraints": {
+            "evaluation_criteria": ["near a subway station"],
+        },
+    }
+
+    task = validate_planned_task(query, payload, BrowseLimits())
+
+    assert task.constraints.evaluation_criteria == []
+    assert any("Dropped evaluation criterion" in warning for warning in task.warnings)
+
+
 def test_planner_rejects_invented_filter_value():
     filter_query = (
         "Go to https://tmsearch.uspto.gov/ and retrieve all cases related to "
@@ -198,6 +249,7 @@ def test_planner_strategy_validation_and_rendering():
     rendered = render_task_plan(task)
     assert "Initial Plan task-1:" in rendered
     assert "Intent:" in rendered
+    assert "Evaluation Criteria:" not in rendered
     assert "Approach:" in rendered
     assert "1. Open USPTO search interface" in rendered
     assert "Navigation Guidance:" in rendered
