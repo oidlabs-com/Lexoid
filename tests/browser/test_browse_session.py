@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from lexoid.core.browse import session as browse_session
 from lexoid.core.browse.schemas import BrowserAction, BrowseTask
 from lexoid.core.browse.session import GhostBrowserSession
 from lexoid.core.browse.tools import BrowserToolset
@@ -153,6 +154,19 @@ class _FakeSnapshotHandle:
         return True
 
 
+class _FakePasswordHandle(_FakeSnapshotHandle):
+    def __init__(self) -> None:
+        super().__init__()
+        self.filled_values: list[str] = []
+
+    async def get_attribute(self, name: str) -> str | None:
+        assert name == "type"
+        return "password"
+
+    async def fill(self, value: str, **kwargs: int) -> None:
+        self.filled_values.append(value)
+
+
 class _FakeSnapshotLocatorItem:
     def __init__(self, handle: _FakeSnapshotHandle) -> None:
         self.handle = handle
@@ -198,6 +212,26 @@ class _FakeSnapshotLocator:
         return _FakeSnapshotLocatorItem(self.handles[index])
 
 
+class _FakePasswordLocator(_FakeSnapshotLocator):
+    async def evaluate_all(self, script: str) -> list[dict[str, object]]:
+        assert "getBoundingClientRect" in script
+        return [
+            {
+                "index": 0,
+                "role": "textbox",
+                "name": "Password",
+                "tag": "input",
+                "bbox_x": 24,
+                "bbox_y": 48,
+                "bbox_width": 120,
+                "bbox_height": 32,
+                "visible": True,
+                "enabled": True,
+                "input_type": "password",
+            }
+        ]
+
+
 class _FakeSnapshotPage:
     url = "https://example.com/search"
 
@@ -236,6 +270,16 @@ class _FakeSnapshotPage:
         pass
 
 
+class _FakePasswordPage(_FakeSnapshotPage):
+    def __init__(self) -> None:
+        super().__init__()
+        self.handles = [_FakePasswordHandle()]
+
+    def locator(self, selector: str) -> _FakePasswordLocator:
+        assert selector == "button, a, input, select, textarea, [role]"
+        return _FakePasswordLocator(self.handles)
+
+
 @pytest.mark.asyncio
 async def test_snapshot_excludes_hidden_controls_and_executes_captured_handle():
     session = GhostBrowserSession(GhostConfig.from_kwargs(True))
@@ -256,6 +300,39 @@ async def test_snapshot_excludes_hidden_controls_and_executes_captured_handle():
     assert result.success is True
     assert page.handles[0].clicked is False
     assert page.handles[1].clicked is True
+
+
+@pytest.mark.asyncio
+async def test_password_field_typing_warns_but_still_fills(monkeypatch):
+    warnings: list[str] = []
+
+    class _Logger:
+        def warning(self, message: str, *args: str) -> None:
+            warnings.append(message.format(*args))
+
+    monkeypatch.setattr(browse_session, "logger", _Logger())
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakePasswordPage()
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 0
+    snapshot = await session.snapshot("tab-1")
+
+    result = await session.execute(
+        BrowserAction(
+            kind="type",
+            snapshot_id=snapshot.snapshot_id,
+            ref="e0",
+            text="secret-value",
+        )
+    )
+
+    assert result.success is True
+    assert page.handles[0].filled_values == ["secret-value"]
+    assert len(warnings) == 1
+    assert "experimental and not yet validated" in warnings[0]
+    assert "tab=tab-1" in warnings[0]
+    assert "ref=e0" in warnings[0]
+    assert "secret-value" not in warnings[0]
 
 
 class _FakeModalLocator:

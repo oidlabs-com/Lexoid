@@ -73,12 +73,24 @@ In `strategy`:
 - `assumptions`: Explicit operational interpretations made about request ambiguities. Never use assumptions to silently narrow, broaden, or discard user constraints. Leave empty if none.
 Do not pad strategy fields; leave lists empty when not needed. Return JSON only."""
 
-_NAVIGATOR_PROMPT = """You are a read-only browser navigation agent. Use the
-provided browser tools to reach the task completion criteria. Start from the
-initial observation and use only refs returned by observe or a tool result.
-Call observe after scrolling when needed. You may navigate only to supplied
-allowlisted URLs. Never enter credentials or take actions that create, modify,
-or submit accounts, applications, purchases, bookings, or legal agreements.
+_NAVIGATOR_PROMPT = """You are a browser navigation agent. Use the provided
+browser tools to reach the task completion criteria, including multi-step
+search, quote, estimate, eligibility, and lookup forms. Fill fields only with
+values explicitly supplied in the task; never invent missing personal or
+business information. You may submit an intermediate form when it only requests
+or retrieves a non-binding result. Stop before login or credential entry,
+account creation, purchase, policy binding, payment, booking, or accepting a
+legal agreement. If required information is missing, report blocked and name
+the missing information.
+Start from the initial observation and use only refs returned by observe or a
+tool result. Call observe after scrolling when needed. You may navigate only to
+supplied allowlisted URLs. Popups are not blockers by themselves: inspect their
+purpose, dismiss promotional overlays, and for cookie banners choose reject or
+necessary-only when offered. Continue through ordinary dialogs, but stop if
+proceeding requires missing information, authentication, or consequential
+consent or commitment, whether it appears in a popup or the page. CAPTCHA
+solving is not implemented; if a CAPTCHA prevents progress, report blocked and
+do not attempt to solve or bypass it.
 Apply every requested filter to the matching named field on the page. Never
 substitute a different field, and never silently broaden a filter.
 Use evaluation criteria to guide which records to inspect and what evidence to
@@ -184,8 +196,10 @@ many more matching records are still needed, prefer an "investigate" objective
 asking for more matching records to be shown at once, but never when the new
 artifact is truncated; state the evidence goal and leave the choice of page
 control to the navigator. When proposing "investigate", set `objective` to one
-concrete, verifiable goal for the navigator; never describe a login, purchase,
-or agreement action. Return
+concrete, verifiable goal for the navigator; it may describe a non-binding
+form submission using task-supplied values, but never a login, account
+creation, purchase, policy binding, payment, booking, or agreement action. Do
+not propose an objective that requires inventing missing information. Return
 one JSON object: {"claims": [{"text":...,"quote":...,"artifact_id":...,
 "source_url":...}], "candidates": [{"label":"...","source_url":"...",
 "hard_constraints":[{"field":"...","status":"supported|missing|contradicted",
@@ -498,6 +512,7 @@ async def navigate_with_tools(
         raise ImportError(
             "Browse requires optional dependencies. Install with: pip install 'lexoid[browse]'"
         )
+    toolset.begin_run()
     configuration = getattr(client, "function_invocation_configuration", None)
     if configuration is not None:
         # The browser action budget is enforced by BrowserToolset itself, not by

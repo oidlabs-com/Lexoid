@@ -1,4 +1,4 @@
-"""Session-scoped Agent Framework tools for read-only browser navigation."""
+"""Session-scoped Agent Framework tools for policy-based browser navigation."""
 
 from __future__ import annotations
 
@@ -77,6 +77,14 @@ class BrowserToolset:
     def is_quarantined(self) -> bool:
         """Return whether this toolset has stopped access after a policy failure."""
         return self._quarantined
+
+    def begin_run(self) -> None:
+        """Reset navigator-run state without resetting the shared action budget."""
+        if self._quarantined:
+            return
+        self.outcome = NavigationOutcome.UNKNOWN
+        self.outcome_evidence = ""
+        self.last_error_code = None
 
     async def _get_tab_url(self, tab_id: str) -> str:
         if hasattr(self._session, "tab_url"):
@@ -374,6 +382,11 @@ class BrowserToolset:
         ]
 
     async def _run(self, action: BrowserAction) -> str:
+        safe_action = (
+            action.model_copy(update={"text": "[redacted]"})
+            if action.kind == "type"
+            else action
+        )
         if not await self._active_tab_allowed():
             result = BrowserActionResult(
                 success=False,
@@ -381,7 +394,7 @@ class BrowserToolset:
                 error_code=BrowseErrorCode.POLICY_DENIED,
             )
             return json.dumps(
-                {"action": action.model_dump(), "result": result.model_dump()}
+                {"action": safe_action.model_dump(), "result": result.model_dump()}
             )
         if self.action_count >= self._task.limits.max_steps:
             self.step_limit_reached = True
@@ -492,11 +505,11 @@ class BrowserToolset:
                 snapshot_id=self._snapshot.snapshot_id
                 if self._snapshot is not None
                 else None,
-                action=action,
+                action=safe_action,
                 result=result,
             )
         )
-        payload = {"action": action.model_dump(), "result": result.model_dump()}
+        payload = {"action": safe_action.model_dump(), "result": result.model_dump()}
         if result.success:
             if result.opened_tab_id:
                 self._openers[result.opened_tab_id] = self._tab_id

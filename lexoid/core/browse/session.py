@@ -536,6 +536,15 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 await handle.click(timeout=self._config.timeout_ms)
             elif action.kind == "type":
                 assert handle is not None
+                input_type = (element.input_type or "").lower() if element else ""
+                live_input_type = (await handle.get_attribute("type") or "").lower()
+                if input_type == "password" or live_input_type == "password":
+                    logger.warning(
+                        "Typing into a password field is enabled but experimental "
+                        "and not yet validated (tab={}, ref={}).",
+                        snapshot.tab_id,
+                        action.ref,
+                    )
                 await handle.fill(action.text or "", timeout=self._config.timeout_ms)
             elif action.kind == "select":
                 assert handle is not None

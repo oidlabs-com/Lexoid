@@ -1,7 +1,7 @@
 Welcome to Lexoid's Documentation
 =================================
 
-Lexoid is a Python library for parsing documents and web pages, rendering web pages to PDF, and automating read-only browser tasks through evidence-grounded web operations.
+Lexoid is a Python library for parsing documents and web pages, rendering web pages to PDF, and automating research and non-binding website workflows through evidence-grounded browser operations.
 
 .. toctree::
    :maxdepth: 2

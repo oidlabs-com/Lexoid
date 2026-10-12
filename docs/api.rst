@@ -168,17 +168,25 @@ browse
 
 .. py:function:: lexoid.api.browse(query: Union[str, BrowseTask], *, model_config: Union[str, BrowseModelConfig, dict, None] = None, cdp_url: Optional[str] = None, headless: bool = True, limits: Optional[BrowseLimits] = None, event_listener: Optional[BrowseEventListener] = None) -> BrowseResult
 
-   Execute a goal-driven, read-only autonomous browsing task.
+   Execute a goal-driven browser research or non-binding form task.
 
    Orchestrates a collaborative multi-role agent loop to navigate web pages,
    ground findings in verbatim page text, assess evidence against hard constraints
    and evaluation criteria, and synthesize a grounded final response:
 
    * **Planner**: Translates user query into a validated ``BrowseTask`` with seed URLs, allowed domain constraints, filters, and evaluation criteria.
-   * **Navigator**: Drives read-only browser interactions (click, type, select, scroll, wait, navigate, tabs) on policy-allowed domains.
+   * **Navigator**: Drives browser interactions (click, type, select, scroll, wait, navigate, tabs) on policy-allowed domains, including multi-step non-binding forms using task-supplied values.
    * **Extractor**: Extracts verbatim factual claims anchored in captured page artifacts.
    * **Assessor**: Evaluates cumulative evidence per candidate record and proposes next actions (``paginate``, ``investigate``, or ``stop``).
    * **Synthesizer**: Synthesizes verified findings citing exact claim IDs with separate structured evaluative assessments.
+
+   The navigator is instructed not to log in, create accounts, accept legal
+   agreements, purchase, bind coverage, pay, or book, and to stop when required
+   information, authentication, or consequential consent is needed. These are
+   navigator instructions, not semantic enforcement for every site control;
+   ambiguous actions should be reviewed. Popups are handled according to their
+   purpose and are not blockers by themselves. CAPTCHA solving is planned; until
+   implemented, a CAPTCHA that prevents progress is reported as a blocker.
 
    :param query: Natural language prompt specifying goal, seed URL/service, and constraints, or a pre-planned :class:`~lexoid.core.browse.schemas.BrowseTask`.
    :param model_config: Model mapping or model name. Can be a single model string (applied to all roles), a dictionary, or a :class:`~lexoid.core.browse.schemas.BrowseModelConfig` overriding individual roles (``planner``, ``navigator``, ``assessor``, ``extractor``, ``synthesizer``) and their reasoning parameters.

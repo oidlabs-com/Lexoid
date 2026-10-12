@@ -1,4 +1,4 @@
-"""Deterministic authorization rules for read-only browser automation."""
+"""Deterministic authorization rules for browser actions and destinations."""
 
 from __future__ import annotations
 
@@ -28,9 +28,8 @@ class PolicyResult:
     error_code: BrowseErrorCode | None = None
 
 
-_DENIED_ACTIONS = {"upload", "purchase", "book", "apply", "login_submit"}
 _CONFIRM_ACTIONS = {"accept_terms"}
-_READ_ONLY_ACTIONS = {
+_ALLOWED_ACTIONS = {
     "click",
     "type",
     "select",
@@ -237,10 +236,6 @@ def is_allowed_url(url: str, allowed_domains: list[str]) -> bool:
 
 def authorize(action: BrowserAction, allowed_domains: list[str]) -> PolicyResult:
     """Authorize one action using ``deny > confirm > allow > default``."""
-    if action.kind in _DENIED_ACTIONS:
-        return PolicyResult(
-            PolicyDecision.DENY, "read-only policy", BrowseErrorCode.POLICY_DENIED
-        )
     if action.kind in _CONFIRM_ACTIONS:
         return PolicyResult(
             PolicyDecision.CONFIRM,
@@ -279,8 +274,8 @@ def authorize(action: BrowserAction, allowed_domains: list[str]) -> PolicyResult
                 "incomplete visual target",
                 BrowseErrorCode.POLICY_DENIED,
             )
-    if action.kind in _READ_ONLY_ACTIONS:
-        return PolicyResult(PolicyDecision.ALLOW, "read-only action")
+    if action.kind in _ALLOWED_ACTIONS:
+        return PolicyResult(PolicyDecision.ALLOW, "permitted browser action")
     return PolicyResult(
         PolicyDecision.DENY, "unknown action", BrowseErrorCode.POLICY_DENIED
     )

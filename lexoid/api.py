@@ -73,7 +73,7 @@ async def browse(
     limits: BrowseLimits | None = None,
     event_listener: BrowseEventListener | None = None,
 ) -> BrowseResult:
-    """Run read-only browser task.
+    """Run an evidence-grounded browser task automation.
 
     The ``model_config`` parameter controls which LLM model is used for each
     role:

@@ -1,13 +1,23 @@
 """Tests for site profiles, navigator outcome gating, and orchestrator branching."""
 
 import json
+from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from lexoid.core.browse import agents as browse_agents
 from lexoid.core.browse.profiles import SiteProfile, find_profile
 from lexoid.core.browse.schemas import (
+    BrowserAction,
+    BrowserActionResult,
+    BrowserActionTrace,
+    BrowserSnapshot,
+    BrowseErrorCode,
+    BrowseLimits,
     BrowseTask,
     BrowseTerminalState,
+    BrowseUsage,
+    ElementRef,
     NavigationOutcome,
     OpenTab,
 )
@@ -91,6 +101,149 @@ async def test_reported_outcome_accepts_quoted_page_text():
 
     assert accepted["success"] is True
     assert toolset.outcome is NavigationOutcome.RESULTS_READY
+
+
+@pytest.mark.asyncio
+async def test_navigator_run_does_not_reuse_prior_outcome(monkeypatch):
+    agent_runs = 0
+
+    class _Agent:
+        def __init__(self, *args, **kwargs):
+            self.tools = kwargs["tools"]
+
+        async def run(self, _prompt):
+            nonlocal agent_runs
+            agent_runs += 1
+            if agent_runs == 1:
+                report_outcome = next(
+                    tool for tool in self.tools if tool.__name__ == "report_outcome"
+                )
+                await report_outcome("results_ready", "Showing 1 - 10 of 42 results")
+            return SimpleNamespace(text="navigator finished")
+
+    monkeypatch.setattr(browse_agents, "Agent", _Agent)
+    monkeypatch.setattr(
+        browse_agents, "browse_usage_from_response", lambda _response: BrowseUsage()
+    )
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+        limits=BrowseLimits(max_steps=5),
+    )
+
+    async def emit(_trace):
+        return None
+
+    toolset = BrowserToolset(
+        cast(Any, _OutcomeSession("Showing 1 - 10 of 42 results")),
+        task,
+        "tab-1",
+        emit,
+    )
+    toolset.action_count = 2
+    toolset.successful_action_count = 1
+
+    first_outcome, _ = await browse_agents.navigate_with_tools(
+        object(), toolset, task, "{}"
+    )
+    assert first_outcome is NavigationOutcome.RESULTS_READY
+    assert toolset.outcome_evidence == "Showing 1 - 10 of 42 results"
+
+    toolset.last_error_code = BrowseErrorCode.POLICY_DENIED
+    second_outcome, _ = await browse_agents.navigate_with_tools(
+        object(), toolset, task, "{}", objective="inspect another result"
+    )
+
+    assert second_outcome is NavigationOutcome.UNKNOWN
+    assert toolset.outcome is NavigationOutcome.UNKNOWN
+    assert toolset.outcome_evidence == ""
+    assert toolset.last_error_code is None
+    assert toolset.action_count == 2
+    assert toolset.successful_action_count == 1
+
+
+@pytest.mark.asyncio
+async def test_begin_run_preserves_quarantine_state():
+    toolset = _toolset("some text")
+    toolset._quarantined = True
+    toolset.outcome = NavigationOutcome.BLOCKED
+    toolset.outcome_evidence = "tab unavailable"
+    toolset.last_error_code = BrowseErrorCode.TAB_GONE
+
+    toolset.begin_run()
+
+    assert toolset.outcome is NavigationOutcome.BLOCKED
+    assert toolset.outcome_evidence == "tab unavailable"
+    assert toolset.last_error_code is BrowseErrorCode.TAB_GONE
+
+
+@pytest.mark.asyncio
+async def test_type_action_value_is_redacted_from_trace_and_tool_result():
+    class _TypingSession(_OutcomeSession):
+        def __init__(self) -> None:
+            super().__init__("some text")
+            self.executed_values: list[str | None] = []
+            self.snapshot_value: BrowserSnapshot | None = None
+
+        async def execute(self, action: BrowserAction) -> BrowserActionResult:
+            self.executed_values.append(action.text)
+            return BrowserActionResult(success=True, outcome="action executed")
+
+        async def snapshot(self, _tab_id: str) -> BrowserSnapshot:
+            assert self.snapshot_value is not None
+            return self.snapshot_value
+
+    traces: list[BrowserActionTrace] = []
+    session = _TypingSession()
+
+    async def emit(trace: BrowserActionTrace) -> None:
+        traces.append(trace)
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+    )
+    toolset = BrowserToolset(cast(Any, session), task, "tab-1", emit)
+    snapshot = BrowserSnapshot(
+        snapshot_id="snapshot-1",
+        tab_id="tab-1",
+        page_revision=0,
+        url="https://example.test/",
+        viewport_width=1280,
+        viewport_height=720,
+        scroll_x=0,
+        scroll_y=0,
+        elements=[
+            ElementRef(
+                ref="e0",
+                snapshot_id="snapshot-1",
+                tab_id="tab-1",
+                frame_id="main",
+                node_id="0:0",
+                role="textbox",
+                name="Password",
+                input_type="password",
+            )
+        ],
+        content_hash="snapshot-hash",
+    )
+    toolset._snapshot = snapshot
+    session.snapshot_value = snapshot
+
+    tool_result = await toolset._run(
+        BrowserAction(kind="type", ref="e0", text="secret-value")
+    )
+
+    action_trace = next(trace for trace in traces if trace.event == "action")
+    assert session.executed_values == ["secret-value"]
+    assert action_trace.action is not None
+    assert action_trace.action.text == "[redacted]"
+    assert "secret-value" not in action_trace.model_dump_json()
+    assert json.loads(tool_result)["action"]["text"] == "[redacted]"
+    assert "secret-value" not in tool_result
 
 
 @pytest.mark.asyncio

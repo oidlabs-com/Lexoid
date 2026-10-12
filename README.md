@@ -7,7 +7,7 @@
 Lexoid is an efficient library for:
 
 - Parsing documents and web pages using LLM-based or non-LLM (static) methods.
-- Automating read-only browser tasks through evidence-grounded web operations.
+- Automating web workflows through evidence-grounded browser operations.
 
 [Documentation](https://oidlabs-com.github.io/Lexoid/)
 
@@ -143,7 +143,7 @@ print(page_pdf["pdf_path"])
 
 ## Web Operator: for browser tasks
 
-Use `browse()` when the task requires goal-driven interaction with a website, such as searching, applying filters, or navigating pages to gather findings. It returns an evidence-backed answer; it does not convert the source URL to PDF:
+Use `browse()` when the task requires goal-driven interaction with a website, including searching, applying filters, and completing multi-step non-binding quote, estimate, eligibility, or lookup forms with values supplied in the request. It returns an evidence-backed answer; it does not convert the source URL to PDF:
 
 ```python
 import asyncio
@@ -157,6 +157,16 @@ async def main():
 
 asyncio.run(main())
 ```
+
+**Note:**
+The navigator is instructed not to log in, create accounts, accept legal
+agreements, purchase, bind coverage, pay, or book, and to stop when required
+information, authentication, or consequential consent is needed. These are
+navigator instructions, not semantic enforcement for every site control;
+ambiguous actions should be reviewed. Popups are handled by purpose:
+promotional overlays can be dismissed, and cookie banners use reject or
+necessary-only options when available. CAPTCHA solving is planned; until it is
+implemented, a CAPTCHA that prevents progress is reported as a blocker.
 
 # Command Line Usage
 
