@@ -669,7 +669,10 @@ async def _execute_action(page, cfg, action, elements, start_url):
                 await page.keyboard.press(str(keys))
         elif kind == "scroll":
             sign = -1 if str(action.get("direction", "down")).lower() == "up" else 1
-            await page.evaluate(f"window.scrollBy(0, {sign} * window.innerHeight)")
+            await page.evaluate(
+                "direction => window.scrollBy(0, direction * window.innerHeight)",
+                sign,
+            )
         elif kind == "navigate" and action.get("url"):
             target = action["url"]
             if cfg.nav_same_domain and not _same_site(target, start_url):

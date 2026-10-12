@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.24-dev"
+version = "0.1.24"
 description = ""
 authors = []
 readme = "README.md"
@@ -42,13 +42,13 @@ paddlepaddle = "3.2.2"
 levenshtein = "^0.27.1"
 accelerate = "^1.10.1"
 google-genai = "^1.56.0"
-patchright = "^1.49.0"
+patchright = {version = "^1.49.0", optional = true}
 agent-framework-core = {version = "^1.16.0", optional = true}
 agent-framework-openai = {version = "^1.14.1", optional = true}
 tenacity = "^9.1.4"
 
 [tool.poetry.extras]
-browse = ["agent-framework-core", "agent-framework-openai"]
+browse = ["agent-framework-core", "agent-framework-openai", "patchright"]
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"

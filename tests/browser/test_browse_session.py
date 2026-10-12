@@ -666,7 +666,7 @@ async def test_popup_from_other_tab_not_consumed_by_unrelated_tab_action():
     session = GhostBrowserSession(GhostConfig.from_kwargs(True))
     page1 = _FakePageWithPopup()
     page1.handles = [_FakeSnapshotHandle(), _FakeSnapshotHandle()]
-    tab1_id = session._register_page(page1, "tab-1")
+    session._register_page(page1, "tab-1")
 
     page2 = _FakePageWithPopup()
     page2.handles = [_FakeSnapshotHandle(), _FakeClickTriggersPopupHandle(page2)]
