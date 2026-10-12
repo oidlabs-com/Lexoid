@@ -427,6 +427,9 @@ async def run_task(
                 page_reached = current_tab is not None and (
                     current_tab.url != url or toolset.successful_action_count > 0
                 )
+                navigator_budget_exhausted = (
+                    toolset.step_limit_reached and not toolset.is_quarantined
+                )
                 artifacts: list[PageArtifact] = []
                 if toolset.is_quarantined:
                     stop_reason = "blocked"
@@ -440,14 +443,19 @@ async def run_task(
                         NavigationOutcome.TIMEOUT,
                     }
                     and not page_reached
+                    and not navigator_budget_exhausted
                 ):
                     stop_reason = "blocked"
                 else:
                     await session.settle(toolset.tab_id)
-                    if navigation_outcome in {
-                        NavigationOutcome.BLOCKED,
-                        NavigationOutcome.TIMEOUT,
-                    }:
+                    if (
+                        navigation_outcome
+                        in {
+                            NavigationOutcome.BLOCKED,
+                            NavigationOutcome.TIMEOUT,
+                        }
+                        and not navigator_budget_exhausted
+                    ):
                         # Navigation self-reported blocked/timeout, but the page was
                         # reached; capture the reached page as evidence rather than
                         # discarding it based solely on model self-report.
@@ -574,6 +582,7 @@ async def run_task(
                             assessment is not None
                             and assessment.next_action == "investigate"
                             and assessment.objective
+                            and toolset.remaining_task_actions > 0
                         ):
                             if navigator_client is None:
                                 warnings.append(
@@ -602,10 +611,18 @@ async def run_task(
                             attempted_objectives.append(
                                 f"{assessment.objective} -> {investigate_outcome.value}"
                             )
-                            if investigate_outcome in {
-                                NavigationOutcome.BLOCKED,
-                                NavigationOutcome.TIMEOUT,
-                            }:
+                            investigation_budget_exhausted = (
+                                toolset.step_limit_reached
+                                and not toolset.is_quarantined
+                            )
+                            if toolset.is_quarantined or (
+                                investigate_outcome
+                                in {
+                                    NavigationOutcome.BLOCKED,
+                                    NavigationOutcome.TIMEOUT,
+                                }
+                                and not investigation_budget_exhausted
+                            ):
                                 # Investigation failed, but evidence captured so
                                 # far remains valid and must not be discarded.
                                 stop_reason = "blocked"
@@ -614,14 +631,26 @@ async def run_task(
                                     "continuing with evidence captured so far."
                                 )
                                 break
+                            if (
+                                investigate_outcome
+                                is NavigationOutcome.BUDGET_EXHAUSTED
+                                and not toolset.is_quarantined
+                            ):
+                                investigation_budget_exhausted = True
                             if investigate_outcome is NavigationOutcome.UNKNOWN:
                                 warnings.append(
                                     "Navigator did not verifiably complete the "
                                     "investigation objective; continuing with "
                                     "evidence captured so far."
                                 )
-                            await session.settle(toolset.tab_id)
-                            continue
+                            if investigation_budget_exhausted:
+                                warnings.append(
+                                    "Investigation used its navigator action budget; "
+                                    "trying deterministic pagination."
+                                )
+                            else:
+                                await session.settle(toolset.tab_id)
+                                continue
                         if not await session.advance_to_next_result_page(
                             toolset.tab_id
                         ):

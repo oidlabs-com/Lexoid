@@ -34,6 +34,56 @@ def _denied_json(outcome: str) -> str:
     return json.dumps({"success": False, "outcome": outcome})
 
 
+def _describe_target_element(snapshot: BrowserSnapshot | None, ref: str | None) -> str:
+    """Format element semantic descriptors (role, name, context) with ref."""
+    if not ref:
+        return ""
+    if not snapshot:
+        return f"(ref={ref})"
+    element = next((e for e in snapshot.elements if e.ref == ref), None)
+    if not element:
+        return f"(ref={ref})"
+    parts = []
+    role_or_tag = element.role or element.tag or "element"
+    parts.append(role_or_tag)
+    if element.name:
+        clean_name = " ".join(element.name.split())
+        if len(clean_name) > 60:
+            clean_name = clean_name[:57] + "..."
+        parts.append(f'"{clean_name}"')
+    if element.field_context:
+        parts.append(f'in "{element.field_context}"')
+    if element.in_modal:
+        parts.append("(in dialog)")
+    return f"{' '.join(parts)} (ref={ref})"
+
+
+def _format_action_call(action: BrowserAction, snapshot: BrowserSnapshot | None) -> str:
+    """Format human-readable representation of a proposed browser action."""
+    target = _describe_target_element(snapshot, action.ref)
+    if action.kind == "click":
+        return f"click {target}".strip()
+    if action.kind == "type":
+        text_preview = f'"{action.text}"' if action.text else '""'
+        return f"type {text_preview} into {target}".strip()
+    if action.kind == "select":
+        return f'select "{action.text or ""}" from {target}'.strip()
+    if action.kind == "hover":
+        return f"hover {target}".strip()
+    if action.kind == "keypress":
+        return f'keypress "{action.text or "Enter"}"'
+    if action.kind == "scroll":
+        direction = action.text or "down"
+        return f"scroll {direction} {target}".strip()
+    if action.kind == "navigate":
+        return f"navigate to {action.url or ''}"
+    if action.kind == "wait":
+        return f'wait for "{action.text}"' if action.text else "wait"
+    if action.kind in {"back", "refresh", "done", "accept_terms"}:
+        return action.kind
+    return f"{action.kind} {target}".strip()
+
+
 # Per-element identifiers are constant across a snapshot, so send them once.
 _OBSERVATION_EXCLUDE = {
     "content_hash": True,
@@ -60,6 +110,7 @@ class BrowserToolset:
         self._snapshot: BrowserSnapshot | None = None
         self._quarantined = False
         self.action_count = 0
+        self.run_action_count = 0
         self.successful_action_count = 0
         self.outcome = NavigationOutcome.UNKNOWN
         self.outcome_evidence = ""
@@ -78,6 +129,19 @@ class BrowserToolset:
         """Return whether this toolset has stopped access after a policy failure."""
         return self._quarantined
 
+    @property
+    def remaining_task_actions(self) -> int:
+        """Return the number of browser actions left in the task budget."""
+        return max(self._task.limits.max_steps - self.action_count, 0)
+
+    @property
+    def remaining_actions(self) -> int:
+        """Return the remaining actions allowed in this run and task."""
+        return min(
+            max(self._task.limits.max_steps_per_run - self.run_action_count, 0),
+            self.remaining_task_actions,
+        )
+
     def begin_run(self) -> None:
         """Reset navigator-run state without resetting the shared action budget."""
         if self._quarantined:
@@ -85,6 +149,8 @@ class BrowserToolset:
         self.outcome = NavigationOutcome.UNKNOWN
         self.outcome_evidence = ""
         self.last_error_code = None
+        self.run_action_count = 0
+        self.step_limit_reached = False
 
     async def _get_tab_url(self, tab_id: str) -> str:
         if hasattr(self._session, "tab_url"):
@@ -330,7 +396,7 @@ class BrowserToolset:
                 {
                     "success": False,
                     "outcome": "unknown outcome; use results_ready, no_results, "
-                    "blocked, or timeout",
+                    "blocked, timeout, or budget_exhausted",
                 }
             )
         if reported is NavigationOutcome.UNKNOWN:
@@ -396,19 +462,38 @@ class BrowserToolset:
             return json.dumps(
                 {"action": safe_action.model_dump(), "result": result.model_dump()}
             )
-        if self.action_count >= self._task.limits.max_steps:
+        if self.remaining_actions == 0:
             self.step_limit_reached = True
+            logger.warning(
+                "Browse action budget exhausted (run {}/{}, task {}/{}); rejected {}",
+                self.run_action_count,
+                self._task.limits.max_steps_per_run,
+                self.action_count,
+                self._task.limits.max_steps,
+                action.kind,
+            )
             return json.dumps(
                 {
                     "success": False,
-                    "outcome": "navigation step limit reached; call report_outcome "
-                    "now with the outcome you can support",
+                    "outcome": "browser action budget exhausted; call "
+                    "report_outcome('budget_exhausted', ...) unless the current "
+                    "page shows a separate site blocker",
                 }
             )
         if self._snapshot is None:
             await self.observe()
         assert self._snapshot is not None
         action.snapshot_id = self._snapshot.snapshot_id
+        call_desc = _format_action_call(safe_action, self._snapshot)
+        logger.info(
+            "+-- Step {} [run {}/{}, task {}/{}]",
+            self.action_count + 1,
+            self.run_action_count + 1,
+            self._task.limits.max_steps_per_run,
+            self.action_count + 1,
+            self._task.limits.max_steps,
+        )
+        logger.info("|   > {}", call_desc)
         await self._emit(
             BrowserActionTrace(
                 event="decision",
@@ -494,9 +579,24 @@ class BrowserToolset:
                     after_url=result.after_url,
                 )
         self.action_count += 1
+        self.run_action_count += 1
         if result.success:
             self.successful_action_count += 1
         self.last_error_code = None if result.success else result.error_code
+        if result.success:
+            url_part = f" (URL: {result.after_url})" if result.after_url else ""
+            tab_part = (
+                f" [opened tab {result.opened_tab_id}]" if result.opened_tab_id else ""
+            )
+            logger.info("|   [OK] Success{}{}", url_part, tab_part)
+        else:
+            err_code = (
+                result.error_code.value
+                if result.error_code is not None and hasattr(result.error_code, "value")
+                else result.error_code
+            )
+            code_part = f" (code={err_code})" if err_code else ""
+            logger.info("|   [FAIL] {}{}", result.outcome, code_part)
         await self._emit(
             BrowserActionTrace(
                 event="action",
@@ -507,6 +607,7 @@ class BrowserToolset:
                 else None,
                 action=safe_action,
                 result=result,
+                metadata={"description": call_desc},
             )
         )
         payload = {"action": safe_action.model_dump(), "result": result.model_dump()}

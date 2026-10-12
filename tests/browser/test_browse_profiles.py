@@ -79,6 +79,13 @@ def _toolset(page_text: str) -> BrowserToolset:
     return BrowserToolset(cast(Any, _OutcomeSession(page_text)), task, "tab-1", emit)
 
 
+def test_browse_limits_default_to_task_and_run_budgets():
+    limits = BrowseLimits()
+
+    assert limits.max_steps == 50
+    assert limits.max_steps_per_run == 20
+
+
 @pytest.mark.asyncio
 async def test_reported_outcome_requires_visible_evidence():
     toolset = _toolset("Showing 1 - 10 of 42 results")
@@ -101,6 +108,149 @@ async def test_reported_outcome_accepts_quoted_page_text():
 
     assert accepted["success"] is True
     assert toolset.outcome is NavigationOutcome.RESULTS_READY
+
+
+@pytest.mark.asyncio
+async def test_reported_budget_exhaustion_is_a_distinct_outcome():
+    toolset = _toolset("Showing 1 - 10 of 42 results")
+
+    accepted = json.loads(
+        await toolset.report_outcome("budget_exhausted", "No further action budget")
+    )
+
+    assert accepted["success"] is True
+    assert toolset.outcome is NavigationOutcome.BUDGET_EXHAUSTED
+
+
+def test_format_action_call_includes_role_name_context_and_ref():
+    from lexoid.core.browse.tools import _format_action_call
+
+    snapshot = BrowserSnapshot(
+        snapshot_id="s1",
+        tab_id="tab-1",
+        page_revision=0,
+        url="https://example.test/",
+        viewport_width=1280,
+        viewport_height=720,
+        scroll_x=0,
+        scroll_y=0,
+        elements=[
+            ElementRef(
+                ref="e18393",
+                snapshot_id="s1",
+                tab_id="tab-1",
+                frame_id="f1",
+                node_id="1",
+                role="button",
+                name="Search",
+            ),
+            ElementRef(
+                ref="e18252",
+                snapshot_id="s1",
+                tab_id="tab-1",
+                frame_id="f1",
+                node_id="2",
+                role="textbox",
+                name="Min SF",
+                field_context="Space Size",
+                in_modal=True,
+            ),
+        ],
+        content_hash="h1",
+    )
+
+    click_call = _format_action_call(
+        BrowserAction(kind="click", ref="e18393"), snapshot
+    )
+    assert click_call == 'click button "Search" (ref=e18393)'
+
+    type_call = _format_action_call(
+        BrowserAction(kind="type", ref="e18252", text="5000"), snapshot
+    )
+    assert (
+        type_call
+        == 'type "5000" into textbox "Min SF" in "Space Size" (in dialog) (ref=e18252)'
+    )
+
+
+@pytest.mark.asyncio
+async def test_action_execution_logs_step_info_and_success(monkeypatch):
+    from lexoid.core.browse import tools as tools_mod
+    from lexoid.core.browse.tools import BrowserToolset
+
+    logged_info: list[str] = []
+
+    class _LoggerSpy:
+        def info(self, msg: str, *args: Any) -> None:
+            logged_info.append(msg.format(*args) if args else msg)
+
+        def warning(self, *args, **kwargs) -> None:
+            pass
+
+        def debug(self, *args, **kwargs) -> None:
+            pass
+
+    monkeypatch.setattr(tools_mod, "logger", _LoggerSpy())
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+    )
+
+    class _MockSession:
+        async def snapshot(self, tab_id: str):
+            return BrowserSnapshot(
+                snapshot_id="s1",
+                tab_id=tab_id,
+                page_revision=0,
+                url="https://example.test/",
+                viewport_width=1280,
+                viewport_height=720,
+                scroll_x=0,
+                scroll_y=0,
+                elements=[
+                    ElementRef(
+                        ref="e1",
+                        snapshot_id="s1",
+                        tab_id=tab_id,
+                        frame_id="f1",
+                        node_id="1",
+                        role="button",
+                        name="Search",
+                    )
+                ],
+                content_hash="h1",
+            )
+
+        async def execute(self, action):
+            return BrowserActionResult(
+                success=True,
+                outcome="ok",
+                after_url="https://example.test/results",
+            )
+
+        async def tab(self, tab_id: str):
+            return OpenTab(
+                tab_id=tab_id, target_id="t1", url="https://example.test/results"
+            )
+
+    emitted: list[BrowserActionTrace] = []
+
+    async def emit(trace: BrowserActionTrace) -> None:
+        emitted.append(trace)
+
+    toolset = BrowserToolset(cast(Any, _MockSession()), task, "tab-1", emit)
+    await toolset.click("e1")
+
+    assert any("+-- Step 1 [run 1/20, task 1/50]" in line for line in logged_info)
+    assert any('|   > click button "Search" (ref=e1)' in line for line in logged_info)
+    assert any(
+        "|   [OK] Success (URL: https://example.test/results)" in line
+        for line in logged_info
+    )
+    action_trace = next(t for t in emitted if t.event == "action")
+    assert action_trace.metadata.get("description") == 'click button "Search" (ref=e1)'
 
 
 @pytest.mark.asyncio
@@ -162,6 +312,7 @@ async def test_navigator_run_does_not_reuse_prior_outcome(monkeypatch):
     assert toolset.last_error_code is None
     assert toolset.action_count == 2
     assert toolset.successful_action_count == 1
+    assert toolset.run_action_count == 0
 
 
 @pytest.mark.asyncio
@@ -171,12 +322,173 @@ async def test_begin_run_preserves_quarantine_state():
     toolset.outcome = NavigationOutcome.BLOCKED
     toolset.outcome_evidence = "tab unavailable"
     toolset.last_error_code = BrowseErrorCode.TAB_GONE
+    toolset.run_action_count = 3
+    toolset.step_limit_reached = True
 
     toolset.begin_run()
 
     assert toolset.outcome is NavigationOutcome.BLOCKED
     assert toolset.outcome_evidence == "tab unavailable"
     assert toolset.last_error_code is BrowseErrorCode.TAB_GONE
+    assert toolset.run_action_count == 3
+    assert toolset.step_limit_reached is True
+
+
+@pytest.mark.asyncio
+async def test_browser_action_budget_resets_per_run_but_caps_the_whole_task():
+    class _BudgetSession:
+        async def snapshot(self, tab_id: str):
+            from lexoid.core.browse.schemas import BrowserSnapshot
+
+            return BrowserSnapshot(
+                snapshot_id=f"snapshot-{toolset.action_count}",
+                tab_id=tab_id,
+                page_revision=0,
+                url="https://example.test/",
+                viewport_width=1280,
+                viewport_height=720,
+                scroll_x=0,
+                scroll_y=0,
+                content_hash=f"hash-{toolset.action_count}",
+            )
+
+        async def execute(self, action):
+            return BrowserActionResult(success=True, outcome="ok")
+
+        async def tab(self, tab_id: str):
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+        limits=BrowseLimits(max_steps=3, max_steps_per_run=2),
+    )
+
+    async def emit(_trace):
+        return None
+
+    toolset = BrowserToolset(cast(Any, _BudgetSession()), task, "tab-1", emit)
+
+    assert json.loads(await toolset.scroll())["result"]["success"] is True
+    assert json.loads(await toolset.scroll())["result"]["success"] is True
+    run_limit = json.loads(await toolset.scroll())
+    assert run_limit["success"] is False
+    assert toolset.action_count == 2
+    assert toolset.run_action_count == 2
+    assert toolset.step_limit_reached is True
+
+    toolset.begin_run()
+    assert toolset.remaining_actions == 1
+    assert json.loads(await toolset.scroll())["result"]["success"] is True
+    task_limit = json.loads(await toolset.scroll())
+    assert task_limit["success"] is False
+    assert toolset.action_count == 3
+    assert toolset.run_action_count == 1
+    assert toolset.step_limit_reached is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exhaustion_phase", ["initial", "investigation"])
+async def test_budget_exhaustion_still_paginates(monkeypatch, exhaustion_phase):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import EvidenceAssessment, PageArtifact
+
+    class _PaginatingSession:
+        def __init__(self):
+            self.advance_count = 0
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-1", target_id="t1", url=url)
+
+        async def tab(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
+
+        async def settle(self, tab_id):
+            return None
+
+        async def advance_to_next_result_page(self, tab_id):
+            self.advance_count += 1
+            return self.advance_count == 1
+
+    session = _PaginatingSession()
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: session)
+
+    async def fake_observe(self):
+        return "{}"
+
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", fake_observe)
+
+    navigator_runs = 0
+
+    async def exhausted_navigator(_client, toolset, *_args, **_kwargs):
+        nonlocal navigator_runs
+        navigator_runs += 1
+        if exhaustion_phase == "initial":
+            toolset.step_limit_reached = True
+            return NavigationOutcome.BLOCKED, BrowseUsage()
+        if navigator_runs == 1:
+            toolset.successful_action_count = 1
+            return NavigationOutcome.RESULTS_READY, BrowseUsage()
+        return NavigationOutcome.BUDGET_EXHAUSTED, BrowseUsage()
+
+    monkeypatch.setattr(orchestrator, "navigate_with_tools", exhausted_navigator)
+
+    async def capture(_session, _tab_id, index, _max_chars):
+        return PageArtifact(
+            artifact_id=f"artifact-{index}",
+            url="https://example.test/",
+            tab_id="tab-1",
+            content_hash=f"hash-{index}",
+            text=f"Page {index} results",
+        )
+
+    monkeypatch.setattr(orchestrator, "capture_page", capture)
+
+    first_assessment = (
+        EvidenceAssessment(
+            answerability="partial",
+            next_action="investigate",
+            objective="verify a requested result field",
+        )
+        if exhaustion_phase == "investigation"
+        else EvidenceAssessment(answerability="partial", next_action="paginate")
+    )
+    assessments = iter(
+        [
+            first_assessment,
+            EvidenceAssessment(answerability="sufficient", next_action="stop"),
+        ]
+    )
+
+    async def assess(*_args, **_kwargs):
+        return next(assessments), [], BrowseUsage()
+
+    monkeypatch.setattr(orchestrator, "assess_page", assess)
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+        limits=BrowseLimits(max_steps=3, max_steps_per_run=2, max_pages=2),
+        retain_final_page=False,
+    )
+
+    result = await orchestrator.run_task(
+        task, navigator_client=object(), assessor_client=object()
+    )
+
+    task_result = result.task_results[0]
+    assert task_result.status is BrowseTerminalState.COMPLETED
+    assert task_result.coverage.pages_captured == 2
+    assert session.advance_count == 1
+    assert navigator_runs == (2 if exhaustion_phase == "investigation" else 1)
 
 
 @pytest.mark.asyncio

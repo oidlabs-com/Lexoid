@@ -192,7 +192,9 @@ browse
    :param model_config: Model mapping or model name. Can be a single model string (applied to all roles), a dictionary, or a :class:`~lexoid.core.browse.schemas.BrowseModelConfig` overriding individual roles (``planner``, ``navigator``, ``assessor``, ``extractor``, ``synthesizer``) and their reasoning parameters.
    :param cdp_url: Chrome DevTools Protocol endpoint (e.g. ``"http://localhost:9222"``) to connect to an existing browser session.
    :param headless: Run the browser in headless mode (default ``True``).
-   :param limits: Resource constraints such as ``max_steps``, ``max_pages``, ``timeout_ms``.
+   :param limits: Resource constraints. ``max_steps`` caps browser actions across
+      the task (default 50); ``max_steps_per_run`` caps actions in each navigator
+      run (default 20), and ``max_pages`` caps captured pages.
    :param event_listener: Optional async callback receiving real-time :class:`~lexoid.core.browse.schemas.BrowserActionTrace` events.
    :return: :class:`~lexoid.core.browse.schemas.BrowseResult` containing synthesized answer, cited claim IDs, assessments, artifacts, coverage report, and token usage.
 

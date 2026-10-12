@@ -522,6 +522,7 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
     assert task_result.retained_tabs[0].url.startswith("https://tmsearch.uspto.gov/")
 
 
+# End-to-end evaluation needs further refinement
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "query, expected_text",
@@ -559,6 +560,14 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
             """,
             "Rittman",
         ),
+        (
+            """Navigate to the Facebook Ad Library, https://www.facebook.com/ads/library.
+            Search for all active ads currently running in the United States by the page 'Morgan & Morgan'.
+            Scroll to load the 10 most recent active ads. Extract the primary headline copy, the call-to-action (CTA) text, and flag whether the ad is using a video or an image.
+            Output as a structured Markdown table.
+            """,
+            "Morgan & Morgan",
+        ),
     ],
 )
 async def test_end_to_end(query, expected_text):
@@ -566,23 +575,23 @@ async def test_end_to_end(query, expected_text):
     if not os.getenv("RUN_BROWSE_LIVE_TESTS"):
         pytest.skip("RUN_BROWSE_LIVE_TESTS is not enabled")
 
-    _mc = {
-        "planner": {
-            "model": "gpt-5.6-sol",
-            "reasoning": {"effort": "medium", "summary": "detailed"},
-            "options": {"verbosity": "high"},
-        },
-        "navigator": {
-            "model": "gpt-5.6-sol",
-            "reasoning": {"effort": "medium"},
-            "options": {"verbosity": "high"},
-        },
-        "assessor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
-        "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
-        "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
-    }
+    # _mc = {
+    #     "planner": {
+    #         "model": "gpt-6-luna",
+    #         "reasoning": {"effort": "high", "summary": "detailed"},
+    #         "options": {"verbosity": "high"},
+    #     },
+    #     "navigator": {
+    #         "model": "gpt-5.6-sol",
+    #         "reasoning": {"effort": "medium"},
+    #         "options": {"verbosity": "high"},
+    #     },
+    #     "assessor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "medium"}},
+    #     "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
+    #     "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
+    # }
     # or
-    # _mc = "gpt-5.6-sol"
+    _mc = "gpt-5.6-sol"
     result = await browse(
         query,
         model_config=_mc,

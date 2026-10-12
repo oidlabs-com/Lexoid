@@ -19,6 +19,15 @@ from lexoid.core.browse.schemas import (
 from lexoid.core.ghost import GhostConfig, _get_async_playwright
 from loguru import logger
 
+_SNAPSHOT_ATTEMPTS = 3
+
+
+def _is_navigation_context_error(error: Exception) -> bool:
+    message = str(error)
+    return "Execution context was destroyed" in message or (
+        "Cannot find context with specified id" in message
+    )
+
 
 class TabGoneError(RuntimeError):
     """Raised when an action targets a closed  tab."""
@@ -411,6 +420,26 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         page = self._owned_pages.get(tab_id)
         if page is None or page.is_closed():
             raise TabGoneError(tab_id)
+        for attempt in range(_SNAPSHOT_ATTEMPTS):
+            try:
+                return await self._capture_snapshot(tab_id, page)
+            except Exception as error:
+                if (
+                    not _is_navigation_context_error(error)
+                    or attempt == _SNAPSHOT_ATTEMPTS - 1
+                ):
+                    raise
+                logger.debug(
+                    "Browse snapshot interrupted by navigation on tab {}; retrying",
+                    tab_id,
+                )
+                if page.is_closed():
+                    raise TabGoneError(tab_id) from error
+                self._revisions[tab_id] += 1
+                await self._settle_page(page)
+        raise TabGoneError(tab_id)
+
+    async def _capture_snapshot(self, tab_id: str, page: Any) -> BrowserSnapshot:
         locator = page.locator("button, a, input, select, textarea, [role]")
         entries = await locator.evaluate_all(_SNAPSHOT_ELEMENTS_JS)
         revision = self._revisions[tab_id]
