@@ -141,7 +141,7 @@ page_pdf = parse(
 print(page_pdf["pdf_path"])
 ```
 
-## Web Operator: for browser tasks
+## Web Operator (Preview): for browser tasks
 
 Use `browse()` when the task requires goal-driven interaction with a website, including searching, applying filters, and completing multi-step non-binding quote, estimate, eligibility, or lookup forms with values supplied in the request. It returns an evidence-backed answer; it does not convert the source URL to PDF:
 

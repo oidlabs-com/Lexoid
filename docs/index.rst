@@ -29,7 +29,7 @@ Key Features
 * Table detection and markdown conversion
 * Hyperlink detection and preservation
 * Reference highlighting and bounding box extraction (``return_bboxes``)
-* Browse: A web operator for autonomous browser task automation.
+* Browse (Preview): A web operator for autonomous browser task automation.
 * Parallel processing via multiprocessing
 * Command-line interface (``lexoid`` / ``python -m lexoid``)
 * Permissive Apache 2.0 license

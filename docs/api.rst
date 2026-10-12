@@ -163,12 +163,15 @@ parse_chunk
    :return: Dictionary containing parsed document data, plus a ``parser_used`` key indicating which parser type actually ran.
 
 
-browse
-^^^^^^
+browse (Preview)
+^^^^^^^^^^^^^^^^^
 
 .. py:function:: lexoid.api.browse(query: Union[str, BrowseTask], *, model_config: Union[str, BrowseModelConfig, dict, None] = None, cdp_url: Optional[str] = None, headless: bool = True, limits: Optional[BrowseLimits] = None, event_listener: Optional[BrowseEventListener] = None) -> BrowseResult
 
    Execute a goal-driven browser research or non-binding form task.
+
+   **Preview:** ``browse()`` is an initial experimental release; its behavior
+   and API may evolve.
 
    Orchestrates a collaborative multi-role agent loop to navigate web pages,
    ground findings in verbatim page text, assess evidence against hard constraints
