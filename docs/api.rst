@@ -432,24 +432,31 @@ Use ``browse()`` to perform autonomous, verifiable web research across allowlist
 
     async def main():
         # Simple task using a single model across all agent roles
+        # mc = "gpt-5.6-sol" (sets all roles to this model, reasoning effort defaults to medium if not specified)
         result = await browse(
             "Go to https://tmsearch.uspto.gov/ and retrieve all live cases for Arash Samadani as attorney",
-            model_config="gpt-5.6-sol",
+            model_config=mc,
             headless=False,
         )
         print("Answer:\n", result.answer)
         print("Cited Claims:", result.cited_claim_ids)
 
         # Or configure roles independently (planner, navigator, assessor, extractor, synthesizer)
-        mc = BrowseModelConfig.from_value({
-            "planner": {"model": "gpt-5.6-sol", "reasoning": {"effort": "medium"}},
-            "navigator": {"model": "gpt-5.6-sol", "reasoning": {"effort": "medium"}},
-            "assessor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
+        mc = {
+            "planner": {
+                "model": "gpt-6-luna",
+                "reasoning": {"effort": "high", "summary": "detailed"},
+                "options": {"verbosity": "high"},
+            },
+            "navigator": {
+                "model": "gpt-5.6-sol",
+                "reasoning": {"effort": "medium"},
+                "options": {"verbosity": "high"},
+            },
+            "assessor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "medium"}},
             "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
             "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
-        })
-        # or
-        # mc = "gpt-6-astra" (sets all roles to this model, reasoning effort defaults to medium if not specified)
+        }
 
         complex_task = (
             "Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ "
