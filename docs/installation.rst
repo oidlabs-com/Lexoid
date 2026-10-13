@@ -44,15 +44,30 @@ Additional environment variables
 Optional Dependencies
 ---------------------
 
-Playwright (for web content retrieval)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Parse web pages and render PDFs with ``parse()``
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-To use Playwright for retrieving web content (instead of the bare ``requests``
-library), install its browser dependencies after ``pip install lexoid``:
+Use ``parse(url)`` to retrieve and parse webpage content. To render a page to
+PDF before parsing it, pass ``as_pdf=True``; set ``save_dir`` if you want to
+keep the generated PDF after ``parse()`` returns. The Python package includes
+Playwright, but Chromium's browser binaries must also be installed:
 
 .. code-block:: bash
 
     playwright install --with-deps --only-shell chromium
+
+Web Operator: for autonomous browser tasks
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Use the web operator agent ``browse()`` to navigate websites and complete
+research tasks with evidence-backed results. This is separate from
+``parse()``: ``browse()`` does not download a URL for PDF conversion. Install
+the agent-framework extra and Patchright's browser binaries:
+
+.. code-block:: bash
+
+    pip install "lexoid[browse]"
+    patchright install --with-deps chromium
 
 LibreOffice (for DOCX to PDF on Linux)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

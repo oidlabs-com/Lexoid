@@ -73,7 +73,6 @@ parse
    * ``retry_on_fail`` (bool): When ``True`` (default), automatically retries with the alternate parser type / framework on failure.
    * ``return_bboxes`` (bool): If ``True``, attach per-segment bounding boxes (``bboxes`` key on each segment). Default: ``False``.
    * ``bbox_framework`` (str): Framework used for bounding box extraction when ``return_bboxes=True``. One of ``"auto"`` (default — chooses ``paddleocr`` or ``pdfplumber`` based on file content), ``"pdfplumber"``, or ``"paddleocr"``.
-
    Return value format:
    A dictionary with the following keys. Keys marked *(optional)* are only present in specific configurations; the others are present on the standard parsing path (and may hold an empty string / list / zeroed dict).
 
@@ -162,6 +161,45 @@ parse_chunk
    :param parser_type: The :class:`ParserType` to use.
    :param kwargs: Same keyword arguments accepted by :py:func:`parse`.
    :return: Dictionary containing parsed document data, plus a ``parser_used`` key indicating which parser type actually ran.
+
+
+browse (Preview)
+^^^^^^^^^^^^^^^^^
+
+.. py:function:: lexoid.api.browse(query: Union[str, BrowseTask], *, model_config: Union[str, BrowseModelConfig, dict, None] = None, cdp_url: Optional[str] = None, headless: bool = True, limits: Optional[BrowseLimits] = None, event_listener: Optional[BrowseEventListener] = None) -> BrowseResult
+
+   Execute a goal-driven browser research or non-binding form task.
+
+   **Preview:** ``browse()`` is an initial experimental release; its behavior
+   and API may evolve.
+
+   Orchestrates a collaborative multi-role agent loop to navigate web pages,
+   ground findings in verbatim page text, assess evidence against hard constraints
+   and evaluation criteria, and synthesize a grounded final response:
+
+   * **Planner**: Translates user query into a validated ``BrowseTask`` with seed URLs, allowed domain constraints, filters, and evaluation criteria.
+   * **Navigator**: Drives browser interactions (click, type, select, scroll, wait, navigate, tabs) on policy-allowed domains, including multi-step non-binding forms using task-supplied values.
+   * **Extractor**: Extracts verbatim factual claims anchored in captured page artifacts.
+   * **Assessor**: Evaluates cumulative evidence per candidate record and proposes next actions (``paginate``, ``investigate``, or ``stop``).
+   * **Synthesizer**: Synthesizes verified findings citing exact claim IDs with separate structured evaluative assessments.
+
+   The navigator is instructed not to log in, create accounts, accept legal
+   agreements, purchase, bind coverage, pay, or book, and to stop when required
+   information, authentication, or consequential consent is needed. These are
+   navigator instructions, not semantic enforcement for every site control;
+   ambiguous actions should be reviewed. Popups are handled according to their
+   purpose and are not blockers by themselves. CAPTCHA solving is planned; until
+   implemented, a CAPTCHA that prevents progress is reported as a blocker.
+
+   :param query: Natural language prompt specifying goal, seed URL/service, and constraints, or a pre-planned :class:`~lexoid.core.browse.schemas.BrowseTask`.
+   :param model_config: Model mapping or model name. Can be a single model string (applied to all roles), a dictionary, or a :class:`~lexoid.core.browse.schemas.BrowseModelConfig` overriding individual roles (``planner``, ``navigator``, ``assessor``, ``extractor``, ``synthesizer``) and their reasoning parameters.
+   :param cdp_url: Chrome DevTools Protocol endpoint (e.g. ``"http://localhost:9222"``) to connect to an existing browser session.
+   :param headless: Run the browser in headless mode (default ``True``).
+   :param limits: Resource constraints. ``max_steps`` caps browser actions across
+      the task (default 50); ``max_steps_per_run`` caps actions in each navigator
+      run (default 20), and ``max_pages`` caps captured pages.
+   :param event_listener: Optional async callback receiving real-time :class:`~lexoid.core.browse.schemas.BrowserActionTrace` events.
+   :return: :class:`~lexoid.core.browse.schemas.BrowseResult` containing synthesized answer, cited claim IDs, assessments, artifacts, coverage report, and token usage.
 
 
 Examples
@@ -380,3 +418,54 @@ Gemini model (currently the only provider supporting audio).
 
     result = parse("interview.mp3", model="gemini-2.5-flash")
     print(result["raw"])
+
+
+Browse:: Web Operator for autonomous browser tasks
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Use ``browse()`` to perform autonomous, verifiable web research across allowlisted domains:
+
+.. code-block:: python
+
+    import asyncio
+    from lexoid.api import browse, BrowseModelConfig
+
+    async def main():
+        # Simple task using a single model across all agent roles
+        # mc = "gpt-5.6-sol" (sets all roles to this model, reasoning effort defaults to medium if not specified)
+        result = await browse(
+            "Go to https://tmsearch.uspto.gov/ and retrieve all live cases for Arash Samadani as attorney",
+            model_config=mc,
+            headless=False,
+        )
+        print("Answer:\n", result.answer)
+        print("Cited Claims:", result.cited_claim_ids)
+
+        # Or configure roles independently (planner, navigator, assessor, extractor, synthesizer)
+        mc = {
+            "planner": {
+                "model": "gpt-6-luna",
+                "reasoning": {"effort": "high", "summary": "detailed"},
+                "options": {"verbosity": "high"},
+            },
+            "navigator": {
+                "model": "gpt-5.6-sol",
+                "reasoning": {"effort": "medium"},
+                "options": {"verbosity": "high"},
+            },
+            "assessor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "medium"}},
+            "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
+            "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
+        }
+
+        complex_task = (
+            "Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ "
+            "and shortlist 3 properties likely suited for opening a Korean BBQ restaurant. "
+            "Additional criteria: 'Minimum Size'>='5,000 SF'. "
+            "Give me street addresses sorted by price low to high."
+        )
+
+        res = await browse(complex_task, model_config=mc)
+        print("Shortlist:\n", res.answer)
+
+    asyncio.run(main())

@@ -1,7 +1,8 @@
 Welcome to Lexoid's Documentation
 =================================
 
-Lexoid is an efficient document parsing library that supports both LLM-based and non-LLM-based (static) parsing of PDFs, images, web pages, office documents, and audio files.
+Lexoid is a multimodal library for downstream AI workflows.
+It provides flexible parsing for documents, web pages, images, and audio, alongside evidence-grounded browser automation.
 
 .. toctree::
    :maxdepth: 2
@@ -29,6 +30,7 @@ Key Features
 * Table detection and markdown conversion
 * Hyperlink detection and preservation
 * Reference highlighting and bounding box extraction (``return_bboxes``)
+* Browse (Preview): A web operator for autonomous browser task automation.
 * Parallel processing via multiprocessing
 * Command-line interface (``lexoid`` / ``python -m lexoid``)
 * Permissive Apache 2.0 license

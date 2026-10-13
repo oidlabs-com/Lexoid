@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.23-dev"
+version = "0.1.24"
 description = ""
 authors = []
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"
 click = "^8.0.0"
 openai = "^2.18.0"
 pikepdf = "^9.3.0"
@@ -14,7 +14,7 @@ pdfplumber = "^0.11.4"
 pandas = "^2.2.3"
 tabulate = "^0.9.0"
 bs4 = "^0.0.2"
-markdownify = "^0.14.1"
+markdownify = "^1.2.3"
 opencv-python = "^4.10.0.84"
 pypdfium2 = "^4.30.0"
 markdown = "^3.7"
@@ -42,6 +42,13 @@ paddlepaddle = "3.2.2"
 levenshtein = "^0.27.1"
 accelerate = "^1.10.1"
 google-genai = "^1.56.0"
+patchright = {version = "^1.49.0", optional = true}
+agent-framework-core = {version = "^1.16.0", optional = true}
+agent-framework-openai = {version = "^1.14.1", optional = true}
+tenacity = "^9.1.4"
+
+[tool.poetry.extras]
+browse = ["agent-framework-core", "agent-framework-openai", "patchright"]
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"

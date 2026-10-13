@@ -18,6 +18,8 @@ from markdown import markdown
 from markdownify import markdownify as md
 from matplotlib import pyplot as plt
 
+from lexoid.core.ghost import GhostConfig
+
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 DEFAULT_LLM = os.getenv("DEFAULT_LLM", "gemini-3.5-flash")
 DEFAULT_LOCAL_LM = os.getenv("DEFAULT_LOCAL_LM", "ds4sd/SmolDocling-256M-preview")
@@ -301,7 +303,23 @@ def html_to_markdown(html: str, title: str, url: str) -> str:
     return content
 
 
-def get_webpage_soup(url: str) -> BeautifulSoup:
+def get_webpage_soup(url: str, ghost_opts=None, usage_sink=None) -> BeautifulSoup:
+    # Opt-in stealth/agentic "ghost" browsing (stealth / reliable JS rendering /
+    # agentic navigation). Falls through to the legacy fetch on miss or failure.
+    # When ghost browsing runs an agentic-navigation loop, its LLM token usage
+    # ({"input", "output", "total"}) is accumulated into ``usage_sink`` if given.
+    from lexoid.core.ghost import GhostConfig, ghost_get_html
+
+    cfg = GhostConfig.from_kwargs(ghost_opts)
+    if cfg.enabled:
+        html, usage = ghost_get_html(url, cfg)
+        if html is not None:
+            if usage_sink is not None:
+                for key, value in usage.items():
+                    usage_sink[key] = usage_sink.get(key, 0) + value
+            return BeautifulSoup(html, "html.parser")
+        logger.debug("Ghost browsing returned no content; using legacy fetch")
+
     try:
         from playwright.async_api import async_playwright
 
@@ -365,22 +383,28 @@ def get_webpage_soup(url: str) -> BeautifulSoup:
     return soup
 
 
-def read_html_content(url: str) -> Dict:
+def read_html_content(url: str, ghost_opts=None) -> Dict:
     """
     Reads the content of an HTML page from the given URL and converts it to markdown or structured content.
 
     Args:
         url (str): The URL of the HTML page.
+        ghost_opts: Optional ghost-browsing config (bool or dict). See parse().
 
     Returns:
         Dict: Dictionary containing parsed document data
     """
 
-    soup = get_webpage_soup(url)
+    ghost_usage = {"input": 0, "output": 0, "total": 0}
+    soup = get_webpage_soup(url, ghost_opts=ghost_opts, usage_sink=ghost_usage)
     title = soup.title.string.strip() if soup.title else "No title"
     url_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:8]
     full_title = f"{title} - {url_hash}"
-    return html_to_markdown(str(soup), title=full_title, url=url)
+    content = html_to_markdown(str(soup), title=full_title, url=url)
+    # Surface agentic-navigation token usage only when it actually ran.
+    if ghost_usage["total"]:
+        content["token_usage"] = ghost_usage
+    return content
 
 
 def extract_urls_from_markdown(content: str) -> List[str]:
@@ -407,7 +431,9 @@ def extract_urls_from_markdown(content: str) -> List[str]:
     return list(set(urls))  # Remove duplicates
 
 
-def recursive_read_html(url: str, depth: int, visited_urls: set = None) -> Dict:
+def recursive_read_html(
+    url: str, depth: int, visited_urls: set = None, ghost_opts=None
+) -> Dict:
     """
     Recursively reads HTML content from URLs up to specified depth.
 
@@ -415,6 +441,9 @@ def recursive_read_html(url: str, depth: int, visited_urls: set = None) -> Dict:
         url (str): The URL to parse
         depth (int): How many levels deep to recursively parse
         visited_urls (set): Set of already visited URLs to prevent cycles
+        ghost_opts: Optional ghost-browsing config (bool or dict). See parse().
+            The agentic-navigation step (if any) only runs for the root URL;
+            recursively-crawled children disable it to bound cost.
 
     Returns:
         Dict: Dictionary containing parsed document data
@@ -435,7 +464,7 @@ def recursive_read_html(url: str, depth: int, visited_urls: set = None) -> Dict:
     visited_urls.add(url)
 
     try:
-        content = read_html_content(url)
+        content = read_html_content(url, ghost_opts=ghost_opts)
     except Exception as e:
         print(f"Error processing URL {url}: {str(e)}")
         return {
@@ -453,11 +482,16 @@ def recursive_read_html(url: str, depth: int, visited_urls: set = None) -> Dict:
     # Extract URLs from all content sections
     urls = extract_urls_from_markdown(content["raw"])
 
+    # Children inherit resolved ghost settings but never run agentic navigation.
+    child_ghost_opts = GhostConfig.from_kwargs(ghost_opts).for_child()
+
     # Recursively process each URL
     recursive_docs = []
     for sub_url in urls:
         if sub_url not in visited_urls:
-            sub_content = recursive_read_html(sub_url, depth - 1, visited_urls)
+            sub_content = recursive_read_html(
+                sub_url, depth - 1, visited_urls, ghost_opts=child_ghost_opts
+            )
             recursive_docs.append(sub_content)
 
     content["recursive_docs"] = recursive_docs
