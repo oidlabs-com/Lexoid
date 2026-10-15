@@ -50,7 +50,7 @@ parse
    * ``api_provider`` (str): API provider for LLM parsing. One of ``"gemini"``, ``"openai"``, ``"anthropic"``, ``"mistral"``, ``"huggingface"``, ``"together"``, ``"openrouter"``, ``"fireworks"``, ``"ollama"``, or ``"local"``. If not set, the provider is inferred from the model name.
    * ``framework`` (str): Static parsing framework — ``"pdfplumber"`` (default), ``"pdfminer"``, or ``"paddleocr"``.
    * ``temperature`` (float): Temperature for LLM generation. Default: ``0.0``.
-   * ``max_tokens`` (int): Max output tokens per LLM call. Defaults to ``1024`` (``4096`` for Ollama).
+    * ``max_tokens`` (int): Max output tokens per LLM call. Defaults to ``16384`` for OpenAI document parsing, ``4096`` for Ollama, and ``1024`` otherwise. OpenAI uses the Responses API; this limit includes reasoning tokens. Incomplete or empty OpenAI responses raise an error rather than returning a partial document.
    * ``system_prompt`` (str): Override the default parser system prompt.
    * ``user_prompt`` (str): Override the default user prompt.
    * ``depth`` (int): Depth for recursive URL parsing. Default: ``1``.

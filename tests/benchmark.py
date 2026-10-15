@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import hashlib
 import json
 import multiprocessing as mp
@@ -7,13 +9,11 @@ from dataclasses import asdict, dataclass
 from glob import glob
 from pathlib import Path
 from statistics import mean, stdev
-from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
+from benchmark_utils import METRIC_NAMES, calculate_similarities
 from dotenv import load_dotenv
-
 from lexoid.api import parse
-from benchmark_utils import calculate_similarities, METRIC_NAMES
 
 load_dotenv()
 
@@ -23,7 +23,7 @@ load_dotenv()
 ISOLATE_PARSE = os.environ.get("BENCHMARK_ISOLATE", "0") == "1"
 
 
-def _parse_worker(input_path: str, parse_kwargs: Dict, queue: mp.Queue) -> None:
+def _parse_worker(input_path: str, parse_kwargs: dict, queue: mp.Queue) -> None:
     try:
         from lexoid.api import parse as _parse
 
@@ -46,7 +46,7 @@ def _parse_worker(input_path: str, parse_kwargs: Dict, queue: mp.Queue) -> None:
         )
 
 
-def _parse_isolated(input_path: str, parse_kwargs: Dict) -> Dict:
+def _parse_isolated(input_path: str, parse_kwargs: dict) -> dict:
     """Run parse() in a fresh subprocess and return the result dict."""
     ctx = mp.get_context("spawn")
     queue: mp.Queue = ctx.Queue()
@@ -70,7 +70,7 @@ config_options = {
     "parser_type": ["LLM_PARSE", "STATIC_PARSE", "AUTO"],
     "model": [
         # # Google models
-        # "gemini-3.5-flash",
+        "gemini-3.8-flash",
         # "gemini-3.1-pro-preview",
         # "gemini-3.1-flash-lite",
         # "gemini-3-flash-preview",
@@ -85,7 +85,7 @@ config_options = {
         # "gemini-1.5-flash",
         # "gemini-1.5-pro",
         # # Claude models
-        "claude-opus-4-8",
+        # "claude-opus-4-8",
         # "claude-sonnet-4-6",
         # "claude-haiku-4-5-20251001",
         # "claude-opus-4-20250514",
@@ -134,20 +134,20 @@ config_options = {
 
 @dataclass
 class BenchmarkResult:
-    config: Dict
-    similarities: List[Dict]
-    mean_similarity: Optional[Dict] = None
-    std_similarity: Optional[Dict] = None
-    execution_time: Optional[List[float]] = None
-    cost: Optional[List[float]] = None
+    config: dict
+    similarities: list[dict]
+    mean_similarity: dict | None = None
+    std_similarity: dict | None = None
+    execution_time: list[float] | None = None
+    cost: list[float] | None = None
     # Per-iteration token usage dicts ({"input", "output", "total"}). Saved to
     # the progress cache so cost can be recomputed later even if pricing was
     # missing (or zero) at run time.
-    token_usage: Optional[List[Dict]] = None
-    error: Optional[str] = None
+    token_usage: list[dict] | None = None
+    error: str | None = None
 
 
-def _cache_key(input_path: str, config: Dict) -> str:
+def _cache_key(input_path: str, config: dict) -> str:
     """Deterministic filename for caching a (config, input_file) result."""
     payload = json.dumps(
         {"input": os.path.basename(input_path), "config": config},
@@ -159,8 +159,8 @@ def _cache_key(input_path: str, config: Dict) -> str:
 
 
 def _load_cached_result(
-    cache_dir: str, input_path: str, config: Dict
-) -> Optional[BenchmarkResult]:
+    cache_dir: str, input_path: str, config: dict
+) -> BenchmarkResult | None:
     path = os.path.join(cache_dir, _cache_key(input_path, config))
     if not os.path.exists(path):
         return None
@@ -181,7 +181,7 @@ def _save_cached_result(
         json.dump(asdict(result), fp, indent=2, default=str)
 
 
-def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, str]]:
+def get_input_output_pairs(input_path: str, output_dir: str) -> list[tuple[str, str]]:
     """Get matching input and ground truth file pairs."""
     if os.path.isfile(input_path):
         # Single file mode
@@ -208,8 +208,8 @@ def get_input_output_pairs(input_path: str, output_dir: str) -> List[Tuple[str, 
 def run_benchmark_config(
     input_path: str,
     ground_truth: str,
-    config: Dict,
-    output_save_dir: str = None,
+    config: dict,
+    output_save_dir: str | None = None,
     iterations: int = 1,
 ) -> BenchmarkResult:
     """Run a single benchmark configuration for a specified number of iterations."""
@@ -315,7 +315,7 @@ def run_benchmark_config(
     return benchmark_result
 
 
-def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
+def aggregate_results(results: list[BenchmarkResult]) -> BenchmarkResult | None:
     """Aggregate multiple benchmark results into a single result."""
     if not results:
         return None
@@ -373,7 +373,7 @@ def aggregate_results(results: List[BenchmarkResult]) -> BenchmarkResult:
     )
 
 
-def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[Dict]:
+def generate_test_configs(input_path: str, test_attributes: list[str]) -> list[dict]:
     """
     Generate different configuration combinations to test based on specified attributes.
     """
@@ -430,7 +430,7 @@ def generate_test_configs(input_path: str, test_attributes: List[str]) -> List[D
     return configs
 
 
-def format_results(results: List[BenchmarkResult], test_attributes: List[str]) -> str:
+def format_results(results: list[BenchmarkResult], test_attributes: list[str]) -> str:
     """Format benchmark results as a markdown table, including only tested attributes."""
     sorted_results = sorted(
         results, key=lambda x: x.similarities[0]["sequence_matcher"], reverse=True
@@ -440,7 +440,7 @@ def format_results(results: List[BenchmarkResult], test_attributes: List[str]) -
     headers = ["Rank"]
     for attr in test_attributes:
         headers.append(attr.replace("_", " ").title())
-    for metric in results[0].similarities.keys():
+    for metric in results[0].similarities:
         headers.append(metric.replace("_", " ").title())
     headers.extend(["Time (s)", "Cost ($)", "Error"])
 
@@ -461,7 +461,7 @@ def format_results(results: List[BenchmarkResult], test_attributes: List[str]) -
         row.extend(
             [
                 f"{result.similarities[0][metric]:.3f} (±{result.std_similarity[metric]:.3f})"
-                for metric in result.std_similarity.keys()
+                for metric in result.std_similarity
             ]
         )
         row.extend(
@@ -479,10 +479,10 @@ def format_results(results: List[BenchmarkResult], test_attributes: List[str]) -
 def run_benchmarks(
     input_path: str,
     output_dir: str,
-    test_attributes: List[str],
+    test_attributes: list[str],
     benchmark_output_dir: str,
     iterations: int = 3,
-) -> List[BenchmarkResult]:
+) -> list[BenchmarkResult]:
     """Run all benchmarks for given input(s) and return results."""
     # Get input/output file pairs
     file_pairs = get_input_output_pairs(input_path, output_dir)
@@ -494,7 +494,7 @@ def run_benchmarks(
     configs = generate_test_configs(file_pairs[0][0], test_attributes)
 
     # Run benchmarks
-    results: List[BenchmarkResult] = []
+    results: list[BenchmarkResult] = []
     total_configs = len(configs)
     total_files = len(file_pairs)
 
@@ -502,7 +502,7 @@ def run_benchmarks(
         f"Running {total_configs} configurations across {total_files} file(s) for {iterations} iterations..."
     )
 
-    all_results: List[Tuple[str, BenchmarkResult]] = []
+    all_results: list[tuple[str, BenchmarkResult]] = []
     for i, config in enumerate(configs, 1):
         print(f"Progress: {i}/{total_configs} - Testing config: {config}")
 
