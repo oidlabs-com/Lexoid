@@ -12,12 +12,14 @@ output_dir = "tests/outputs"
 os.makedirs(output_dir, exist_ok=True)
 models = [
     # Google models
-    "gemini-3.5-flash",
-    "gemini-2.5-pro",
-    # OpenAI models
-    "gpt-4o",
-    "gpt-4o-mini",
-    # Anthropic models
+    "gemini-4-argon",
+    "gemini-3.8-flash",
+    "gemini-3.5-flash-lite",
+    # # OpenAI models
+    "gpt-6-astra",
+    "gpt-6.1-sol",
+    "gpt-6-luna",
+    # # Anthropic models
     "claude-opus-4-8",
     "claude-sonnet-5",
     "claude-sonnet-4-6",
