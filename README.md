@@ -335,7 +335,9 @@ _Note:_ Benchmarks are currently done in the zero-shot setting.
 
 | Rank | Model                                                    | SequenceMatcher Similarity | TFIDF Similarity | Time (s) | Cost ($) |
 | ---- | -------------------------------------------------------- | -------------------------- | ---------------- | -------- | -------- |
-| 1    | gemini-3.8-flash                                         | 0.913 (±0.163)             |                  | 42.22    |          |
+| 1    | gemini-3.5-flash-lite (thinking: medium)                 | 0.959 (±0.071)             |                  | 9.84     |          |
+| 2    | gemini-3.8-flash (thinking: low)                         | 0.932 (±0.117)             |                  | 20.73    |          |
+| 3    | gemini-4-argon (thinking: high)                          | 0.890 (±0.229)             | (±0.046)         | 69.63    |          |
 | 6    | gpt-5.2                                                  | 0.890 (±0.193)             | 0.975 (±0.036)   | 33.32    | 0.03959  |
 | 7    | gemini-2.5-flash                                         | 0.886 (±0.164)             | 0.986 (±0.027)   | 52.55    | 0.01226  |
 | 8    | mistral-ocr-latest                                       | 0.882 (±0.106)             | 0.932 (±0.091)   | 5.75     | 0.00121  |

@@ -646,6 +646,7 @@ def parse_with_schema(
             system_prompt=system_prompt,
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
+            thinking_level=kwargs.get("thinking_level"),
         )
         response = resp_dict.get("response", "")
         response = response.split("```json")[-1].split("```")[0].strip()
@@ -663,6 +664,7 @@ def parse_with_schema(
             image_url=image,
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
+            thinking_level=kwargs.get("thinking_level"),
         )
 
         response = resp_dict.get("response", "")
@@ -715,6 +717,7 @@ def parse_to_latex(
             image_url=image,
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
+            thinking_level=kwargs.get("thinking_level"),
         )
         response = resp_dict.get("response", "").strip()
         response = response.split("```latex")[-1].split("```")[0].strip()

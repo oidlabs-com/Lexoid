@@ -594,14 +594,18 @@ def parse_image_with_gemini(
     generation_config = {
         "temperature": kwargs.get("temperature", 0),
     }
+    if kwargs["model"].startswith("gemini-"):
+        thinking_level = kwargs.get("thinking_level")
+        if thinking_level:
+            if thinking_level in ("low", "medium", "high"):
+                generation_config["thinkingConfig"] = {"thinking_level": thinking_level}
+            elif thinking_level in ("none", "off"):
+                generation_config["thinkingConfig"] = {"thinking_budget": 0}
+        else:
+            generation_config["thinkingConfig"] = {"thinking_level": "medium"}
+
     parts = [{"text": prompt}]
     if base64_file:
-        if kwargs["model"].startswith("gemini-"):
-            if "flash" in kwargs["model"]:
-                generation_config["thinkingConfig"] = {"thinking_level": "medium"}
-            else:
-                generation_config["thinkingConfig"] = {"thinking_level": "low"}
-
         parts.append({"inline_data": {"mime_type": mime_type, "data": base64_file}})
     payload = {
         "contents": [
@@ -738,6 +742,7 @@ def create_response(
     image_url: str | None = None,
     temperature: float = 0.0,
     max_tokens: int = 1024,
+    thinking_level: str | None = None,
 ) -> dict:
     if api == "gemini":
         if image_url:
@@ -748,6 +753,7 @@ def create_response(
             temperature=temperature,
             max_tokens=max_tokens,
             system_prompt=system_prompt,
+            thinking_level=thinking_level,
         )
         return {
             "response": response["raw"],
@@ -774,6 +780,7 @@ def create_response(
             image_url,
             temperature,
             max_tokens,
+            thinking_level=thinking_level,
         )
 
 
@@ -786,6 +793,7 @@ def _create_client_response(
     image_url: str | None,
     temperature: float,
     max_tokens: int,
+    thinking_level: str | None = None,
 ) -> dict:
     if api == "openai":
         from openai.types.responses import ResponseInputContentParam
@@ -797,13 +805,16 @@ def _create_client_response(
             content.append(
                 {"type": "input_image", "image_url": image_url, "detail": "auto"}
             )
-        response = client.responses.create(
-            model=model,
-            instructions=system_prompt,
-            input=[{"role": "user", "content": content}],
-            max_output_tokens=max_tokens,
-            store=False,
-        )
+        request_params: dict[str, Any] = {
+            "model": model,
+            "instructions": system_prompt,
+            "input": [{"role": "user", "content": content}],
+            "max_output_tokens": max_tokens,
+            "store": False,
+        }
+        if thinking_level:
+            request_params["reasoning"] = {"effort": thinking_level}
+        response = client.responses.create(**request_params)
         if response.status != "completed":
             reason = getattr(response.incomplete_details, "reason", None)
             error_code = getattr(response.error, "code", None)
@@ -863,8 +874,15 @@ def _create_client_response(
             "messages": [{"role": "user", "content": content}],
             "max_tokens": max_tokens,
         }
-        # Opus 4.7+ and Sonnet 5+ deprecated `temperature`
-        if not _ANTHROPIC_MODEL_RE.match(model):
+        if thinking_level:
+            budget_map = {"low": 1024, "medium": 2048, "high": 4096}
+            budget = budget_map.get(thinking_level, 1024)
+            if max_tokens <= budget:
+                request_params["max_tokens"] = budget + 1024
+            request_params["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            if not _ANTHROPIC_MODEL_RE.match(model):
+                request_params["temperature"] = 1.0
+        elif not _ANTHROPIC_MODEL_RE.match(model):
             request_params["temperature"] = temperature
         response = client.messages.create(**request_params)
         response_text = "".join(
@@ -948,6 +966,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> dict:
             image_url=image_url,
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", default_max_tokens),
+            thinking_level=kwargs.get("thinking_level"),
         )
 
         # Get completion from selected API

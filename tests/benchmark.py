@@ -69,21 +69,10 @@ def _parse_isolated(input_path: str, parse_kwargs: dict) -> dict:
 config_options = {
     "parser_type": ["LLM_PARSE", "STATIC_PARSE", "AUTO"],
     "model": [
-        # # Google models
+        # Google models
+        "gemini-4-argon",
         "gemini-3.8-flash",
-        # "gemini-3.1-pro-preview",
-        # "gemini-3.1-flash-lite",
-        # "gemini-3-flash-preview",
-        # "gemini-3-pro-preview",
-        # "gemini-3-pro-image-preview",
-        # "gemini-2.5-flash",
-        # "gemini-2.5-pro",
-        # "gemini-2.0-flash",
-        # "gemini-2.0-flash-thinking-exp",
-        # "gemini-2.0-flash-001",
-        # "gemini-1.5-flash-8b",
-        # "gemini-1.5-flash",
-        # "gemini-1.5-pro",
+        "gemini-3.5-flash-lite",
         # # Claude models
         # "claude-opus-4-8",
         # "claude-sonnet-4-6",
@@ -127,7 +116,7 @@ config_options = {
     "pages_per_split": [1, 2, 4, 8],
     "max_threads": [1, 2, 4, 8],
     "as_pdf": [True, False],
-    "temperature": [0.0, 0.2, 0.7],
+    "thinking_level": ["low", "medium", "high"],
     "autoselect_llm": [False],
 }
 
@@ -388,7 +377,7 @@ def generate_test_configs(input_path: str, test_attributes: list[str]) -> list[d
     for attr in test_attributes:
         new_configs = []
         for config in configs:
-            if attr == "parser_type" or attr == "temperature":
+            if attr in ("parser_type", "thinking_level", "temperature"):
                 for value in config_options[attr]:
                     new_config = config.copy()
                     new_config[attr] = value
@@ -535,6 +524,10 @@ def run_benchmarks(
                 model_name = result.config.get("model", "AUTO")
                 if model_name == "AUTO" and result.config.get("autoselect_llm", False):
                     model_name = "AUTO (with auto-selected model)"
+                elif "thinking_level" in result.config:
+                    model_name = (
+                        f"{model_name} (thinking: {result.config['thinking_level']})"
+                    )
                 result_dict = {
                     "Model": model_name,
                 }
@@ -585,7 +578,7 @@ def main():
         # "pages_per_split",
         # "max_threads",
         # "as_pdf",
-        # "temperature",
+        "thinking_level",
         # "autoselect_llm",
     ]
 
@@ -615,8 +608,15 @@ def main():
     )[:3]
     print("\nTop 3 Configurations:")
     for i, result in enumerate(top_results, 1):
+        model_name = result.config.get("model", "AUTO")
+        if model_name == "AUTO" and result.config.get("autoselect_llm", False):
+            model_name = "AUTO (with auto-selected model)"
+        elif "thinking_level" in result.config:
+            model_name = f"{model_name} (thinking: {result.config['thinking_level']})"
         print(
-            f"{i}. Similarity: {result.mean_similarity['sequence_matcher']:.3f} (±{result.std_similarity['sequence_matcher']:.3f}), Time: {result.execution_time[0]:.2f}s"
+            f"{i}. Model: {model_name} - "
+            f"Similarity: {result.mean_similarity['sequence_matcher']:.3f} (±{result.std_similarity['sequence_matcher']:.3f}), "
+            f"Time: {result.execution_time[0]:.2f}s"
         )
         print(f"   Config: {result.config}")
 
