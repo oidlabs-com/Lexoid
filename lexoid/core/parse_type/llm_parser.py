@@ -1,11 +1,16 @@
+from __future__ import annotations
+
 import ast
 import base64
 import io
 import mimetypes
 import os
 import re
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from functools import wraps
-from typing import Dict, List, Optional, Tuple
+from importlib import import_module
+from typing import Any
 
 import requests
 from lexoid.core.conversion_utils import (
@@ -38,13 +43,12 @@ from tenacity import (
     wait_fixed,
 )
 
-
 _ANTHROPIC_MODEL_RE = re.compile(
     r"claude-(opus-4-[789]|sonnet-(?:[5-9]|[1-9]\d)(?:[-.].*)?)$"
 )
 
 
-def _llm_parse_error_dict(kwargs: dict, error: Exception) -> Dict:
+def _llm_parse_error_dict(kwargs: dict, error: Exception) -> dict:
     return {
         "raw": "",
         "segments": [],
@@ -87,7 +91,7 @@ def retry_on_error(func):
 
 
 @retry_on_error
-def parse_llm_doc(path: str, **kwargs) -> Dict:
+def parse_llm_doc(path: str, **kwargs) -> dict:
     mime_type = get_file_type(path)
     if not ("image" in mime_type or "pdf" in mime_type or "audio" in mime_type):
         raise ValueError(
@@ -122,9 +126,7 @@ def strip_data_url_prefix(image_url: str) -> str:
     return image_url.split(";base64,", 1)[1]
 
 
-def build_ollama_prompt(
-    system_prompt: Optional[str], user_prompt: Optional[str]
-) -> str:
+def build_ollama_prompt(system_prompt: str | None, user_prompt: str | None) -> str:
     prompt_parts = [part for part in [system_prompt, user_prompt] if part]
     return "\n\n".join(prompt_parts)
 
@@ -132,10 +134,10 @@ def build_ollama_prompt(
 def create_ollama_response(
     model: str,
     prompt: str,
-    image_url: Optional[str] = None,
+    image_url: str | None = None,
     temperature: float = 0.0,
     max_tokens: int = 1024,
-) -> Dict:
+) -> dict:
     import requests
 
     payload = {
@@ -186,7 +188,7 @@ def create_ollama_response(
 
 def doctags_to_markdown_and_bboxes(
     doctags: str,
-) -> Tuple[str, List[Tuple[str, List[float]]]]:
+) -> tuple[str, list[tuple[str, list[float]]]]:
     """
     # Reference: https://huggingface.co/ibm-granite/granite-docling-258M
 
@@ -199,12 +201,12 @@ def doctags_to_markdown_and_bboxes(
     """
     # Tokenize into tags and text
     tokens = re.split(r"(<[^>]+>)", doctags)
-    md_lines: List[str] = []
-    bboxes: List[Tuple[str, List[float]]] = []
+    md_lines: list[str] = []
+    bboxes: list[tuple[str, list[float]]] = []
 
     # State for capturing bounding boxes
-    loc_buffer: List[int] = []
-    pending_bbox: List[float] = None
+    loc_buffer: list[int] = []
+    pending_bbox: list[float] | None = None
 
     def update_bbox_from_tag(tag: str):
         nonlocal loc_buffer, pending_bbox
@@ -287,9 +289,9 @@ def doctags_to_markdown_and_bboxes(
         # OTSL table
         if tok == "<otsl>":
             j = i + 1
-            headers: List[str] = []
-            rows: List[List[str]] = []
-            current_row: List[str] = []
+            headers: list[str] = []
+            rows: list[list[str]] = []
+            current_row: list[str] = []
 
             def flush_row():
                 nonlocal current_row, rows
@@ -367,14 +369,14 @@ def doctags_to_markdown_and_bboxes(
     return markdown, bboxes
 
 
-def parse_with_local_model(path: str, **kwargs) -> Dict:
+def parse_with_local_model(path: str, **kwargs) -> dict:
     model_name = kwargs.get("model", DEFAULT_LOCAL_LM)
     if model_name.lower().startswith("paddlepaddle/paddleocr-vl"):
         return parse_with_paddleocr_vl(path, **kwargs)
     return parse_with_docling(path, **kwargs)
 
 
-def parse_with_docling(path: str, **kwargs) -> Dict:
+def parse_with_docling(path: str, **kwargs) -> dict:
     # Source: https://huggingface.co/ibm-granite/granite-docling-258M
     import torch
     from PIL import Image
@@ -418,7 +420,7 @@ def parse_with_docling(path: str, **kwargs) -> Dict:
         instruction = re.sub(pattern, process_match, instruction)
 
     segments = []
-    all_md_pages: List[str] = []
+    all_md_pages: list[str] = []
 
     start_page = kwargs.get("start", 0)
 
@@ -476,10 +478,10 @@ def parse_with_docling(path: str, **kwargs) -> Dict:
     }
 
 
-_PADDLEOCR_VL_PIPELINE_CACHE: Dict[Tuple, object] = {}
+_PADDLEOCR_VL_PIPELINE_CACHE: dict[tuple, object] = {}
 
 
-def _get_paddleocr_vl_pipeline(pipeline_kwargs: Dict):
+def _get_paddleocr_vl_pipeline(pipeline_kwargs: dict):
     try:
         from paddleocr import PaddleOCRVL
     except ImportError as e:
@@ -502,7 +504,7 @@ def _get_paddleocr_vl_pipeline(pipeline_kwargs: Dict):
     return _PADDLEOCR_VL_PIPELINE_CACHE[cache_key]
 
 
-def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
+def parse_with_paddleocr_vl(path: str, **kwargs) -> dict:
     # Source: https://huggingface.co/PaddlePaddle/PaddleOCR-VL
     model_name = kwargs.get("model", "")
     default_pipeline_version = (
@@ -518,8 +520,8 @@ def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
     results = pipeline.predict(path)
 
     start_page = kwargs.get("start", 0)
-    segments: List[Dict] = []
-    page_markdowns: List[str] = []
+    segments: list[dict] = []
+    page_markdowns: list[str] = []
 
     for idx, res in enumerate(results):
         md = res.markdown
@@ -545,7 +547,7 @@ def parse_with_paddleocr_vl(path: str, **kwargs) -> Dict:
     }
 
 
-def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
+def parse_with_gemini(path: str, **kwargs) -> dict:
     # Check if the file is an image and convert to PDF if necessary
     mime_type, _ = mimetypes.guess_type(path)
 
@@ -562,20 +564,24 @@ def parse_with_gemini(path: str, **kwargs) -> List[Dict] | str:
         base64_file = base64.b64encode(file_content).decode("utf-8")
 
     return parse_image_with_gemini(
-        base64_file=base64_file, mime_type=mime_type, **kwargs
+        base64_file=base64_file, mime_type=mime_type or "application/pdf", **kwargs
     )
 
 
 def parse_image_with_gemini(
-    base64_file: Optional[str], mime_type: str = "image/png", **kwargs
-) -> Dict:
+    base64_file: str | None, mime_type: str = "image/png", **kwargs
+) -> dict:
 
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         raise ValueError("GOOGLE_API_KEY environment variable is not set")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{kwargs['model']}:generateContent?key={api_key}"
-
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{kwargs['model']}:generateContent"
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": api_key,
+    }
+    logger.debug(f"Parsing with Gemini model: {kwargs['model']}")
     if "system_prompt" in kwargs:
         prompt = kwargs["system_prompt"]
     else:
@@ -588,18 +594,18 @@ def parse_image_with_gemini(
     generation_config = {
         "temperature": kwargs.get("temperature", 0),
     }
+    if kwargs["model"].startswith("gemini-"):
+        thinking_level = kwargs.get("thinking_level")
+        if thinking_level:
+            if thinking_level in ("low", "medium", "high"):
+                generation_config["thinkingConfig"] = {"thinking_level": thinking_level}
+            elif thinking_level in ("none", "off"):
+                generation_config["thinkingConfig"] = {"thinking_budget": 0}
+        else:
+            generation_config["thinkingConfig"] = {"thinking_level": "medium"}
+
     parts = [{"text": prompt}]
     if base64_file:
-        if kwargs["model"] == "gemini-2.5-pro":
-            generation_config["thinkingConfig"] = {"thinkingBudget": 128}
-        elif kwargs["model"].startswith("gemini-2.5-flash"):
-            generation_config["thinkingConfig"] = {"thinkingBudget": 0}
-        elif kwargs["model"].startswith("gemini-3"):
-            if "flash" in kwargs["model"]:
-                generation_config["thinkingConfig"] = {"thinkingLevel": "minimal"}
-            else:
-                generation_config["thinkingConfig"] = {"thinkingLevel": "low"}
-
         parts.append({"inline_data": {"mime_type": mime_type, "data": base64_file}})
     payload = {
         "contents": [
@@ -610,7 +616,6 @@ def parse_image_with_gemini(
         "generationConfig": generation_config,
     }
 
-    headers = {"Content-Type": "application/json"}
     try:
         response = requests.post(url, json=payload, headers=headers, timeout=120)
         response.raise_for_status()
@@ -655,8 +660,8 @@ def parse_image_with_gemini(
 
 
 def get_messages(
-    system_prompt: Optional[str], user_prompt: Optional[str], image_url: Optional[str]
-) -> List[Dict]:
+    system_prompt: str | None, user_prompt: str | None, image_url: str | None
+) -> list[dict]:
     messages = []
     if system_prompt:
         messages.append(
@@ -693,50 +698,52 @@ def get_messages(
     return messages
 
 
-def create_response(
-    api: str,
-    model: str,
-    system_prompt: Optional[str] = None,
-    user_prompt: Optional[str] = None,
-    image_url: Optional[str] = None,
-    temperature: float = 0.0,
-    max_tokens: int = 1024,
-) -> Dict:
-    from anthropic import Anthropic
-    from huggingface_hub import InferenceClient
-    from mistralai import Mistral
-    from openai import OpenAI
-
-    # Till Together new API is stable
-    os.environ.setdefault("TOGETHER_NO_BANNER", "1")
-    from together import Together
-
-    # Initialize appropriate client
+@contextmanager
+def _initialize_client(api: str) -> Iterator[Any]:
     clients = {
-        "openai": lambda: OpenAI(),
-        "huggingface": lambda: InferenceClient(
+        "openai": lambda: import_module("openai").OpenAI(),
+        "huggingface": lambda: import_module("huggingface_hub").InferenceClient(
             token=os.environ["HUGGINGFACEHUB_API_TOKEN"]
         ),
-        "together": lambda: Together(),
-        "openrouter": lambda: OpenAI(
+        "together": lambda: import_module("together").Together(),
+        "openrouter": lambda: import_module("openai").OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=os.environ["OPENROUTER_API_KEY"],
         ),
-        "fireworks": lambda: OpenAI(
+        "fireworks": lambda: import_module("openai").OpenAI(
             base_url="https://api.fireworks.ai/inference/v1",
             api_key=os.environ["FIREWORKS_API_KEY"],
         ),
-        "mistral": lambda: Mistral(
+        "mistral": lambda: import_module("mistralai").Mistral(
             api_key=os.environ["MISTRAL_API_KEY"],
         ),
-        "anthropic": lambda: Anthropic(
+        "anthropic": lambda: import_module("anthropic").Anthropic(
             api_key=os.environ["ANTHROPIC_API_KEY"],
         ),
-        "gemini": lambda: None,  # Gemini is handled separately
-        "ollama": lambda: None,
     }
-    assert api in clients, f"Unsupported API: {api}"
+    if api not in clients:
+        raise ValueError(f"Unsupported API: {api}")
+    if api == "together":
+        os.environ.setdefault("TOGETHER_NO_BANNER", "1")
+    client = clients[api]()
+    with ExitStack() as stack:
+        if callable(getattr(client, "__enter__", None)):
+            client = stack.enter_context(client)
+        elif callable(getattr(client, "close", None)):
+            stack.callback(client.close)
+        yield client
 
+
+def create_response(
+    api: str,
+    model: str,
+    system_prompt: str | None = None,
+    user_prompt: str | None = None,
+    image_url: str | None = None,
+    temperature: float = 0.0,
+    max_tokens: int = 1024,
+    thinking_level: str | None = None,
+) -> dict:
     if api == "gemini":
         if image_url:
             image_url = strip_data_url_prefix(image_url)
@@ -746,6 +753,7 @@ def create_response(
             temperature=temperature,
             max_tokens=max_tokens,
             system_prompt=system_prompt,
+            thinking_level=thinking_level,
         )
         return {
             "response": response["raw"],
@@ -762,7 +770,68 @@ def create_response(
             max_tokens=max_tokens,
         )
 
-    client = clients[api]()
+    with _initialize_client(api) as client:
+        return _create_client_response(
+            client,
+            api,
+            model,
+            system_prompt,
+            user_prompt,
+            image_url,
+            temperature,
+            max_tokens,
+            thinking_level=thinking_level,
+        )
+
+
+def _create_client_response(
+    client: Any,
+    api: str,
+    model: str,
+    system_prompt: str | None,
+    user_prompt: str | None,
+    image_url: str | None,
+    temperature: float,
+    max_tokens: int,
+    thinking_level: str | None = None,
+) -> dict:
+    if api == "openai":
+        from openai.types.responses import ResponseInputContentParam
+
+        content: list[ResponseInputContentParam] = []
+        if user_prompt:
+            content.append({"type": "input_text", "text": user_prompt})
+        if image_url:
+            content.append(
+                {"type": "input_image", "image_url": image_url, "detail": "auto"}
+            )
+        request_params: dict[str, Any] = {
+            "model": model,
+            "instructions": system_prompt,
+            "input": [{"role": "user", "content": content}],
+            "max_output_tokens": max_tokens,
+            "store": False,
+        }
+        if thinking_level:
+            request_params["reasoning"] = {"effort": thinking_level}
+        response = client.responses.create(**request_params)
+        if response.status != "completed":
+            reason = getattr(response.incomplete_details, "reason", None)
+            error_code = getattr(response.error, "code", None)
+            raise RuntimeError(
+                f"OpenAI response did not complete: {response.status} "
+                f"({reason or error_code or 'unknown reason'})"
+            )
+        if not response.output_text:
+            raise RuntimeError("OpenAI response contained no output text")
+        return {
+            "response": response.output_text,
+            "usage": {
+                "input_tokens": getattr(response.usage, "input_tokens", 0),
+                "output_tokens": getattr(response.usage, "output_tokens", 0),
+                "total_tokens": getattr(response.usage, "total_tokens", 0),
+            },
+        }
 
     if api == "mistral":
         if "ocr" not in model:
@@ -805,8 +874,15 @@ def create_response(
             "messages": [{"role": "user", "content": content}],
             "max_tokens": max_tokens,
         }
-        # Opus 4.7+ and Sonnet 5+ deprecated `temperature`
-        if not _ANTHROPIC_MODEL_RE.match(model):
+        if thinking_level:
+            budget_map = {"low": 1024, "medium": 2048, "high": 4096}
+            budget = budget_map.get(thinking_level, 1024)
+            if max_tokens <= budget:
+                request_params["max_tokens"] = budget + 1024
+            request_params["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            if not _ANTHROPIC_MODEL_RE.match(model):
+                request_params["temperature"] = 1.0
+        elif not _ANTHROPIC_MODEL_RE.match(model):
             request_params["temperature"] = temperature
         response = client.messages.create(**request_params)
         response_text = "".join(
@@ -853,7 +929,7 @@ def create_response(
     }
 
 
-def parse_with_api(path: str, api: str, **kwargs) -> Dict:
+def parse_with_api(path: str, api: str, **kwargs) -> dict:
     """
     Parse documents (PDFs or images) using various vision model APIs.
 
@@ -863,7 +939,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> Dict:
         **kwargs: Additional arguments including model, temperature, title, etc.
 
     Returns:
-        Dict: Dictionary containing parsed document data
+        dict: Dictionary containing parsed document data
     """
     logger.debug(f"Parsing with {api} API and model {kwargs['model']}")
     max_dimension = kwargs.get("max_image_dimension", DEFAULT_MAX_IMAGE_DIMENSION)
@@ -881,7 +957,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> Dict:
             system_prompt = kwargs.get("system_prompt", None)
             user_prompt = kwargs.get("user_prompt", LLAMA_PARSER_PROMPT)
 
-        default_max_tokens = 4096 if api == "ollama" else 1024
+        default_max_tokens = {"openai": 16384, "ollama": 4096}.get(api, 1024)
         response = create_response(
             api=api,
             model=kwargs["model"],
@@ -890,6 +966,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> Dict:
             image_url=image_url,
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", default_max_tokens),
+            thinking_level=kwargs.get("thinking_level"),
         )
 
         # Get completion from selected API
@@ -950,7 +1027,7 @@ def parse_with_api(path: str, api: str, **kwargs) -> Dict:
     }
 
 
-def parse_audio_with_gemini(path: str, **kwargs) -> Dict:
+def parse_audio_with_gemini(path: str, **kwargs) -> dict:
     from google import genai
 
     client = genai.Client()
