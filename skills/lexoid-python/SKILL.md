@@ -274,7 +274,7 @@ print(result["token_cost"])  # {"input": ..., "output": ..., "input-image": ...,
 
 | kwarg                   | Purpose                                                                 |
 |-------------------------|-------------------------------------------------------------------------|
-| `model`                 | LLM model name (default from `DEFAULT_LLM`, falls back to `gemini-2.5-flash`). |
+| `model`                 | LLM model name (default from `DEFAULT_LLM`: `gemini-3.5-flash-lite`, with `medium` thinking). |
 | `api_provider`          | Override inferred provider.                                             |
 | `framework`             | `pdfplumber` / `pdfminer` / `paddleocr` for STATIC_PARSE.               |
 | `temperature`           | LLM sampling temperature (default `0.0`).                               |

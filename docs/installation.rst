@@ -34,7 +34,11 @@ SmolDocling/granite-docling, PaddleOCR-VL) do not require an API key.
 Additional environment variables
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-* ``DEFAULT_LLM`` — overrides the default LLM model. Default: ``gemini-2.5-flash``.
+* ``DEFAULT_LLM`` — overrides the default LLM model and thinking level. Defaults to ``gemini-3.5-flash-lite`` with ``medium`` thinking. Set a plain model name or a JSON object such as:
+
+    .. code-block:: json
+
+         {"model":"gemini-3.5-flash-lite","thinking_level":"medium"}
 * ``DEFAULT_LOCAL_LM`` — overrides the default local model used by ``parse_with_local_model``. Default: ``ds4sd/SmolDocling-256M-preview``.
 * ``DEFAULT_STATIC_FRAMEWORK`` — overrides the default static-parsing framework. Default: ``pdfplumber``.
 * ``DEFAULT_MAX_IMAGE_DIMENSION`` — maximum pixel dimension for resizing page/image inputs. Default: ``1000``.

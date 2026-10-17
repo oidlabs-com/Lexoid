@@ -46,11 +46,11 @@ parse
 
    Additional keyword arguments:
 
-   * ``model`` (str): LLM model to use. Defaults to the ``DEFAULT_LLM`` environment variable, or ``"gemini-2.5-flash"``.
+    * ``model`` (str): LLM model to use. Defaults to ``DEFAULT_LLM`` (``gemini-3.5-flash-lite`` when unset).
    * ``api_provider`` (str): API provider for LLM parsing. One of ``"gemini"``, ``"openai"``, ``"anthropic"``, ``"mistral"``, ``"huggingface"``, ``"together"``, ``"openrouter"``, ``"fireworks"``, ``"ollama"``, or ``"local"``. If not set, the provider is inferred from the model name.
    * ``framework`` (str): Static parsing framework — ``"pdfplumber"`` (default), ``"pdfminer"``, or ``"paddleocr"``.
    * ``temperature`` (float): Temperature for LLM generation. Default: ``0.0``.
-   * ``thinking_level`` (str, optional): Thinking/reasoning level for supported LLMs (``"low"``, ``"medium"``, or ``"high"``). Maps to provider-specific controls (e.g., ``thinkingConfig`` for Gemini, reasoning effort for OpenAI Responses, or thinking token budget for Anthropic).
+    * ``thinking_level`` (str, optional): Thinking/reasoning level for supported LLMs (``"low"``, ``"medium"``, or ``"high"``). Defaults to ``medium`` with ``DEFAULT_LLM``. Maps to provider-specific controls (e.g., ``thinkingConfig`` for Gemini, reasoning effort for OpenAI Responses, or thinking token budget for Anthropic).
    * ``max_tokens`` (int): Max output tokens per LLM call. Defaults to ``16384`` for OpenAI document parsing, ``4096`` for Ollama, and ``1024`` otherwise. OpenAI uses the Responses API; this limit includes reasoning tokens. Incomplete or empty OpenAI responses raise an error rather than returning a partial document.
    * ``system_prompt`` (str): Override the default parser system prompt.
    * ``user_prompt`` (str): Override the default user prompt.
