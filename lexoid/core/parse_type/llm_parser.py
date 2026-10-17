@@ -25,11 +25,11 @@ from lexoid.core.prompt_templates import (
     PARSER_PROMPT,
 )
 from lexoid.core.utils import (
-    DEFAULT_LLM,
     DEFAULT_LOCAL_LM,
     DEFAULT_MAX_IMAGE_DIMENSION,
     OLLAMA_BASE_URL,
     OLLAMA_TIMEOUT,
+    get_default_llm_config,
     get_api_provider_for_model,
     get_file_type,
 )
@@ -103,7 +103,13 @@ def parse_llm_doc(path: str, **kwargs) -> dict:
         elif kwargs["api_provider"]:
             return parse_with_api(path, api=kwargs["api_provider"], **kwargs)
 
-    model = kwargs.get("model", DEFAULT_LLM)
+    if kwargs.get("model") is None:
+        defaults = get_default_llm_config()
+        if kwargs.get("thinking_level") is None:
+            kwargs["thinking_level"] = defaults["thinking_level"]
+        model = defaults["model"]
+    else:
+        model = kwargs["model"]
     kwargs["model"] = model
 
     api_provider = get_api_provider_for_model(model)

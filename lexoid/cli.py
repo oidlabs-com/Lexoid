@@ -230,7 +230,7 @@ def app():
 @click.option(
     "--model",
     "-m",
-    default=DEFAULT_LLM,
+    default=None,
     help=f"LLM model to use (default: {DEFAULT_LLM})",
 )
 @click.option(
@@ -294,7 +294,7 @@ def parse(
         api_provider = None
         if parser_enum == ParserType.LLM_PARSE:
             try:
-                api_provider = resolve_api_provider(model, api)
+                api_provider = resolve_api_provider(model or DEFAULT_LLM, api)
             except ValueError as e:
                 raise click.ClickException(str(e))
 
@@ -327,8 +327,9 @@ def parse(
         kwargs = {
             "pages_per_split": pages_per_split,
             "max_processes": max_processes,
-            "model": model,
         }
+        if model is not None:
+            kwargs["model"] = model
         if api_provider:
             kwargs["api_provider"] = api_provider
         if framework:
