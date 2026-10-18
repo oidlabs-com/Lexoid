@@ -56,6 +56,7 @@ parse
    * ``user_prompt`` (str): Override the default user prompt.
    * ``depth`` (int): Depth for recursive URL parsing. Default: ``1``.
    * ``as_pdf`` (bool): Convert input (image / webpage / DOCX) to PDF before processing.
+    * ``docx_pdf_engine`` (str): Word-document PDF converter: ``"libreoffice"`` (default on all platforms) or ``"word"`` (macOS/Windows only). Install LibreOffice separately for the default engine. The Word engine requires Microsoft Word and automation permissions. This is independent of the webpage PDF engine; no automatic fallback occurs between document engines.
    * ``verbose`` (bool): Enable verbose logging during LLM parsing.
    * ``x_tolerance`` (int): X-axis tolerance for ``pdfplumber`` text extraction.
    * ``y_tolerance`` (int): Y-axis tolerance for ``pdfplumber`` text extraction.

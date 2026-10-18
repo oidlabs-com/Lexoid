@@ -369,7 +369,9 @@ def parse(
         parser_type (Union[str, ParserType], optional): Parser type ("LLM_PARSE", "STATIC_PARSE", or "AUTO").
         pages_per_split (int, optional): Number of pages per split for chunking.
         max_processes (int, optional): Maximum number of processes for parallel processing.
-        **kwargs: Additional arguments for the parser. Notable URL-parsing option:
+        **kwargs: Additional arguments for the parser.
+            docx_pdf_engine (str): DOCX-to-PDF engine: "libreoffice" (default) or
+                "word". Requires LibreOffice or Microsoft Word respectively.
             ghost (bool | dict): Opt-in stealth/agentic "ghost" browsing for URLs.
                 ``True`` enables stealth + reliable JS rendering using sensible
                 defaults; a dict overrides any GhostConfig field, e.g.
@@ -464,7 +466,11 @@ def parse(
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
             logger.debug("Converting file to PDF")
-            path = convert_to_pdf(path, pdf_path)
+            path = convert_to_pdf(
+                path,
+                pdf_path,
+                docx_pdf_engine=kwargs.get("docx_pdf_engine", "libreoffice"),
+            )
 
         if "page_nums" in kwargs and path.lower().endswith(".pdf"):
             sub_pdf_dir = os.path.join(temp_dir, "sub_pdfs")
