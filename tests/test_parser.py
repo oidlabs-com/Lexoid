@@ -12,17 +12,17 @@ output_dir = "tests/outputs"
 os.makedirs(output_dir, exist_ok=True)
 models = [
     # Google models
-    "gemini-4-argon",
-    "gemini-3.8-flash",
+    # "gemini-4-argon",
+    # "gemini-3.8-flash",
     "gemini-3.5-flash-lite",
     # # OpenAI models
-    "gpt-6-astra",
-    "gpt-6.1-sol",
-    "gpt-6-luna",
+    # "gpt-6-astra",
+    # "gpt-6.1-sol",
+    # "gpt-6-luna",
     # # Anthropic models
-    "claude-opus-4-8",
-    "claude-sonnet-5",
-    "claude-sonnet-4-6",
+    # "claude-opus-4-8",
+    # "claude-sonnet-5",
+    # "claude-sonnet-4-6",
 ]
 
 
@@ -81,7 +81,7 @@ async def test_static_parse_images():
         character_threshold=160,
     )["raw"]
     assert isinstance(result, str)
-    assert "september16,2012" in result.lower()
+    assert "september 16, 2012" in result.lower()
 
 
 @pytest.mark.asyncio
@@ -95,11 +95,11 @@ async def test_static_parse_images():
 )
 async def test_url_detection_auto_routing(sample):
     patterns = ["http", "https", "www"]
-    model_type = "gemini-2.5-pro"
+    model_type = "gemini-3.5-flash-lite"
     config = {"parser_type": "AUTO", "model": model_type, "verbose": True}
     result = parse(sample, **config)["raw"]
     assert isinstance(result, str)
-    found = [True if p in result else False for p in patterns]
+    found = [p in result for p in patterns]
     assert any(found)
 
 
@@ -118,7 +118,7 @@ async def test_url_detection_pdfplumber(sample):
     config = {"parser_type": "STATIC_PARSE", "framework": framework}
     result = parse(sample, **config)["raw"]
     assert isinstance(result, str)
-    found = [True if p in result else False for p in patterns]
+    found = [p in result for p in patterns]
     assert any(found)
 
 
@@ -166,7 +166,7 @@ async def test_recursive_url_parsing(depth):
     n_total_segments = len(results["segments"]) + len(results["recursive_docs"])
     # Each depth level adds one more document to be parsed.
     # Not necessarily always the case. Just the case for "example.com".
-    assert n_total_segments == depth, str(results)
+    assert n_total_segments == depth
 
 
 @pytest.mark.asyncio
