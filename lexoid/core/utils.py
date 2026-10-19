@@ -13,13 +13,15 @@ import numpy as np
 import pikepdf
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from Levenshtein import distance
+from lexoid.core.ghost import GhostConfig
 from loguru import logger
 from markdown import markdown
 from markdownify import markdownify as md
 from matplotlib import pyplot as plt
 
-from lexoid.core.ghost import GhostConfig
+load_dotenv()
 
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
 _DEFAULT_LLM_MODEL = "gemini-3.5-flash-lite"
@@ -37,6 +39,11 @@ def get_default_llm_config() -> dict[str, str]:
             config = json.loads(raw_config)
         except json.JSONDecodeError as error:
             raise ValueError(f"Invalid DEFAULT_LLM JSON: {error}") from error
+        if isinstance(config, str):
+            try:
+                config = json.loads(config)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"Invalid DEFAULT_LLM JSON string: {error}") from error
         if not isinstance(config, dict):
             raise ValueError("DEFAULT_LLM JSON must be an object.")
         unknown_keys = set(config) - {"model", "thinking_level"}

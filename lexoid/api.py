@@ -10,6 +10,17 @@ from glob import glob
 from time import time
 from typing import Any, Dict, List, Optional, Type, Union
 
+from lexoid.core.browse.agents import plan_task
+from lexoid.core.browse.events import BrowseEventListener
+from lexoid.core.browse.model_provider import create_chat_client
+from lexoid.core.browse.orchestrator import run_task
+from lexoid.core.browse.schemas import (
+    BrowseErrorCode,
+    BrowseLimits,
+    BrowseModelConfig,
+    BrowseResult,
+    BrowseTask,
+)
 from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
     convert_schema_to_dict,
@@ -44,17 +55,6 @@ from lexoid.core.utils import (
     resize_image_if_needed,
     router,
     split_pdf,
-)
-from lexoid.core.browse.agents import plan_task
-from lexoid.core.browse.events import BrowseEventListener
-from lexoid.core.browse.model_provider import create_chat_client
-from lexoid.core.browse.orchestrator import run_task
-from lexoid.core.browse.schemas import (
-    BrowseErrorCode,
-    BrowseLimits,
-    BrowseModelConfig,
-    BrowseResult,
-    BrowseTask,
 )
 from loguru import logger
 
@@ -677,6 +677,8 @@ def parse_with_schema(
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
             thinking_level=kwargs.get("thinking_level"),
+            thinking=kwargs.get("thinking"),
+            output_config=kwargs.get("output_config"),
         )
         response = resp_dict.get("response", "")
         response = response.split("```json")[-1].split("```")[0].strip()
@@ -695,6 +697,8 @@ def parse_with_schema(
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
             thinking_level=kwargs.get("thinking_level"),
+            thinking=kwargs.get("thinking"),
+            output_config=kwargs.get("output_config"),
         )
 
         response = resp_dict.get("response", "")
@@ -748,6 +752,8 @@ def parse_to_latex(
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
             thinking_level=kwargs.get("thinking_level"),
+            thinking=kwargs.get("thinking"),
+            output_config=kwargs.get("output_config"),
         )
         response = resp_dict.get("response", "").strip()
         response = response.split("```latex")[-1].split("```")[0].strip()

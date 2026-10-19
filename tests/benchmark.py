@@ -70,31 +70,21 @@ config_options = {
     "parser_type": ["LLM_PARSE", "STATIC_PARSE", "AUTO"],
     "model": [
         # Google models
-        "gemini-4-argon",
-        "gemini-3.8-flash",
+        # "gemini-4-argon",
+        # "gemini-3.8-flash",
         "gemini-3.5-flash-lite",
         # # Claude models
+        # "claude-opus-5-5",
+        # "claude-sonnet-5-5",
+        "claude-haiku-5-5",
         # "claude-opus-4-8",
         # "claude-sonnet-4-6",
-        # "claude-haiku-4-5-20251001",
-        # "claude-opus-4-20250514",
-        # "claude-sonnet-4-20250514",
-        # "claude-3-7-sonnet-20250219",
-        # "claude-3-5-sonnet-20241022",
         # # OpenAI models
+        # "gpt-6-astra",
+        "gpt-6.1-sol",
+        # "gpt-6-luna",
         # "gpt-5.5",
         # "gpt-5.5-pro",
-        # "gpt-5.4",
-        # "gpt-5.4-mini",
-        # "gpt-5.4-nano",
-        # "gpt-5.4-pro",
-        # "gpt-5.2",
-        # "gpt-5",
-        # "gpt-5-mini",
-        # "gpt-4.1",
-        # "gpt-4.1-mini",
-        # "gpt-4o",
-        # "gpt-4o-mini",
         # # Mistral models
         # "mistral-ocr-latest",
         # # Meta-LLAMA models through HF Hub
@@ -116,7 +106,7 @@ config_options = {
     "pages_per_split": [1, 2, 4, 8],
     "max_threads": [1, 2, 4, 8],
     "as_pdf": [True, False],
-    "thinking_level": ["low", "medium", "high"],
+    "thinking_level": ["medium"],
     "autoselect_llm": [False],
 }
 
@@ -572,13 +562,13 @@ def run_benchmarks(
 def main():
     # Specify which attributes to test
     test_attributes = [
-        # "parser_type",
-        "model",
+        "parser_type",
+        # "model",
         # "framework",
         # "pages_per_split",
         # "max_threads",
         # "as_pdf",
-        "thinking_level",
+        # "thinking_level",
         # "autoselect_llm",
     ]
 

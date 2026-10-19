@@ -29,8 +29,8 @@ from lexoid.core.utils import (
     DEFAULT_MAX_IMAGE_DIMENSION,
     OLLAMA_BASE_URL,
     OLLAMA_TIMEOUT,
-    get_default_llm_config,
     get_api_provider_for_model,
+    get_default_llm_config,
     get_file_type,
 )
 from loguru import logger
@@ -43,8 +43,14 @@ from tenacity import (
     wait_fixed,
 )
 
-_ANTHROPIC_MODEL_RE = re.compile(
-    r"claude-(opus-4-[789]|sonnet-(?:[5-9]|[1-9]\d)(?:[-.].*)?)$"
+# Models that reject non-default sampling params (temperature/top_p/top_k).
+_ANTHROPIC_NO_SAMPLING_RE = re.compile(
+    r"claude-(?:opus-4-[789]|(?:opus|sonnet|haiku)-(?:[5-9]|[1-9]\d)|fable|mythos)"
+)
+# Models that only support manual extended thinking (`enabled` + `budget_tokens`).
+# Claude 4.6+ use adaptive thinking; 4.7+ reject `enabled` with a 400 error.
+_ANTHROPIC_EXTENDED_THINKING_RE = re.compile(
+    r"claude-(?:3-|(?:opus|sonnet|haiku)-4(?:-[0-5])?(?:-\d{8})?(?:-latest)?$)"
 )
 
 
@@ -749,6 +755,8 @@ def create_response(
     temperature: float = 0.0,
     max_tokens: int = 1024,
     thinking_level: str | None = None,
+    thinking: dict | None = None,
+    output_config: dict | None = None,
 ) -> dict:
     if api == "gemini":
         if image_url:
@@ -787,6 +795,8 @@ def create_response(
             temperature,
             max_tokens,
             thinking_level=thinking_level,
+            thinking=thinking,
+            output_config=output_config,
         )
 
 
@@ -800,6 +810,8 @@ def _create_client_response(
     temperature: float,
     max_tokens: int,
     thinking_level: str | None = None,
+    thinking: dict | None = None,
+    output_config: dict | None = None,
 ) -> dict:
     if api == "openai":
         from openai.types.responses import ResponseInputContentParam
@@ -880,15 +892,26 @@ def _create_client_response(
             "messages": [{"role": "user", "content": content}],
             "max_tokens": max_tokens,
         }
-        if thinking_level:
-            budget_map = {"low": 1024, "medium": 2048, "high": 4096}
-            budget = budget_map.get(thinking_level, 1024)
+        thinking_on = thinking_level in ("low", "medium", "high")
+        if thinking_on and _ANTHROPIC_EXTENDED_THINKING_RE.match(model):
+            budget = {"low": 4096, "medium": 8192, "high": 32000}[thinking_level]
             if max_tokens <= budget:
                 request_params["max_tokens"] = budget + 1024
             request_params["thinking"] = {"type": "enabled", "budget_tokens": budget}
-            if not _ANTHROPIC_MODEL_RE.match(model):
-                request_params["temperature"] = 1.0
-        elif not _ANTHROPIC_MODEL_RE.match(model):
+        elif thinking_on:
+            request_params["thinking"] = {"type": "adaptive"}
+            request_params["output_config"] = {"effort": thinking_level}
+        # Raw Anthropic `thinking` / `output_config` take precedence over thinking_level.
+        if thinking is not None:
+            request_params["thinking"] = thinking
+        if output_config is not None:
+            request_params["output_config"] = output_config
+        thinking_on = request_params.get("thinking", {}).get("type") not in (
+            None,
+            "disabled",
+        )
+        # Thinking is incompatible with temperature; newer models reject it outright.
+        if not thinking_on and not _ANTHROPIC_NO_SAMPLING_RE.match(model):
             request_params["temperature"] = temperature
         response = client.messages.create(**request_params)
         response_text = "".join(
@@ -963,7 +986,9 @@ def parse_with_api(path: str, api: str, **kwargs) -> dict:
             system_prompt = kwargs.get("system_prompt", None)
             user_prompt = kwargs.get("user_prompt", LLAMA_PARSER_PROMPT)
 
-        default_max_tokens = {"openai": 16384, "ollama": 4096}.get(api, 1024)
+        default_max_tokens = {"openai": 16384, "ollama": 4096, "anthropic": 16000}.get(
+            api, 1024
+        )
         response = create_response(
             api=api,
             model=kwargs["model"],
@@ -973,6 +998,8 @@ def parse_with_api(path: str, api: str, **kwargs) -> dict:
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", default_max_tokens),
             thinking_level=kwargs.get("thinking_level"),
+            thinking=kwargs.get("thinking"),
+            output_config=kwargs.get("output_config"),
         )
 
         # Get completion from selected API
