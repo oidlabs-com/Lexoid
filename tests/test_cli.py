@@ -333,7 +333,7 @@ def test_latex_invalid_model():
 @pytest.mark.parametrize(
     "model,expected_provider",
     [
-        ("gemini-2.5-flash", "gemini"),
+        ("gemini-3.8-flash", "gemini"),
         ("gpt-4o", "openai"),
         ("claude-3-opus", "anthropic"),
         ("mistral-large", "mistral"),

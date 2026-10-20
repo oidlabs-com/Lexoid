@@ -34,7 +34,11 @@ SmolDocling/granite-docling, PaddleOCR-VL) do not require an API key.
 Additional environment variables
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-* ``DEFAULT_LLM`` — overrides the default LLM model. Default: ``gemini-2.5-flash``.
+* ``DEFAULT_LLM`` — overrides the default LLM model and thinking level. Defaults to ``gemini-3.5-flash-lite`` with ``medium`` thinking. Set a plain model name or a JSON object such as:
+
+    .. code-block:: json
+
+         {"model":"gemini-3.5-flash-lite","thinking_level":"medium"}
 * ``DEFAULT_LOCAL_LM`` — overrides the default local model used by ``parse_with_local_model``. Default: ``ds4sd/SmolDocling-256M-preview``.
 * ``DEFAULT_STATIC_FRAMEWORK`` — overrides the default static-parsing framework. Default: ``pdfplumber``.
 * ``DEFAULT_MAX_IMAGE_DIMENSION`` — maximum pixel dimension for resizing page/image inputs. Default: ``1000``.
@@ -69,19 +73,33 @@ the agent-framework extra and Patchright's browser binaries:
     pip install "lexoid[browse]"
     patchright install --with-deps chromium
 
-LibreOffice (for DOCX to PDF on Linux)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+LibreOffice (for DOCX to PDF)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-On Linux, ``.doc``/``.docx`` to PDF conversion uses LibreOffice's
-``lowriter`` binary (because ``docx2pdf`` is unsupported on Linux). Install
-it from your distribution's package manager, e.g.:
+Word-document to PDF conversion defaults to LibreOffice on all platforms.
+Lexoid discovers ``soffice`` or ``lowriter`` on ``PATH``, then checks standard
+macOS app-bundle and Windows Program Files locations. Install LibreOffice
+separately; it is not installed by default outside of docker:
 
 .. code-block:: bash
 
     sudo apt-get install libreoffice
 
-On macOS/Windows, ``docx2pdf`` is used automatically (requires Microsoft Word
-or compatible installation).
+On macOS:
+
+.. code-block:: bash
+
+    brew install --cask libreoffice
+
+On Windows, install LibreOffice from https://www.libreoffice.org/.
+
+For native Word rendering on macOS/Windows, explicitly pass
+``docx_pdf_engine="word"`` to ``parse()``. This uses ``docx2pdf`` and requires
+Microsoft Word installed in a standard location (or on ``PATH`` on Windows)
+and permission to automate Word. Static DOCX parsing does not require either
+application. Unlike earlier releases, Word is no longer selected automatically
+on macOS/Windows. LibreOffice can change layout and pagination compared with
+Word; engines never silently fall back to each other.
 
 Ollama (for local LLM parsing)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

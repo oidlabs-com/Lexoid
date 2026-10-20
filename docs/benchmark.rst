@@ -50,10 +50,10 @@ Running the Benchmark Script
     cd lexoid
 
     # Install dependencies
-    pip install -r requirements.txt
+    make setup
 
     # Run benchmarks
-    python tests/benchmark.py
+    .venv/bin/python tests/benchmark.py
 
 Customizing Benchmarks
 ^^^^^^^^^^^^^^^^^^^^^^
@@ -314,4 +314,3 @@ Here are the detailed parsing performance results for various models, sorted by 
      - 0.630 (±0.445)
      - 14.73
      - 0.00056
-    
