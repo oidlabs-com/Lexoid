@@ -742,9 +742,9 @@ async def _run_agentic_navigation(page, cfg: GhostConfig, start_url=None):
     """
     # Imported lazily to avoid pulling the LLM stack into the default path.
     from lexoid.core.parse_type.llm_parser import create_response
-    from lexoid.core.utils import DEFAULT_LLM, get_api_provider_for_model
+    from lexoid.core.utils import get_api_provider_for_model, get_default_llm_config
 
-    model = cfg.nav_model or DEFAULT_LLM
+    model = cfg.nav_model or get_default_llm_config()["model"]
     try:
         api = get_api_provider_for_model(model)
     except ValueError:

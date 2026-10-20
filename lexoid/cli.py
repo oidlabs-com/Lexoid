@@ -13,7 +13,7 @@ from lexoid.api import ParserType
 from lexoid.api import parse as api_parse
 from lexoid.api import parse_to_latex as api_parse_to_latex
 from lexoid.api import parse_with_schema as api_parse_with_schema
-from lexoid.core.utils import DEFAULT_LLM
+from lexoid.core.utils import get_default_llm_config
 
 
 API_KEY_ENV_VARS = {
@@ -231,7 +231,7 @@ def app():
     "--model",
     "-m",
     default=None,
-    help=f"LLM model to use (default: {DEFAULT_LLM})",
+    help="LLM model to use (default: DEFAULT_LLM environment setting or built-in model)",
 )
 @click.option(
     "--pages-per-split",
@@ -294,7 +294,8 @@ def parse(
         api_provider = None
         if parser_enum == ParserType.LLM_PARSE:
             try:
-                api_provider = resolve_api_provider(model or DEFAULT_LLM, api)
+                default_model = model or get_default_llm_config()["model"]
+                api_provider = resolve_api_provider(default_model, api)
             except ValueError as e:
                 raise click.ClickException(str(e))
 

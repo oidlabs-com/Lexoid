@@ -39,7 +39,6 @@ from lexoid.core.prompt_templates import (
     LATEX_USER_PROMPT,
 )
 from lexoid.core.utils import (
-    DEFAULT_LLM,
     DEFAULT_MAX_IMAGE_DIMENSION,
     DEFAULT_STATIC_FRAMEWORK,
     bbox_router,
@@ -537,7 +536,10 @@ def parse(
             else:
                 raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
 
-            api_cost = api_cost_mapping.get(kwargs.get("model", DEFAULT_LLM), None)
+            cost_model = kwargs.get("model")
+            if cost_model is None and "LLM_PARSE" in result.get("parsers_used", []):
+                cost_model = get_default_llm_config()["model"]
+            api_cost = api_cost_mapping.get(cost_model)
             if api_cost:
                 token_usage = result["token_usage"]
                 token_cost = {
