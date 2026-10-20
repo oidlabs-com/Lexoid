@@ -4,10 +4,10 @@
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/oidlabs-com/Lexoid/blob/main/examples/example_notebook_colab.ipynb) [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Spaces-yellow)](https://huggingface.co/spaces/oidlabs/Lexoid) [![GitHub license](https://img.shields.io/badge/License-Apache_2.0-turquoise.svg)](https://github.com/oidlabs-com/Lexoid/blob/main/LICENSE) [![PyPI](https://img.shields.io/pypi/v/lexoid)](https://pypi.org/project/lexoid/) [![Docs](https://github.com/oidlabs-com/Lexoid/actions/workflows/deploy_docs.yml/badge.svg)](https://oidlabs-com.github.io/Lexoid/)
 
-Lexoid is an efficient library for:
+**Lexoid** turns messy documents and live websites into **agent-ready context**.
 
-- Parsing documents and web pages using LLM-based or non-LLM (static) methods.
-- Automating web workflows through evidence-grounded browser operations.
+- **`parse()`:** [High-accuracy](#benchmark) document and webpage parsing across static, local LLM, and frontier LLM pipelines.
+- **`browse()` (preview):** Goal-driven, evidence-grounded browser automation for live web workflows.
 
 [Documentation](https://oidlabs-com.github.io/Lexoid/)
 
