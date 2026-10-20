@@ -3,17 +3,22 @@ import dataclasses
 import io
 import mimetypes
 import os
+import shutil
 import subprocess
 import sys
-from typing import Any, Dict, List, Tuple, Type, Union, get_args, get_origin
+import tempfile
+import types
+from pathlib import Path
+from typing import Any, Union, get_args, get_origin
 
 import cv2
-import docx2pdf
 import numpy as np
 import pypdfium2 as pdfium
 from lexoid.core.utils import DEFAULT_MAX_IMAGE_DIMENSION
 from loguru import logger
 from PIL import Image
+
+LIBREOFFICE_TIMEOUT_SECONDS = 120
 
 
 def convert_pdf_page_to_base64(
@@ -46,7 +51,7 @@ def convert_pdf_page_to_base64(
 
 def convert_doc_to_base64_images(
     path: str, max_dimension: int = DEFAULT_MAX_IMAGE_DIMENSION
-) -> List[Tuple[int, str]]:
+) -> list[tuple[int, str]]:
     """
     Converts a document (PDF or image) to a base64 encoded string.
 
@@ -55,8 +60,7 @@ def convert_doc_to_base64_images(
         max_dimension (int): Maximum dimension (width or height) for the output images.
 
     Returns:
-        List[Tuple[int, str]]: A list of tuples where each tuple contains the page number
-                               and the base64 encoded image string.
+        list[tuple[int, str]]: Page numbers paired with base64-encoded images.
     """
     mime_type = mimetypes.guess_type(path)[0] or ""
     is_pdf = path.lower().endswith(".pdf") or mime_type == "application/pdf"
@@ -412,35 +416,124 @@ def save_webpage_as_pdf(url: str, output_path: str, engine: str | None = None) -
     )
 
 
-def convert_doc_to_pdf(input_path: str, temp_dir: str) -> str:
-    temp_path = os.path.join(
-        temp_dir, os.path.splitext(os.path.basename(input_path))[0] + ".pdf"
+def _find_libreoffice() -> str:
+    for name in ("soffice", "lowriter"):
+        executable = shutil.which(name)
+        if executable:
+            return executable
+
+    candidates: list[Path] = []
+    if sys.platform == "darwin":
+        candidates = [
+            Path("/Applications/LibreOffice.app/Contents/MacOS/soffice"),
+            Path.home() / "Applications/LibreOffice.app/Contents/MacOS/soffice",
+        ]
+    elif sys.platform == "win32":
+        candidates = [
+            Path(root) / "LibreOffice/program/soffice.exe"
+            for key in ("PROGRAMFILES", "PROGRAMFILES(X86)")
+            if (root := os.environ.get(key))
+        ]
+    for candidate in candidates:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    raise RuntimeError(
+        "LibreOffice was not found. Install LibreOffice and add soffice to PATH "
+        "(macOS: brew install --cask libreoffice), or select docx_pdf_engine='word' "
+        "with Microsoft Word installed."
     )
 
-    # Convert the document to PDF
-    # docx2pdf is not supported in linux. Use LibreOffice in linux instead.
-    # May need to install LibreOffice if not already installed.
-    if "linux" in sys.platform.lower():
+
+def _convert_with_libreoffice(source: Path, out_dir: Path) -> None:
+    # An isolated profile avoids clashing with an already-running LibreOffice.
+    profile_uri = (out_dir / "profile").as_uri()
+    try:
         subprocess.run(
             [
-                "lowriter",
+                _find_libreoffice(),
+                f"-env:UserInstallation={profile_uri}",
                 "--headless",
                 "--convert-to",
                 "pdf",
                 "--outdir",
-                temp_dir,
-                input_path,
+                str(out_dir),
+                str(source),
             ],
             check=True,
+            capture_output=True,
+            text=True,
+            timeout=LIBREOFFICE_TIMEOUT_SECONDS,
         )
-    else:
-        docx2pdf.convert(input_path, temp_path)
+    except subprocess.CalledProcessError as error:
+        raise RuntimeError(
+            f"LibreOffice PDF conversion failed: {error.stderr or error.stdout}"
+        ) from error
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(
+            f"LibreOffice PDF conversion timed out after {LIBREOFFICE_TIMEOUT_SECONDS}s."
+        ) from error
 
-    # Return the path of the converted PDF
-    return temp_path
+
+def _convert_with_word(source: Path, destination: Path) -> None:
+    if sys.platform not in {"darwin", "win32"}:
+        raise RuntimeError("The Word PDF engine requires macOS or Windows.")
+
+    import docx2pdf
+
+    try:
+        docx2pdf.convert(str(source), str(destination))
+    except (Exception, SystemExit) as error:  # docx2pdf exits the process on failure
+        raise RuntimeError(
+            "Word PDF conversion failed. Verify Microsoft Word is installed and "
+            "automation permissions are granted, or use docx_pdf_engine='libreoffice'."
+        ) from error
 
 
-def convert_to_pdf(input_path: str, output_path: str, engine: str | None = None) -> str:
+def convert_doc_to_pdf(
+    input_path: str, output_path: str, docx_pdf_engine: str = "libreoffice"
+) -> str:
+    """
+    Converts a Word document to PDF.
+
+    Args:
+        input_path (str): The path to the input Word document.
+        output_path (str): The path to save the output PDF file.
+        docx_pdf_engine (str): "libreoffice" (default) or "word".
+
+    Returns:
+        str: The path to the saved PDF file.
+    """
+    if docx_pdf_engine not in {"libreoffice", "word"}:
+        raise ValueError("docx_pdf_engine must be 'libreoffice' or 'word'.")
+
+    source = Path(input_path).resolve(strict=True)
+    destination = Path(output_path).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as work_dir:
+        # LibreOffice names its output after the input, so convert into a scratch
+        # directory and then move the result to the requested path.
+        converted = Path(work_dir) / source.with_suffix(".pdf").name
+        if docx_pdf_engine == "libreoffice":
+            _convert_with_libreoffice(source, Path(work_dir))
+        else:
+            _convert_with_word(source, converted)
+
+        if not converted.is_file() or converted.stat().st_size == 0:
+            raise RuntimeError(
+                f"{docx_pdf_engine} produced no nonempty PDF for {source.name}."
+            )
+        shutil.move(str(converted), destination)
+    return str(destination)
+
+
+def convert_to_pdf(
+    input_path: str,
+    output_path: str,
+    engine: str | None = None,
+    *,
+    docx_pdf_engine: str = "libreoffice",
+) -> str:
     """
     Converts a file or webpage to PDF.
 
@@ -449,6 +542,7 @@ def convert_to_pdf(input_path: str, output_path: str, engine: str | None = None)
         output_path (str): The path to save the output PDF file.
         engine (str | None): Rendering engine: "qt" or "chromium".
             If omitted, defaults to LEXOID_PDF_ENGINE or "chromium".
+        docx_pdf_engine (str): Word-document engine: "libreoffice" (default) or "word".
 
     Returns:
         str: The path to the saved PDF file.
@@ -462,7 +556,7 @@ def convert_to_pdf(input_path: str, output_path: str, engine: str | None = None)
         with open(output_path, "wb") as f:
             f.write(img_data)
     elif "word" in file_type:
-        return convert_doc_to_pdf(input_path, os.path.dirname(output_path))
+        return convert_doc_to_pdf(input_path, output_path, docx_pdf_engine)
     else:
         # Assume it's already a PDF, just copy it
         with open(input_path, "rb") as src, open(output_path, "wb") as dst:
@@ -471,7 +565,7 @@ def convert_to_pdf(input_path: str, output_path: str, engine: str | None = None)
     return output_path
 
 
-def convert_schema_to_dict(schema: Union[Dict, Type]) -> Dict:
+def convert_schema_to_dict(schema: dict | type) -> dict:
     """
     Convert a dict, dataclass, or Pydantic BaseModel into JSON schema.
     """
@@ -481,7 +575,7 @@ def convert_schema_to_dict(schema: Union[Dict, Type]) -> Dict:
         return schema
 
     if dataclasses.is_dataclass(schema):
-        return _dataclass_to_json_schema(schema)
+        return _dataclass_to_json_schema(dataclasses.fields(schema))
 
     if isinstance(schema, type) and issubclass(schema, BaseModel):
         return _pydantic_to_json_schema(schema)
@@ -489,7 +583,7 @@ def convert_schema_to_dict(schema: Union[Dict, Type]) -> Dict:
     raise TypeError("Schema must be dict, dataclass, or Pydantic BaseModel")
 
 
-def _pydantic_to_json_schema(model: Type) -> Dict:
+def _pydantic_to_json_schema(model: type) -> dict:
     properties = {}
     required = []
 
@@ -512,11 +606,11 @@ def _pydantic_to_json_schema(model: Type) -> Dict:
     return schema
 
 
-def _dataclass_to_json_schema(cls: Type) -> Dict:
+def _dataclass_to_json_schema(fields: tuple[dataclasses.Field[Any], ...]) -> dict:
     properties = {}
     required = []
 
-    for field in dataclasses.fields(cls):
+    for field in fields:
         field_schema = _python_type_to_schema(field.type)
 
         # description from metadata
@@ -540,7 +634,7 @@ def _dataclass_to_json_schema(cls: Type) -> Dict:
     return schema
 
 
-def _python_type_to_schema(tp: Any) -> Dict:
+def _python_type_to_schema(tp: Any) -> dict:
     """
     Convert arbitrary Python typing annotations to JSON schema.
     Handles recursion for dataclasses and Pydantic models.
@@ -564,7 +658,7 @@ def _python_type_to_schema(tp: Any) -> Dict:
         return {"type": primitive_map[tp]}
 
     # Optional / Union
-    if origin is Union:
+    if origin in (Union, types.UnionType):
         non_none = [a for a in args if a is not type(None)]
 
         if len(non_none) == 1:
@@ -572,18 +666,18 @@ def _python_type_to_schema(tp: Any) -> Dict:
 
         return {"anyOf": [_python_type_to_schema(a) for a in non_none]}
 
-    # List
-    if origin in (list, List):
+    # List annotations
+    if origin is list:
         item_type = args[0] if args else str
         return {"type": "array", "items": _python_type_to_schema(item_type)}
 
-    # Dict
-    if origin in (dict, Dict):
+    # Dict annotations
+    if origin is dict:
         return {"type": "object"}
 
     # Nested dataclass
     if dataclasses.is_dataclass(tp):
-        return _dataclass_to_json_schema(tp)
+        return _dataclass_to_json_schema(dataclasses.fields(tp))
 
     # Nested Pydantic model
     if isinstance(tp, type) and issubclass(tp, BaseModel):

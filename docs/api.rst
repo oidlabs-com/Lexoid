@@ -46,15 +46,17 @@ parse
 
    Additional keyword arguments:
 
-   * ``model`` (str): LLM model to use. Defaults to the ``DEFAULT_LLM`` environment variable, or ``"gemini-2.5-flash"``.
+    * ``model`` (str): LLM model to use. Defaults to ``DEFAULT_LLM`` (``gemini-3.5-flash-lite`` when unset).
    * ``api_provider`` (str): API provider for LLM parsing. One of ``"gemini"``, ``"openai"``, ``"anthropic"``, ``"mistral"``, ``"huggingface"``, ``"together"``, ``"openrouter"``, ``"fireworks"``, ``"ollama"``, or ``"local"``. If not set, the provider is inferred from the model name.
    * ``framework`` (str): Static parsing framework — ``"pdfplumber"`` (default), ``"pdfminer"``, or ``"paddleocr"``.
    * ``temperature`` (float): Temperature for LLM generation. Default: ``0.0``.
-   * ``max_tokens`` (int): Max output tokens per LLM call. Defaults to ``1024`` (``4096`` for Ollama).
+    * ``thinking_level`` (str, optional): Thinking/reasoning level for supported LLMs (``"low"``, ``"medium"``, or ``"high"``). Defaults to ``medium`` with ``DEFAULT_LLM``. Maps to provider-specific controls (e.g., ``thinkingConfig`` for Gemini, reasoning effort for OpenAI Responses, or thinking token budget for Anthropic).
+   * ``max_tokens`` (int): Max output tokens per LLM call. Defaults to ``16384`` for OpenAI document parsing, ``4096`` for Ollama, and ``1024`` otherwise. OpenAI uses the Responses API; this limit includes reasoning tokens. Incomplete or empty OpenAI responses raise an error rather than returning a partial document.
    * ``system_prompt`` (str): Override the default parser system prompt.
    * ``user_prompt`` (str): Override the default user prompt.
    * ``depth`` (int): Depth for recursive URL parsing. Default: ``1``.
    * ``as_pdf`` (bool): Convert input (image / webpage / DOCX) to PDF before processing.
+    * ``docx_pdf_engine`` (str): Word-document PDF converter: ``"libreoffice"`` (default on all platforms) or ``"word"`` (macOS/Windows only). Install LibreOffice separately for the default engine. The Word engine requires Microsoft Word and automation permissions. This is independent of the webpage PDF engine; no automatic fallback occurs between document engines.
    * ``verbose`` (bool): Enable verbose logging during LLM parsing.
    * ``x_tolerance`` (int): X-axis tolerance for ``pdfplumber`` text extraction.
    * ``y_tolerance`` (int): Y-axis tolerance for ``pdfplumber`` text extraction.
@@ -232,11 +234,11 @@ LLM-Based Parsing
     # Parse using GPT-4o
     result = parse("document.pdf", parser_type="LLM_PARSE", model="gpt-4o")
 
-    # Parse using Gemini 2.5 Pro
-    result = parse("document.pdf", parser_type="LLM_PARSE", model="gemini-2.5-pro")
+    # Parse using Gemini
+    result = parse("document.pdf", parser_type="LLM_PARSE", model="gemini-3.5-flash-lite")
 
     # Parse using Claude
-    result = parse("document.pdf", parser_type="LLM_PARSE", model="claude-3-5-sonnet-20241022")
+    result = parse("document.pdf", parser_type="LLM_PARSE", model="claude-haiku-5-5")
 
     # Parse using Mistral OCR
     result = parse(
@@ -416,7 +418,7 @@ Gemini model (currently the only provider supporting audio).
 
 .. code-block:: python
 
-    result = parse("interview.mp3", model="gemini-2.5-flash")
+    result = parse("interview.mp3", model="gemini-3.8-flash")
     print(result["raw"])
 
 

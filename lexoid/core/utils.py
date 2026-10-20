@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import mimetypes
 import os
 import re
@@ -12,21 +13,68 @@ import numpy as np
 import pikepdf
 import requests
 from bs4 import BeautifulSoup
+from dotenv import load_dotenv
 from Levenshtein import distance
+from lexoid.core.ghost import GhostConfig
 from loguru import logger
 from markdown import markdown
 from markdownify import markdownify as md
 from matplotlib import pyplot as plt
 
-from lexoid.core.ghost import GhostConfig
+load_dotenv()
 
 HTML_TAG_PATTERN = re.compile("<.*?>|&([a-z0-9]+|#[0-9]{1,6}|#x[0-9a-f]{1,6});")
-DEFAULT_LLM = os.getenv("DEFAULT_LLM", "gemini-3.5-flash")
+_DEFAULT_LLM_MODEL = "gemini-3.5-flash-lite"
+_VALID_THINKING_LEVELS = {"low", "medium", "high", "none", "off"}
+
+
+def get_default_llm_config() -> dict[str, str]:
+    """Return the configured default LLM model and thinking level."""
+    raw_config = os.getenv("DEFAULT_LLM", _DEFAULT_LLM_MODEL)
+    if not raw_config.strip():
+        raise ValueError("DEFAULT_LLM must not be empty.")
+
+    if raw_config.lstrip().startswith(("{", "[", '"')):
+        try:
+            config = json.loads(raw_config)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"Invalid DEFAULT_LLM JSON: {error}") from error
+        if isinstance(config, str):
+            try:
+                config = json.loads(config)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"Invalid DEFAULT_LLM JSON string: {error}") from error
+        if not isinstance(config, dict):
+            raise ValueError("DEFAULT_LLM JSON must be an object.")
+        unknown_keys = set(config) - {"model", "thinking_level"}
+        if unknown_keys:
+            raise ValueError(
+                f"DEFAULT_LLM contains unsupported keys: {sorted(unknown_keys)}"
+            )
+    else:
+        config = {"model": raw_config, "thinking_level": "medium"}
+
+    model = config.get("model")
+    thinking_level = config.get("thinking_level", "medium")
+    if not isinstance(model, str) or not model.strip():
+        raise ValueError("DEFAULT_LLM must specify a non-empty model.")
+    if (
+        not isinstance(thinking_level, str)
+        or thinking_level not in _VALID_THINKING_LEVELS
+    ):
+        raise ValueError(
+            "DEFAULT_LLM thinking_level must be one of: "
+            f"{', '.join(sorted(_VALID_THINKING_LEVELS))}."
+        )
+
+    return {"model": model.strip(), "thinking_level": thinking_level}
+
+
 DEFAULT_LOCAL_LM = os.getenv("DEFAULT_LOCAL_LM", "ds4sd/SmolDocling-256M-preview")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 DEFAULT_STATIC_FRAMEWORK = os.getenv("DEFAULT_STATIC_FRAMEWORK", "pdfplumber")
-DEFAULT_MAX_IMAGE_DIMENSION = int(os.getenv("DEFAULT_MAX_IMAGE_DIMENSION", "1000"))
+DEFAULT_MAX_IMAGE_DIMENSION = int(os.getenv("DEFAULT_MAX_IMAGE_DIMENSION", "1024"))
 
 
 def split_pdf(input_path: str, output_dir: str, pages_per_split: int):
@@ -335,22 +383,18 @@ def get_webpage_soup(url: str, ghost_opts=None, usage_sink=None) -> BeautifulSou
                         "--window-size=1920,1080",
                     ],
                 )
+
                 context = await browser.new_context(
                     viewport={"width": 1920, "height": 1080},
                     user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
                     bypass_csp=True,
                 )
                 page = await context.new_page()
-
                 # Add headers to appear more like a real browser
                 await page.set_extra_http_headers(
                     {
                         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                         "Accept-Language": "en-US,en;q=0.5",
-                        "Sec-Fetch-Dest": "document",
-                        "Sec-Fetch-Mode": "navigate",
-                        "Sec-Fetch-Site": "none",
-                        "Sec-Fetch-User": "?1",
                     }
                 )
 
@@ -363,7 +407,7 @@ def get_webpage_soup(url: str, ghost_opts=None, usage_sink=None) -> BeautifulSou
                 try:
                     await page.wait_for_selector("body", timeout=30000)
                 except Exception:
-                    pass
+                    logger.debug("Timeout waiting for body selector")
 
                 html = await page.content()
                 await browser.close()
@@ -466,7 +510,7 @@ def recursive_read_html(
     try:
         content = read_html_content(url, ghost_opts=ghost_opts)
     except Exception as e:
-        print(f"Error processing URL {url}: {str(e)}")
+        logger.error(f"Error processing URL {url}: {str(e)}")
         return {
             "raw": "",
             "segments": [],
@@ -561,13 +605,19 @@ def is_api_key_set(api_provider: str) -> bool:
     return False
 
 
-def router(path: str, priority: str = "speed", autoselect_llm: bool = False) -> str:
+def router(
+    path: str, priority: str = "speed", autoselect_llm: bool = False
+) -> tuple[str, str | None]:
     """
     Routes the file path to the appropriate parser based on the file type.
 
     Args:
         path (str): The file path to route.
         priority (str): The priority for routing: "accuracy" (preference to LLM_PARSE) or "speed" (preference to STATIC_PARSE).
+        autoselect_llm (bool): Whether to automatically select an LLM for parsing.
+
+    Returns:
+        tuple: A tuple containing the parsing method ("LLM_PARSE" or "STATIC_PARSE") and the selected model name (or None if not applicable).
     """
     model_name = None
     if autoselect_llm:

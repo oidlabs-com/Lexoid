@@ -10,6 +10,17 @@ from glob import glob
 from time import time
 from typing import Any, Dict, List, Optional, Type, Union
 
+from lexoid.core.browse.agents import plan_task
+from lexoid.core.browse.events import BrowseEventListener
+from lexoid.core.browse.model_provider import create_chat_client
+from lexoid.core.browse.orchestrator import run_task
+from lexoid.core.browse.schemas import (
+    BrowseErrorCode,
+    BrowseLimits,
+    BrowseModelConfig,
+    BrowseResult,
+    BrowseTask,
+)
 from lexoid.core.conversion_utils import (
     convert_doc_to_base64_images,
     convert_schema_to_dict,
@@ -28,12 +39,12 @@ from lexoid.core.prompt_templates import (
     LATEX_USER_PROMPT,
 )
 from lexoid.core.utils import (
-    DEFAULT_LLM,
     DEFAULT_MAX_IMAGE_DIMENSION,
     DEFAULT_STATIC_FRAMEWORK,
     bbox_router,
     create_sub_pdf,
     download_file,
+    get_default_llm_config,
     get_file_type,
     get_webpage_soup,
     has_image_in_pdf,
@@ -44,17 +55,6 @@ from lexoid.core.utils import (
     router,
     split_pdf,
 )
-from lexoid.core.browse.agents import plan_task
-from lexoid.core.browse.events import BrowseEventListener
-from lexoid.core.browse.model_provider import create_chat_client
-from lexoid.core.browse.orchestrator import run_task
-from lexoid.core.browse.schemas import (
-    BrowseErrorCode,
-    BrowseLimits,
-    BrowseModelConfig,
-    BrowseResult,
-    BrowseTask,
-)
 from loguru import logger
 
 
@@ -62,6 +62,17 @@ class ParserType(Enum):
     LLM_PARSE = "LLM_PARSE"
     STATIC_PARSE = "STATIC_PARSE"
     AUTO = "AUTO"
+
+
+def _set_default_llm_defaults(kwargs: dict[str, Any]) -> None:
+    """Apply DEFAULT_LLM when no model was explicitly selected."""
+    if kwargs.get("model") is not None:
+        return
+
+    defaults = get_default_llm_config()
+    kwargs["model"] = defaults["model"]
+    if kwargs.get("thinking_level") is None:
+        kwargs["thinking_level"] = defaults["thinking_level"]
 
 
 async def browse(
@@ -160,38 +171,47 @@ def retry_with_different_parser_type(func):
         try:
             if len(args) > 0:
                 kwargs["path"] = args[0]
-            if len(args) > 1:
-                if args[1] == ParserType.AUTO:
-                    router_priority = kwargs.get("router_priority", "speed")
-                    autoselect_llm = kwargs.get("autoselect_llm", False)
-                    if router_priority == "cost" and has_image_in_pdf(kwargs["path"]):
-                        # Handling this outside of router to allow for multiple func calls
-                        kwargs["parser_type"] = ParserType.STATIC_PARSE
-                        kwargs["framework"] = "paddleocr"
-                        result = func(**kwargs)
-                        character_threshold = kwargs.get("character_threshold", 100)
-                        len_result = len(result["raw"].strip())
-                        if len_result < character_threshold:
-                            logger.debug(
-                                f"Low character count detected ({len_result} < {character_threshold}), returning result"
-                            )
-                            return result
+            parser_type = args[1] if len(args) > 1 else kwargs.get("parser_type")
+            if parser_type is None:
+                parser_type = ParserType.AUTO
+            elif isinstance(parser_type, str):
+                parser_type = ParserType[parser_type.upper()]
+
+            if parser_type == ParserType.AUTO:
+                router_priority = kwargs.get("router_priority", "speed")
+                autoselect_llm = kwargs.get("autoselect_llm", False)
+                if router_priority == "cost" and has_image_in_pdf(kwargs["path"]):
+                    # Handling this outside of router to allow for multiple func calls
+                    kwargs["parser_type"] = ParserType.STATIC_PARSE
+                    kwargs["framework"] = "paddleocr"
+                    result = func(**kwargs)
+                    character_threshold = kwargs.get("character_threshold", 100)
+                    len_result = len(result["raw"].strip())
+                    if len_result < character_threshold:
                         logger.debug(
-                            f"Character count above threshold ({len_result} >= {character_threshold}), switching to LLM_PARSE"
+                            f"Low character count detected ({len_result} < {character_threshold}), returning result"
                         )
-                        kwargs["parser_type"] = ParserType.LLM_PARSE
-                        return func(**kwargs)
-                    routed_parser_type, model = router(
-                        kwargs["path"], router_priority, autoselect_llm=autoselect_llm
+                        return result
+                    logger.debug(
+                        f"Character count above threshold ({len_result} >= {character_threshold}), switching to LLM_PARSE"
                     )
-                    if model is not None:
-                        kwargs["model"] = model
-                    parser_type = ParserType[routed_parser_type]
-                    logger.debug(f"Auto-detected parser type: {parser_type}")
-                    kwargs["routed"] = True
-                else:
-                    parser_type = args[1]
-                kwargs["parser_type"] = parser_type
+                    kwargs["parser_type"] = ParserType.LLM_PARSE
+                    _set_default_llm_defaults(kwargs)
+                    return func(**kwargs)
+                routed_parser_type, model = router(
+                    kwargs["path"], router_priority, autoselect_llm=autoselect_llm
+                )
+                if model is not None and kwargs.get("model") is None:
+                    kwargs["model"] = model
+                parser_type = ParserType[routed_parser_type]
+                logger.debug(f"Auto-detected parser type: {parser_type}")
+                kwargs["routed"] = True
+            kwargs["parser_type"] = parser_type
+            parser_type = kwargs.get("parser_type")
+            if isinstance(parser_type, str):
+                parser_type = ParserType[parser_type]
+            if parser_type == ParserType.LLM_PARSE:
+                _set_default_llm_defaults(kwargs)
             return func(**kwargs)
         except Exception as e:
             if kwargs.get("retry_on_fail", True) is False:
@@ -348,7 +368,9 @@ def parse(
         parser_type (Union[str, ParserType], optional): Parser type ("LLM_PARSE", "STATIC_PARSE", or "AUTO").
         pages_per_split (int, optional): Number of pages per split for chunking.
         max_processes (int, optional): Maximum number of processes for parallel processing.
-        **kwargs: Additional arguments for the parser. Notable URL-parsing option:
+        **kwargs: Additional arguments for the parser.
+            docx_pdf_engine (str): DOCX-to-PDF engine: "libreoffice" (default) or
+                "word". Requires LibreOffice or Microsoft Word respectively.
             ghost (bool | dict): Opt-in stealth/agentic "ghost" browsing for URLs.
                 ``True`` enables stealth + reliable JS rendering using sensible
                 defaults; a dict overrides any GhostConfig field, e.g.
@@ -422,6 +444,9 @@ def parse(
                 logger.debug("Converting webpage to PDF...")
                 path = convert_to_pdf(path, pdf_path)
             else:
+                logger.debug(
+                    "Parsing webpage without converting to PDF with recursive reading"
+                )
                 return recursive_read_html(path, depth, ghost_opts=ghost_opts)
 
         assert is_supported_file_type(path), (
@@ -440,7 +465,11 @@ def parse(
         if as_pdf and not path.lower().endswith(".pdf"):
             pdf_path = os.path.join(temp_dir, "converted.pdf")
             logger.debug("Converting file to PDF")
-            path = convert_to_pdf(path, pdf_path)
+            path = convert_to_pdf(
+                path,
+                pdf_path,
+                docx_pdf_engine=kwargs.get("docx_pdf_engine", "libreoffice"),
+            )
 
         if "page_nums" in kwargs and path.lower().endswith(".pdf"):
             sub_pdf_dir = os.path.join(temp_dir, "sub_pdfs")
@@ -507,7 +536,10 @@ def parse(
             else:
                 raise ValueError(f"Unsupported API cost value: {api_cost_mapping}.")
 
-            api_cost = api_cost_mapping.get(kwargs.get("model", DEFAULT_LLM), None)
+            cost_model = kwargs.get("model")
+            if cost_model is None and "LLM_PARSE" in result.get("parsers_used", []):
+                cost_model = get_default_llm_config()["model"]
+            api_cost = api_cost_mapping.get(cost_model)
             if api_cost:
                 token_usage = result["token_usage"]
                 token_cost = {
@@ -646,6 +678,9 @@ def parse_with_schema(
             system_prompt=system_prompt,
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
+            thinking_level=kwargs.get("thinking_level"),
+            thinking=kwargs.get("thinking"),
+            output_config=kwargs.get("output_config"),
         )
         response = resp_dict.get("response", "")
         response = response.split("```json")[-1].split("```")[0].strip()
@@ -663,6 +698,9 @@ def parse_with_schema(
             image_url=image,
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
+            thinking_level=kwargs.get("thinking_level"),
+            thinking=kwargs.get("thinking"),
+            output_config=kwargs.get("output_config"),
         )
 
         response = resp_dict.get("response", "")
@@ -715,6 +753,9 @@ def parse_to_latex(
             image_url=image,
             temperature=kwargs.get("temperature", 0.0),
             max_tokens=kwargs.get("max_tokens", 1024),
+            thinking_level=kwargs.get("thinking_level"),
+            thinking=kwargs.get("thinking"),
+            output_config=kwargs.get("output_config"),
         )
         response = resp_dict.get("response", "").strip()
         response = response.split("```latex")[-1].split("```")[0].strip()
