@@ -106,7 +106,7 @@ config_options = {
     "pages_per_split": [1, 2, 4, 8],
     "max_threads": [1, 2, 4, 8],
     "as_pdf": [True, False],
-    "thinking_level": ["medium"],
+    "thinking_level": ["low", "medium", "high"],
     "autoselect_llm": [False],
 }
 

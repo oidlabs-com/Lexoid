@@ -234,11 +234,11 @@ LLM-Based Parsing
     # Parse using GPT-4o
     result = parse("document.pdf", parser_type="LLM_PARSE", model="gpt-4o")
 
-    # Parse using Gemini 2.5 Pro
-    result = parse("document.pdf", parser_type="LLM_PARSE", model="gemini-2.5-pro")
+    # Parse using Gemini
+    result = parse("document.pdf", parser_type="LLM_PARSE", model="gemini-3.5-flash-lite")
 
     # Parse using Claude
-    result = parse("document.pdf", parser_type="LLM_PARSE", model="claude-3-5-sonnet-20241022")
+    result = parse("document.pdf", parser_type="LLM_PARSE", model="claude-haiku-5-5")
 
     # Parse using Mistral OCR
     result = parse(
@@ -418,7 +418,7 @@ Gemini model (currently the only provider supporting audio).
 
 .. code-block:: python
 
-    result = parse("interview.mp3", model="gemini-2.5-flash")
+    result = parse("interview.mp3", model="gemini-3.8-flash")
     print(result["raw"])
 
 

@@ -123,8 +123,8 @@ parse("scanned.pdf", parser_type="STATIC_PARSE", framework="paddleocr")
 
 # LLM parsing
 parse("document.pdf", parser_type="LLM_PARSE", model="gpt-4o")
-parse("document.pdf", parser_type="LLM_PARSE", model="gemini-2.5-pro")
-parse("document.pdf", parser_type="LLM_PARSE", model="claude-3-5-sonnet-20241022")
+parse("document.pdf", parser_type="LLM_PARSE", model="gemini-3.5-flash-lite")
+parse("document.pdf", parser_type="LLM_PARSE", model="claude-haiku-5-5")
 ```
 
 ### AUTO routing with a priority
@@ -255,7 +255,7 @@ for seg in result["segments"]:
 Audio inputs require a Gemini model (the only provider with audio support).
 
 ```python
-result = parse("interview.mp3", model="gemini-2.5-flash")
+result = parse("interview.mp3", model="gemini-3.1-pro-preview")
 print(result["raw"])
 ```
 

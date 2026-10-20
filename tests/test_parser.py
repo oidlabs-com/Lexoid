@@ -482,10 +482,17 @@ async def test_cost_priority_routing(character_threshold):
         assert result["token_cost"]["total"] > 0
 
 
+# Further improvement is needed to support specialized speech-to-text models for transcription.
+# Below config suggestion is a temporary fix.
 @pytest.mark.asyncio
 async def test_audio_parse():
     path = "examples/inputs/audio/harvard.wav"
-    parsed_md = parse(path, parser_type="LLM_PARSE", model="gemini-2.5-flash")["raw"]
+    parsed_md = parse(
+        path,
+        parser_type="LLM_PARSE",
+        model="gemini-3.1-pro-preview",
+        thinking_level="high",
+    )["raw"]
     assert "zestful food is the hot cross bun" in parsed_md
 
 

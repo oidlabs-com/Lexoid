@@ -42,7 +42,7 @@ Available across all sub-commands:
 Options:
 
 * ``--parser-type, -p``: ``AUTO`` (default), ``LLM_PARSE``, or ``STATIC_PARSE``.
-* ``--model, -m``: LLM model name. Default: ``gemini-2.5-flash``.
+* ``--model, -m``: LLM model name. Default: ``gemini-3.5-flash-lite`` (thinking: medium).
 * ``--pages-per-split``: Pages per chunk. Default: ``4``.
 * ``--max-processes``: Parallel processes. Default: ``4``.
 * ``--framework``: Static parsing framework — ``pdfplumber`` or ``paddleocr``.
