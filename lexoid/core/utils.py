@@ -70,7 +70,6 @@ def get_default_llm_config() -> dict[str, str]:
     return {"model": model.strip(), "thinking_level": thinking_level}
 
 
-DEFAULT_LLM = get_default_llm_config()["model"]
 DEFAULT_LOCAL_LM = os.getenv("DEFAULT_LOCAL_LM", "ds4sd/SmolDocling-256M-preview")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))

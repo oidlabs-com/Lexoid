@@ -4,6 +4,7 @@ import pytest
 from lexoid.api import (
     ParserType,
     _set_default_llm_defaults,
+    parse,
     retry_with_different_parser_type,
 )
 
@@ -128,3 +129,39 @@ async def test_default_llm_invalid_environment(
     explicit = {"model": "gemini-3.8-flash"}
     _set_default_llm_defaults(explicit)
     assert explicit == {"model": "gemini-3.8-flash"}
+
+
+@pytest.mark.parametrize(
+    "env_value,parser_used,model,expected_cost",
+    [
+        ("{invalid", "STATIC_PARSE", None, None),
+        ("claude-haiku-5-5", "LLM_PARSE", None, 3.0),
+        ("{invalid", "LLM_PARSE", "claude-haiku-5-5", 3.0),
+    ],
+)
+def test_cost_mapping_resolves_defaults_only_for_llm_usage(
+    monkeypatch: pytest.MonkeyPatch,
+    env_value: str,
+    parser_used: str,
+    model: str | None,
+    expected_cost: float | None,
+) -> None:
+    monkeypatch.setenv("DEFAULT_LLM", env_value)
+    chunk_result = {
+        "raw": "parsed text",
+        "segments": [],
+        "parsers_used": [parser_used],
+        "token_usage": {"input": 1_000_000, "output": 1_000_000},
+    }
+    with patch("lexoid.api.parse_chunk_list", return_value=chunk_result):
+        result = parse(
+            "sample.txt",
+            parser_type=parser_used,
+            model=model,
+            api_cost_mapping={"claude-haiku-5-5": {"input": 1, "output": 2}},
+        )
+
+    if expected_cost is None:
+        assert "token_cost" not in result
+    else:
+        assert result["token_cost"]["total"] == expected_cost
