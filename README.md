@@ -168,6 +168,11 @@ promotional overlays can be dismissed, and cookie banners use reject or
 necessary-only options when available. CAPTCHA solving is planned; until it is
 implemented, a CAPTCHA that prevents progress is reported as a blocker.
 
+## Browser evaluation
+
+See [evaluate/](evaluate/README.md) for selecting Odysseys tasks, saving browser
+runs, and provisional per-rubric text grading with explicit review gaps.
+
 # Command Line Usage
 
 Lexoid provides a command-line interface for document parsing without writing Python code.
