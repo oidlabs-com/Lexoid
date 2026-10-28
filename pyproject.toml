@@ -1,9 +1,10 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.24"
+version = "0.1.25-dev"
 description = "Turn documents and live websites into agent-ready context with parsing and evidence-grounded browser automation."
 authors = []
 readme = "README.md"
+packages = [{ include = "lexoid" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
@@ -63,6 +64,10 @@ docutils = "^0.21.2"
 
 [tool.poetry.scripts]
 lexoid = "lexoid.cli:app"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+markers = ["live: requires real browser/model access and may incur API costs"]
 
 [build-system]
 requires = ["poetry-core", "wheel"]

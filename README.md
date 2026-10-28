@@ -165,6 +165,11 @@ information, authentication, or consequential consent is needed. These are
 navigator instructions, not semantic enforcement for every site control;
 ambiguous actions should be reviewed.
 
+## Browser evaluation
+
+See [evaluate/](evaluate/README.md) for selecting Odysseys tasks, saving browser
+runs, and provisional per-rubric text grading with explicit review gaps.
+
 # Command Line Usage
 
 Lexoid provides a command-line interface for document parsing without writing Python code.
