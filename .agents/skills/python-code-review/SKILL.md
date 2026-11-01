@@ -1,3 +1,8 @@
+---
+name: python-code-review
+description: 'Python code review checklist and severity-ranked findings format covering design and architecture, code quality, typing, error handling, input validation, security, performance and test coverage. Use when reviewing a PR, diff, branch or changed files, auditing code quality, or looking for bugs, design flaws, security vulnerabilities and missing tests.'
+---
+
 # Code Review
 
 Mode: PR review, code analysis
@@ -11,6 +16,20 @@ Focus: Quality, security, maintainability, design flaws, architectural integrity
 - Suggest concrete fixes and code examples, don't just point out problems
 - Check for security vulnerabilities, race conditions, and error paths
 - Consider performance, maintainability, and operational complexity
+
+## Verify Before Reporting
+
+A finding is a hypothesis until checked. When the Pylance skills are installed:
+
+- Use `python-fact-grounded-coding` to confirm a suspected bug with diagnostics,
+  references, call sites, a focused snippet or a test before reporting it as fact.
+- Use `python-type-inference` when a finding depends on what type a symbol
+  actually has.
+- Recommend `pylance-refactoring` for mechanical fixes (renames, unused imports,
+  import style) rather than hand-written multi-file edits.
+
+Label anything you could not verify as unverified, with what would confirm it.
+Apply the `python-coding-style` skill as the style baseline.
 
 ## Review Checklist
 
