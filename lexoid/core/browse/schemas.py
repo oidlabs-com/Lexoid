@@ -326,6 +326,7 @@ class ElementRef(BaseModel):
     role: str | None = Field(default=None, max_length=128)
     name: str | None = Field(default=None, max_length=1_000)
     tag: str | None = Field(default=None, max_length=64)
+    href: str | None = Field(default=None, max_length=8_192)
     ordinal: int | None = Field(default=None, ge=0)
     bbox_x: float | None = Field(default=None, ge=-20_000, le=20_000)
     bbox_y: float | None = Field(default=None, ge=-20_000, le=20_000)

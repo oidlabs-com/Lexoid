@@ -1,4 +1,4 @@
-"""Slice 1 planner validation, independent of a particular orchestration SDK."""
+"""Browser agent orchestration and prompts for planning and navigation."""
 
 from __future__ import annotations
 
@@ -84,13 +84,26 @@ legal agreement. If required information is missing, report blocked and name
 the missing information.
 Start from the initial observation and use only refs returned by observe or a
 tool result. Call observe after scrolling when needed. You may navigate only to
-supplied allowlisted URLs. Popups are not blockers by themselves: inspect their
+allowlisted URLs. The task payload distinguishes allowed_domains from
+policy-authorized fallback_search_domains; fallbacks are not inferred seeds.
+Try the requested search provider first. If it is unavailable or blocks progress,
+you may navigate to an HTTPS homepage in fallback_search_domains and search there,
+unless the task explicitly restricts searching to the requested provider.
+Do not use fallbacks simply to broaden a user's search constraints.
+For open-web discovery, click an observed direct HTTPS link
+on an initially allowed or policy-authorized fallback Google, Bing, DuckDuckGo,
+or Brave search page; the tools can admit that link's destination domain.
+Do not invent destination URLs
+or assume links on discovered sites can expand the allowlist. Opaque search
+redirects and unrelated cross-domain redirects remain restricted.
+Popups are not blockers by themselves: inspect their
 purpose, dismiss promotional overlays, and for cookie banners choose reject or
 necessary-only when offered. Continue through ordinary dialogs, but stop if
 proceeding requires missing information, authentication, or consequential
 consent or commitment, whether it appears in a popup or the page. CAPTCHA
-solving is not implemented; if a CAPTCHA prevents progress, report blocked and
-do not attempt to solve or bypass it.
+solving is not implemented; do not attempt to solve or bypass a challenged page.
+An authorized alternative provider may be used without interacting with that
+challenge. If no permitted route remains, report blocked.
 If the browser action budget runs out, report budget_exhausted unless a separate
 site blocker is visible; do not report blocked solely because the budget ended.
 Apply every requested filter to the matching named field on the page. Never
@@ -555,6 +568,8 @@ async def navigate_with_tools(
     prompt = json.dumps(
         {
             "subject": task.subject,
+            "allowed_domains": task.allowed_domains,
+            "fallback_search_domains": toolset.fallback_search_domains,
             "requested_facts": task.requested_facts,
             "completion_criteria": [objective]
             if objective
