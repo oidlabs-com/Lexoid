@@ -6,7 +6,13 @@ import inspect
 import json
 from collections.abc import Awaitable, Callable
 
-from lexoid.core.browse.policy import PolicyDecision, authorize, is_allowed_url
+from lexoid.core.browse.policy import (
+    PolicyDecision,
+    authorize,
+    fallback_search_domains,
+    is_allowed_url,
+    search_discovery_domain,
+)
 from lexoid.core.browse.schemas import (
     BrowseErrorCode,
     BrowserAction,
@@ -104,6 +110,15 @@ class BrowserToolset:
     ) -> None:
         self._session = session
         self._task = task
+        self._initial_domains = list(task.allowed_domains)
+        self._fallback_search_domains = fallback_search_domains(
+            task.seed_urls + [seed.url for seed in task.inferred_seeds],
+            self._initial_domains,
+        )
+        self._search_discovery_domains = (
+            self._initial_domains + self._fallback_search_domains
+        )
+        task.allowed_domains.extend(self._fallback_search_domains)
         self._tab_id = tab_id
         self._openers: dict[str, str] = {}
         self._emit = emit
@@ -118,6 +133,11 @@ class BrowserToolset:
         # a reported outcome; never derived from model text.
         self.step_limit_reached = False
         self.last_error_code: BrowseErrorCode | None = None
+
+    @property
+    def fallback_search_domains(self) -> list[str]:
+        """Return policy-authorized alternatives, separate from task seeds."""
+        return list(self._fallback_search_domains)
 
     @property
     def tab_id(self) -> str:
@@ -291,7 +311,7 @@ class BrowserToolset:
         return json.dumps(payload)
 
     async def click(self, ref: str) -> str:
-        """Click one element ref returned by observe."""
+        """Click an observed element; search-provider links can admit their HTTPS destination domain."""
         return await self._run(BrowserAction(kind="click", ref=ref))
 
     async def type(self, ref: str, text: str) -> str:
@@ -303,7 +323,11 @@ class BrowserToolset:
         return await self._run(BrowserAction(kind="select", ref=ref, text=text))
 
     async def keypress(self, keys: str = "Enter") -> str:
-        """Send a keyboard shortcut to the current page."""
+        """Send a case-sensitive Playwright key or shortcut to the current page.
+
+        Use exact key names: Enter, Escape, Tab, Backspace, ArrowDown.
+        Use '+' for shortcuts, e.g. Control+a or Meta+a. Use Enter, not ENTER.
+        """
         return await self._run(BrowserAction(kind="keypress", text=keys))
 
     async def wait(self, text: str = "") -> str:
@@ -526,6 +550,13 @@ class BrowserToolset:
             )
         )
         decision = authorize(action, self._task.allowed_domains)
+        source_url = await self._get_tab_url(self._tab_id)
+        snapshot_url = self._snapshot.url
+        element = next(
+            (item for item in self._snapshot.elements if item.ref == action.ref), None
+        )
+        discovered_domain = None
+        discovery_diagnostics: dict[str, object] = {}
         if decision.decision is PolicyDecision.ALLOW:
             result = await self._session.execute(action)
         else:
@@ -534,7 +565,54 @@ class BrowserToolset:
                 outcome=decision.reason,
                 error_code=decision.error_code,
             )
+
+        def admit_search_destination(destination_url: str) -> str | None:
+            if action.kind != "click":
+                return None
+            discovery_diagnostics.update(
+                {
+                    "source_url": source_url,
+                    "snapshot_url": snapshot_url,
+                    "source_matches_snapshot": source_url == snapshot_url,
+                    "href": element.href if element is not None else None,
+                    "destination_url": destination_url,
+                    "execution_success": result.success,
+                    "initial_domains": list(self._initial_domains),
+                    "fallback_search_domains": self.fallback_search_domains,
+                    "allowed_domains_before": list(self._task.allowed_domains),
+                }
+            )
+            if not result.success:
+                reason = "action_failed"
+            elif source_url != snapshot_url:
+                reason = "source_snapshot_url_mismatch"
+            elif is_allowed_url(destination_url, self._task.allowed_domains):
+                reason = "destination_already_allowed"
+            else:
+                reason = "checking_search_discovery"
+            discovery_diagnostics["decision"] = reason
+            logger.debug("Search discovery check: {}", discovery_diagnostics)
+            if reason != "checking_search_discovery":
+                return None
+            domain = search_discovery_domain(
+                source_url,
+                element.href if element is not None else None,
+                destination_url,
+                self._search_discovery_domains,
+            )
+            if domain:
+                self._task.allowed_domains.append(domain)
+                logger.info(
+                    "Admitted search-discovered domain {} from {}", domain, source_url
+                )
+            discovery_diagnostics["decision"] = (
+                "admitted" if domain else "search_discovery_policy_rejected"
+            )
+            logger.debug("Search discovery decision: {}", discovery_diagnostics)
+            return domain
+
         if result.opened_tab_id:
+            discovered_domain = admit_search_destination(result.after_url)
             if not is_allowed_url(result.after_url, self._task.allowed_domains):
                 await self._session.close_tab(result.opened_tab_id)
                 result = BrowserActionResult(
@@ -547,6 +625,7 @@ class BrowserToolset:
         else:
             try:
                 current_url = await self._get_tab_url(self._tab_id)
+                discovered_domain = admit_search_destination(current_url)
                 if not is_allowed_url(current_url, self._task.allowed_domains):
                     await self._handle_bad_tab(self._tab_id)
                     result = BrowserActionResult(
@@ -597,6 +676,14 @@ class BrowserToolset:
             )
             code_part = f" (code={err_code})" if err_code else ""
             logger.info("|   [FAIL] {}{}", result.outcome, code_part)
+        fallback_used = (
+            result.success
+            and bool(result.after_url)
+            and is_allowed_url(result.after_url, self._fallback_search_domains)
+            and not is_allowed_url(result.after_url, self._initial_domains)
+        )
+        if fallback_used:
+            logger.info("Using policy-authorized search fallback {}", result.after_url)
         await self._emit(
             BrowserActionTrace(
                 event="action",
@@ -607,7 +694,31 @@ class BrowserToolset:
                 else None,
                 action=safe_action,
                 result=result,
-                metadata={"description": call_desc},
+                metadata={
+                    "description": call_desc,
+                    **(
+                        {
+                            "fallback_search_domains": self.fallback_search_domains,
+                            "search_fallback_used": fallback_used,
+                        }
+                        if self._fallback_search_domains
+                        else {}
+                    ),
+                    **(
+                        {"discovery_check": discovery_diagnostics}
+                        if discovery_diagnostics
+                        else {}
+                    ),
+                    **(
+                        {
+                            "discovered_domain": discovered_domain,
+                            "discovery_source": source_url,
+                            "discovery_href": element.href,
+                        }
+                        if discovered_domain and element is not None
+                        else {}
+                    ),
+                },
             )
         )
         payload = {"action": safe_action.model_dump(), "result": result.model_dump()}

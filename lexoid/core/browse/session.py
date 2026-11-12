@@ -208,6 +208,7 @@ elements => {
             role: element.getAttribute('role') || element.tagName.toLowerCase(),
             name,
             tag: element.tagName.toLowerCase(),
+            href: element.closest('a[href]')?.href || null,
             bbox_x: rect.x,
             bbox_y: rect.y,
             bbox_width: rect.width,
@@ -467,6 +468,11 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                     role=entry.get("role"),
                     name=str(entry.get("name") or "")[:1000],
                     tag=entry.get("tag"),
+                    href=(
+                        entry.get("href")
+                        if len(entry.get("href") or "") <= 8192
+                        else None
+                    ),
                     ordinal=entry["index"],
                     bbox_x=entry["bbox_x"],
                     bbox_y=entry["bbox_y"],

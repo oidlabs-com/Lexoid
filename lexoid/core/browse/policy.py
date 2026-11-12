@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse
 
+from loguru import logger
+
 from lexoid.core.browse.schemas import BrowseErrorCode, BrowserAction
 
 
@@ -45,6 +47,19 @@ _ALLOWED_ACTIONS = {
 }
 _DENIED_TEXT_MARKERS = ("password", "passcode", "credential", "credit card")
 _DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+SEARCH_PROVIDER_HOSTS = frozenset(
+    {
+        "google.com",
+        "www.google.com",
+        "bing.com",
+        "www.bing.com",
+        "duckduckgo.com",
+        "www.duckduckgo.com",
+        "brave.com",
+        "www.brave.com",
+        "search.brave.com",
+    }
+)
 
 PUBLIC_SUFFIXES = {
     "com",
@@ -232,6 +247,69 @@ def is_allowed_url(url: str, allowed_domains: list[str]) -> bool:
         for domain in (normalize_domain(item) for item in allowed_domains)
         if domain
     )
+
+
+def fallback_search_domains(seed_urls: list[str], initial_domains: list[str]) -> list[str]:
+    """Authorize configured search providers only for an initially seeded provider.
+
+    These domains are policy fallbacks, not inferred or user-requested seeds.
+    """
+    if not any(
+        normalize_domain(seed) in SEARCH_PROVIDER_HOSTS
+        and is_allowed_url(seed, initial_domains)
+        for seed in seed_urls
+    ):
+        return []
+    return [
+        domain
+        for domain in derive_allowed_domains(
+            [f"https://{host}/" for host in sorted(SEARCH_PROVIDER_HOSTS)]
+        )
+        if not is_allowed_url(f"https://{domain}/", initial_domains)
+    ]
+
+
+def search_discovery_domain(
+    source_url: str,
+    link_url: str | None,
+    destination_url: str,
+    initial_domains: list[str],
+) -> str | None:
+    """Admit an observed link from an initial or policy-authorized search provider.
+
+    The authorization domains must not include dynamically discovered sites.
+    """
+    if not link_url:
+        logger.debug("Search discovery rejected: observed element has no href")
+        return None
+    try:
+        source = validate_seed_url(source_url)
+        link = validate_seed_url(link_url)
+        destination = validate_seed_url(destination_url)
+    except ValueError as error:
+        logger.debug("Search discovery rejected: URL validation failed: {}", error)
+        return None
+    if (
+        normalize_domain(source) not in SEARCH_PROVIDER_HOSTS
+        or not is_allowed_url(source, initial_domains)
+    ):
+        logger.debug(
+            "Search discovery rejected: source_host={} provider={} source_allowed={}",
+            normalize_domain(source),
+            normalize_domain(source) in SEARCH_PROVIDER_HOSTS,
+            is_allowed_url(source, initial_domains),
+        )
+        return None
+    link_domain = derive_allowed_domains([link])[0]
+    destination_domain = derive_allowed_domains([destination])[0]
+    if link_domain != destination_domain:
+        logger.debug(
+            "Search discovery rejected: link_domain={} differs from landing_domain={}",
+            link_domain,
+            destination_domain,
+        )
+        return None
+    return destination_domain
 
 
 def authorize(action: BrowserAction, allowed_domains: list[str]) -> PolicyResult:

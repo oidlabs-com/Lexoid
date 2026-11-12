@@ -273,6 +273,32 @@ def test_saved_run_grading_and_missing_run_denominator(tmp_path, monkeypatch):
     assert "rubric" in json.loads(prompts[0])
 
 
+def test_grading_accepts_fenced_json_response(tmp_path, monkeypatch):
+    judgment = {
+        "verdict": "needs_review",
+        "reason": "Independent terminal tab state is not captured",
+        "evidence": [],
+    }
+    monkeypatch.setattr(
+        odysseys_judge,
+        "make_judge",
+        lambda model: lambda prompt: f"```json\n{json.dumps(judgment)}\n```",
+    )
+    value = task()
+    write_run(
+        tmp_path,
+        [value],
+        [{"task_id": value["task_id"], "result": {"answer": "A fact"}}],
+    )
+    args = make_grade_args(tmp_path, tmp_path / "grades.json")
+
+    assert not grade(args)
+
+    report = json.loads(args.output.read_text())
+    assert report["summary"]["grading_errors"] == 0
+    assert report["summary"]["needs_review"] == 2
+
+
 @pytest.mark.asyncio
 async def test_preserves_prompt_and_serializes_result():
     captured = {}
@@ -342,7 +368,7 @@ async def test_end_to_end(tmp_path):
         output=output,
         model=os.getenv("ODYSSEYS_SMOKE_BROWSER_MODEL", "gpt-5.6-sol"),
         cdp_url=None,
-        headful=False,
+        headful=True,
         deadline=1000,
         max_steps=100,
         max_steps_per_run=20,

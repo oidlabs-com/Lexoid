@@ -4,7 +4,12 @@ import json
 
 import pytest
 from lexoid.core.browse import session as browse_session
-from lexoid.core.browse.schemas import BrowserAction, BrowseTask
+from lexoid.core.browse.schemas import (
+    BrowserAction,
+    BrowserActionResult,
+    BrowseTask,
+    InferredSeed,
+)
 from lexoid.core.browse.session import GhostBrowserSession
 from lexoid.core.browse.tools import BrowserToolset
 from lexoid.core.ghost import GhostConfig
@@ -557,6 +562,149 @@ class _FakeClickTriggersPopupHandle(_FakeSnapshotHandle):
         await super().click(**kwargs)
         if self.page.popup_to_trigger is not None:
             self.page.trigger_popup(self.page.popup_to_trigger)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("popup", [False, True])
+@pytest.mark.parametrize(
+    ("source", "href", "destination", "admitted"),
+    [
+        ("https://www.google.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
+        ("https://www.bing.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
+        ("https://www.duckduckgo.com/", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
+        ("https://search.brave.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
+        ("https://www.google.com/search", "https://www.allrecipes.com/recipe/1", "https://unrelated.com/", False),
+        ("https://www.google.com/search", None, "https://www.allrecipes.com/recipe/1", False),
+        ("https://example.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", False),
+    ],
+)
+async def test_toolset_search_discovery(
+    monkeypatch, popup, source, href, destination, admitted
+):
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakePageWithPopup()
+    page.url = source
+    tab_id = session._register_page(page, "tab-search")
+    original_entries = _FakeSnapshotLocator.evaluate_all
+
+    async def link_entries(locator, script):
+        entries = await original_entries(locator, script)
+        entries[1].update({"tag": "a", "role": "link", "href": href})
+        return entries
+
+    async def click(**kwargs):
+        if popup:
+            page.trigger_popup(_FakePopupPage(destination))
+        else:
+            page.url = destination
+
+    monkeypatch.setattr(_FakeSnapshotLocator, "evaluate_all", link_entries)
+    monkeypatch.setattr(page.handles[1], "click", click)
+    traces = []
+
+    async def emit(trace):
+        traces.append(trace)
+
+    task = BrowseTask(
+        seed_urls=["https://www.google.com/" if admitted else source],
+        subject="Find a recipe",
+        allowed_domains=["google.com"] if admitted else ["google.com", "example.com"],
+    )
+    toolset = BrowserToolset(session, task, tab_id, emit)
+    response = json.loads(await toolset.click("e1"))
+
+    assert response["result"]["success"] is admitted
+    assert ("allrecipes.com" in task.allowed_domains) is admitted
+    action_trace = next(trace for trace in traces if trace.event == "action")
+    assert action_trace.metadata.get("discovered_domain") == (
+        "allrecipes.com" if admitted else None
+    )
+    if admitted:
+        assert not toolset.is_quarantined
+        assert action_trace.metadata["discovery_check"]["initial_domains"] == [
+            "google.com"
+        ]
+        assert "bing.com" in action_trace.metadata["discovery_check"][
+            "fallback_search_domains"
+        ]
+        denied = json.loads(await toolset.navigate("https://unrelated.com/"))
+        assert denied["result"]["success"] is False
+        # A second outbound click from the discovered site cannot expand scope.
+        href = "https://unrelated.com/"
+        destination = href
+
+        async def outbound_click(action):
+            active_page = session._owned_pages[toolset.tab_id]
+            assert isinstance(active_page, (_FakePageWithPopup, _FakePopupPage))
+            active_page.url = destination
+            return BrowserActionResult(
+                success=True, outcome="clicked", after_url=destination
+            )
+
+        monkeypatch.setattr(session, "execute", outbound_click)
+        toolset._snapshot = None
+        denied = json.loads(await toolset.click("e1"))
+        assert denied["result"]["success"] is False
+        assert "unrelated.com" not in task.allowed_domains
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inferred", [False, True])
+@pytest.mark.parametrize("search_enabled", [False, True])
+async def test_search_fallback_navigation_preserves_seed_provenance(
+    monkeypatch, inferred, search_enabled
+):
+    seed = "https://www.google.com/" if search_enabled else "https://example.com/"
+    domain = "google.com" if search_enabled else "example.com"
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakePageWithPopup()
+    page.url = seed
+    tab_id = session._register_page(page, "tab-search")
+    task = BrowseTask(
+        seed_urls=[] if inferred else [seed],
+        inferred_seeds=[InferredSeed(url=seed, source_text=domain)] if inferred else [],
+        subject="Find a recipe",
+        allowed_domains=[domain],
+    )
+    original_seeds = task.model_dump(include={"seed_urls", "inferred_seeds"})
+    traces = []
+    executed = []
+
+    async def emit(trace):
+        traces.append(trace)
+
+    async def execute(action):
+        executed.append(action)
+        assert action.url is not None
+        before_url = page.url
+        page.url = action.url
+        return BrowserActionResult(
+            success=True,
+            outcome="navigated",
+            before_url=before_url,
+            after_url=page.url,
+        )
+
+    monkeypatch.setattr(session, "execute", execute)
+    toolset = BrowserToolset(session, task, tab_id, emit)
+    result = json.loads(await toolset.navigate("https://www.bing.com/"))
+
+    assert result["result"]["success"] is search_enabled
+    assert bool(executed) is search_enabled
+    assert task.model_dump(include={"seed_urls", "inferred_seeds"}) == original_seeds
+    assert toolset._initial_domains == [domain]
+    assert not toolset.is_quarantined
+    action_trace = next(trace for trace in traces if trace.event == "action")
+    if search_enabled:
+        assert "bing.com" in toolset.fallback_search_domains
+        assert action_trace.metadata["search_fallback_used"] is True
+        assert "bing.com" in action_trace.metadata["fallback_search_domains"]
+        denied = json.loads(await toolset.navigate("https://unrelated.com/"))
+        assert denied["result"]["success"] is False
+        assert len(executed) == 1
+    else:
+        assert toolset.fallback_search_domains == []
+        assert task.allowed_domains == [domain]
 
 
 @pytest.mark.asyncio

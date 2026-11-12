@@ -224,6 +224,16 @@ def validate_judgment(value: Any) -> dict[str, Any]:
     return value
 
 
+def parse_judgment_response(response: str) -> dict[str, Any]:
+    response = response.strip()
+    fenced = re.fullmatch(
+        r"```(?:json)?\s*(.*?)\s*```", response, flags=re.IGNORECASE | re.DOTALL
+    )
+    if fenced:
+        response = fenced.group(1)
+    return validate_judgment(json.loads(response))
+
+
 def aggregate(tasks: list[dict[str, Any]], grades: dict[str, Any]) -> dict[str, Any]:
     passed = failed = review = errors = 0
     lower_scores = []
@@ -325,7 +335,7 @@ def grade(args: argparse.Namespace) -> bool:
                         },
                         ensure_ascii=False,
                     )
-                    judgment = validate_judgment(json.loads(judge(prompt)))
+                    judgment = parse_judgment_response(judge(prompt))
                 except Exception as error:
                     had_error = True
                     print(f"{task['task_id']}/{rubric_id}: {error}", file=sys.stderr)
