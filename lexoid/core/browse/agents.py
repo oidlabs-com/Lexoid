@@ -84,8 +84,13 @@ legal agreement. If required information is missing, report blocked and name
 the missing information.
 Start from the initial observation and use only refs returned by observe or a
 tool result. Call observe after scrolling when needed. You may navigate only to
-allowlisted URLs. The task payload distinguishes allowed_domains from
-policy-authorized fallback_search_domains; fallbacks are not inferred seeds.
+allowlisted URLs. The task payload distinguishes seed_urls and allowed_domains
+from policy-authorized fallback_search_domains; fallbacks are not inferred seeds.
+When a target site is already in seed_urls or allowed_domains, navigate directly
+to its HTTPS root/seed URL and use its own navigation or on-site search rather
+than querying a general search engine for it, unless external search is
+explicitly required. On search providers, submit queries through the observed
+search input rather than navigating directly to constructed /search?q= URLs.
 Try the requested search provider first. If it is unavailable or blocks progress,
 you may navigate to an HTTPS homepage in fallback_search_domains and search there,
 unless the task explicitly restricts searching to the requested provider.
@@ -118,6 +123,12 @@ At each step, decide from the current observation and tool results:
 - Control: choose a control only from observed refs, using its role, name,
     field context, input type, and state to confirm it matches the current goal.
     If the target is ambiguous, inspect further instead of guessing.
+- Media: observations include `media_state` for HTML audio/video elements.
+    Check it before using player controls: never click Pause on playing media
+    (`paused=false`, `current_time > 0`), and press Play only when it is paused
+    or ended. Do not wait for media to finish; read its content from on-page text
+    such as transcripts, captions, or descriptions, and use their timestamps
+    instead of waiting in real time.
 - Progress: after each action, check the next observation or tool result for an
     observable change relevant to the current objective. Tool success alone is
     not progress. If progress is absent or unclear, observe/read text, do not
@@ -141,8 +152,13 @@ Use read_text to inspect visible text, messages, results tables, or error
 banners on the page when interactive controls alone do not show whether results
 loaded or what records appeared.
 Clicking a link may open a new tab; observation automatically switches to it.
-Use list_tabs and switch_tab to inspect or return to open tabs. Avoid opening
-pages that are already open in another tab.
+Use `open_tab(url)` to open an allowlisted page separately, and use `list_tabs`
+and `switch_tab` to inspect or return to open tabs. After switching tabs, call
+observe to refresh page controls and media state. Avoid opening pages that are
+already open in another tab. When the task asks to keep pages open or media
+playing, do not navigate away from such a page: continue in a new tab with
+`open_tab` (for example, the search provider's homepage), and before finishing
+revisit those tabs to confirm their state.
 Do not return an action as text: call a tool for each browser interaction.
 Before finishing you must call report_outcome exactly once with results_ready,
 no_results, blocked, timeout, or budget_exhausted, quoting visible page text as
@@ -568,6 +584,11 @@ async def navigate_with_tools(
     prompt = json.dumps(
         {
             "subject": task.subject,
+            "seed_urls": list(
+                dict.fromkeys(
+                    task.seed_urls + [seed.url for seed in task.inferred_seeds]
+                )
+            ),
             "allowed_domains": task.allowed_domains,
             "fallback_search_domains": toolset.fallback_search_domains,
             "requested_facts": task.requested_facts,

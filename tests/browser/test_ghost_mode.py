@@ -49,6 +49,7 @@ GHOST_ENV_VARS = [
     "LEXOID_CDP_URL",
     "LEXOID_GHOST",
     "LEXOID_GHOST_PROFILE_DIR",
+    "LEXOID_GHOST_CHANNEL",
 ]
 
 
@@ -108,6 +109,7 @@ def test_ghost_enable_via_bool_uses_sane_defaults():
     assert cfg.auto_scroll is True
     assert cfg.navigate is False  # agentic loop is opt-in within ghost
     assert cfg.cdp_url is None
+    assert cfg.mute_audio is True
 
 
 def test_ghost_dict_overrides_fields():
@@ -117,6 +119,7 @@ def test_ghost_dict_overrides_fields():
             "headless": False,
             "auto_scroll": False,
             "timeout_ms": 5000,
+            "mute_audio": False,
             "navigate": True,
             "nav_instruction": "open the pricing tab",
             "nav_model": "gpt-4o",
@@ -132,6 +135,7 @@ def test_ghost_dict_overrides_fields():
     assert cfg.nav_instruction == "open the pricing tab"
     assert cfg.nav_model == "gpt-4o"
     assert cfg.nav_max_steps == 3
+    assert cfg.mute_audio is False
 
 
 def test_ghost_cdp_via_env_enables_attach_mode(monkeypatch):
@@ -161,6 +165,143 @@ def test_set_of_marks_enabled_by_default():
     # for the agentic loop, and can be turned off.
     assert GhostConfig.from_kwargs(True).set_of_marks is True
     assert GhostConfig.from_kwargs({"set_of_marks": False}).set_of_marks is False
+
+
+def test_patchright_hygiene_defaults_and_viewport_resolution(monkeypatch):
+    default_cfg = GhostConfig.from_kwargs(True)
+    assert default_cfg.user_agent is None
+    assert default_cfg.channel is None
+    assert default_cfg.no_viewport is None
+    assert ghost.resolve_no_viewport(default_cfg) is False
+
+    headed_cfg = GhostConfig.from_kwargs({"headless": False})
+    assert ghost.resolve_no_viewport(headed_cfg) is True
+
+    explicit_viewport_cfg = GhostConfig.from_kwargs(
+        {"headless": False, "no_viewport": False}
+    )
+    assert ghost.resolve_no_viewport(explicit_viewport_cfg) is False
+
+    monkeypatch.setenv("LEXOID_GHOST_CHANNEL", "chrome")
+    env_channel_cfg = GhostConfig.from_kwargs(True)
+    assert env_channel_cfg.channel == "chrome"
+
+
+def test_dedicated_profile_rejects_system_chrome_dir_and_prevents_concurrent_share(
+    tmp_path, monkeypatch
+):
+    fake_home = tmp_path / "home"
+    system_chrome = fake_home / "Library" / "Application Support" / "Google" / "Chrome"
+    (system_chrome / "Default").mkdir(parents=True)
+    monkeypatch.setattr(ghost.Path, "home", staticmethod(lambda: fake_home))
+
+    with pytest.raises(ValueError, match="Refusing to use system Chrome profile"):
+        ghost.validate_dedicated_profile_dir(system_chrome)
+    with pytest.raises(ValueError, match="Refusing to use system Chrome profile"):
+        ghost.validate_dedicated_profile_dir(system_chrome / "Default")
+
+    dedicated = tmp_path / "lexoid-profile"
+    lock = ghost.acquire_profile_lock(dedicated)
+    try:
+        with pytest.raises(RuntimeError, match="already in use"):
+            ghost.acquire_profile_lock(dedicated)
+    finally:
+        lock.release()
+
+    second_lock = ghost.acquire_profile_lock(dedicated)
+    second_lock.release()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("patchright_active", [True, False])
+async def test_launch_helpers_apply_patchright_settings_and_channel_fallback(
+    tmp_path, patchright_active
+):
+    calls = []
+
+    class _FakeChromium:
+        def __init__(self, missing_chrome=False):
+            self.missing_chrome = missing_chrome
+
+        async def launch_persistent_context(self, user_data_dir, **kwargs):
+            calls.append(("persistent", user_data_dir, kwargs))
+            if self.missing_chrome and kwargs.get("channel") == "chrome":
+                raise RuntimeError("Chromium distribution 'chrome' is not found")
+            return {"context": True}
+
+        async def launch(self, **kwargs):
+            calls.append(("launch", None, kwargs))
+            if self.missing_chrome and kwargs.get("channel") == "chrome":
+                raise RuntimeError("Chromium distribution 'chrome' is not found")
+            return {"browser": True}
+
+    cfg = GhostConfig.from_kwargs({"headless": False, "user_data_dir": str(tmp_path)})
+    expected_args = list(ghost._STOCK_PLAYWRIGHT_ARGS) if not patchright_active else []
+    expected_args.append("--mute-audio")
+    extra_args = {"args": expected_args}
+    _, used_channel = await ghost.launch_persistent_context_with_config(
+        _FakeChromium(), tmp_path, cfg, patchright_active=patchright_active
+    )
+    assert used_channel == "chrome"
+    assert calls[-1][2] == {
+        "headless": False,
+        "chromium_sandbox": True,
+        "no_viewport": True,
+        "channel": "chrome",
+        **extra_args,
+    }
+
+    calls.clear()
+    _, fallback_channel = await ghost.launch_browser_with_config(
+        _FakeChromium(missing_chrome=True),
+        GhostConfig.from_kwargs({"headless": False}),
+        patchright_active=patchright_active,
+    )
+    assert fallback_channel == "chromium"
+    assert [entry[2] for entry in calls] == [
+        {"headless": False, "chromium_sandbox": True, "channel": "chrome", **extra_args},
+        {"headless": False, "chromium_sandbox": True, **extra_args},
+    ]
+
+    calls.clear()
+    unmuted_cfg = GhostConfig.from_kwargs({"mute_audio": False})
+    await ghost.launch_browser_with_config(
+        _FakeChromium(), unmuted_cfg, patchright_active=patchright_active
+    )
+    assert calls[-1][2].get("args") == (
+        None if patchright_active else list(ghost._STOCK_PLAYWRIGHT_ARGS)
+    )
+
+    calls.clear()
+    _, fallback_channel = await ghost.launch_persistent_context_with_config(
+        _FakeChromium(missing_chrome=True),
+        tmp_path,
+        cfg,
+        patchright_active=patchright_active,
+    )
+    assert fallback_channel == "chromium"
+    assert [entry[2] for entry in calls] == [
+        {
+            "headless": False,
+            "chromium_sandbox": True,
+            "no_viewport": True,
+            "channel": "chrome",
+            **extra_args,
+        },
+        {
+            "headless": False,
+            "chromium_sandbox": True,
+            "no_viewport": True,
+            **extra_args,
+        },
+    ]
+
+    with pytest.raises(RuntimeError, match="distribution 'chrome' is not found"):
+        await ghost.launch_browser_with_config(
+            _FakeChromium(missing_chrome=True),
+            GhostConfig.from_kwargs({"headless": False, "channel": "chrome"}),
+            patchright_active=patchright_active,
+        )
 
 
 def test_format_element_marks_role_and_offscreen():

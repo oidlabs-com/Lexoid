@@ -32,6 +32,28 @@ async def test_browse_rejects_unsupported_model_before_capture():
         )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mute_audio", "expected"), [(True, True), (False, False)])
+async def test_browse_passes_mute_audio_setting(monkeypatch, mute_audio, expected):
+    task = BrowseTask(
+        seed_urls=["https://example.com/"],
+        subject="Inspect the page",
+        allowed_domains=["example.com"],
+    )
+    captured = {}
+
+    async def fake_run_task(task, **kwargs):
+        captured.update(kwargs)
+        return "result"
+
+    monkeypatch.setattr("lexoid.api.run_task", fake_run_task)
+
+    result = await browse(task, mute_audio=mute_audio)
+
+    assert result == "result"
+    assert captured["mute_audio"] is expected
+
+
 def test_browse_model_config_resolution():
     # String shorthand sets default for all roles
     cfg_str = BrowseModelConfig.from_value("gpt-5.6-sol")
@@ -243,9 +265,17 @@ async def test_run_task_passes_headless_setting_to_browser_config():
         allowed_domains=["tmsearch.uspto.gov"],
     )
 
-    await orchestrator.run_task(task, headless=False, html_fetcher=fetcher)
+    await orchestrator.run_task(
+        task,
+        headless=False,
+        user_data_dir="/tmp/dedicated-lexoid-profile",
+        channel="chrome",
+        html_fetcher=fetcher,
+    )
 
     assert seen_configs[0].headless is False
+    assert seen_configs[0].user_data_dir == "/tmp/dedicated-lexoid-profile"
+    assert seen_configs[0].channel == "chrome"
 
 
 def test_evidence_claim_requires_exact_artifact_quote():

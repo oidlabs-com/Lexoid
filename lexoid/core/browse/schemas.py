@@ -313,6 +313,10 @@ class BrowseLimits(BaseModel):
     timeout_ms: int = Field(default=60_000, ge=1_000, le=300_000)
 
 
+# Page geometry (element boxes, scroll offsets) can far exceed the viewport on long pages.
+_MAX_PAGE_PX = 1_000_000
+
+
 class ElementRef(BaseModel):
     """An element reference valid only for the originating snapshot and frame."""
 
@@ -328,10 +332,10 @@ class ElementRef(BaseModel):
     tag: str | None = Field(default=None, max_length=64)
     href: str | None = Field(default=None, max_length=8_192)
     ordinal: int | None = Field(default=None, ge=0)
-    bbox_x: float | None = Field(default=None, ge=-20_000, le=20_000)
-    bbox_y: float | None = Field(default=None, ge=-20_000, le=20_000)
-    bbox_width: float | None = Field(default=None, gt=0, le=20_000)
-    bbox_height: float | None = Field(default=None, gt=0, le=20_000)
+    bbox_x: float | None = Field(default=None, ge=-_MAX_PAGE_PX, le=_MAX_PAGE_PX)
+    bbox_y: float | None = Field(default=None, ge=-_MAX_PAGE_PX, le=_MAX_PAGE_PX)
+    bbox_width: float | None = Field(default=None, gt=0, le=_MAX_PAGE_PX)
+    bbox_height: float | None = Field(default=None, gt=0, le=_MAX_PAGE_PX)
     visible: bool = True
     enabled: bool = True
     checked: bool | None = None
@@ -342,8 +346,21 @@ class ElementRef(BaseModel):
     in_modal: bool = False
 
 
+class MediaState(BaseModel):
+    """Observable playback state for one HTML media element."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    media_type: Literal["audio", "video"]
+    paused: bool
+    current_time: float = Field(ge=0)
+    duration: float | None = Field(default=None, ge=0)
+    ended: bool
+    ready_state: int = Field(ge=0, le=4)
+
+
 class BrowserSnapshot(BaseModel):
-    """Bounded accessibility-first page observation."""
+    """Bounded accessibility-first page and media observation."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -354,9 +371,10 @@ class BrowserSnapshot(BaseModel):
     title: str = Field(default="", max_length=2_000)
     viewport_width: int = Field(ge=1, le=20_000)
     viewport_height: int = Field(ge=1, le=20_000)
-    scroll_x: float = Field(ge=-20_000, le=20_000)
-    scroll_y: float = Field(ge=-20_000, le=20_000)
+    scroll_x: float = Field(ge=-_MAX_PAGE_PX, le=_MAX_PAGE_PX)
+    scroll_y: float = Field(ge=-_MAX_PAGE_PX, le=_MAX_PAGE_PX)
     elements: list[ElementRef] = Field(default_factory=list, max_length=500)
+    media_state: list[MediaState] = Field(default_factory=list, max_length=5)
     truncated: bool = False
     content_hash: str = Field(min_length=1, max_length=128)
 
@@ -374,6 +392,7 @@ class BrowserAction(BaseModel):
         "hover",
         "scroll",
         "navigate",
+        "open_tab",
         "back",
         "refresh",
         "wait",
@@ -405,7 +424,7 @@ class BrowseUsage(BaseModel):
 
 
 class PageArtifact(BaseModel):
-    """Captured, provenance-bearing page material."""
+    """Captured, provenance-bearing page and media state."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -415,6 +434,11 @@ class PageArtifact(BaseModel):
     captured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     content_hash: str = Field(min_length=1, max_length=128)
     text: str = Field(default="", max_length=2_000_000)
+    media_state: list[MediaState] | None = Field(
+        default=None,
+        max_length=5,
+        description="HTML audio/video state; None when it could not be captured.",
+    )
     truncated: bool = False
 
 
@@ -431,7 +455,7 @@ class EvidenceClaim(BaseModel):
 
 
 class OpenTab(BaseModel):
-    """A retained page."""
+    """Metadata and captured media state for one owned page."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -439,6 +463,11 @@ class OpenTab(BaseModel):
     target_id: str = Field(min_length=1, max_length=256)
     url: str = Field(min_length=1, max_length=8_192)
     title: str = Field(default="", max_length=2_000)
+    media_state: list[MediaState] | None = Field(
+        default=None,
+        max_length=5,
+        description="HTML audio/video state; None when it was not captured.",
+    )
 
 
 class BrowserActionResult(BaseModel):
@@ -563,6 +592,10 @@ class BrowseTaskResult(BaseModel):
     assessments: list[SynthesisAssessment] = Field(default_factory=list)
     trace: list[BrowserActionTrace] = Field(default_factory=list)
     retained_tabs: list[OpenTab] = Field(default_factory=list)
+    open_tabs_at_end: list[OpenTab] = Field(
+        default_factory=list,
+        description="Owned-tab state immediately before browser-session cleanup.",
+    )
     usage: BrowseUsage = Field(default_factory=BrowseUsage)
     plan_outcome: PlanOutcomeRecord | None = None
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -31,6 +32,7 @@ from lexoid.core.browse.schemas import (
     EvidenceAssessment,
     EvidenceClaim,
     NavigationOutcome,
+    OpenTab,
     PageArtifact,
     PlanOutcomeRecord,
     SynthesisAssessment,
@@ -265,7 +267,10 @@ async def run_task(
     task: BrowseTask,
     *,
     cdp_url: str | None = None,
+    user_data_dir: str | os.PathLike[str] | None = None,
+    channel: str | None = None,
     headless: bool = True,
+    mute_audio: bool = True,
     event_listener: BrowseEventListener | None = None,
     html_fetcher: HtmlFetcher | None = None,
     navigator_client: ChatClient | None = None,
@@ -323,6 +328,8 @@ async def run_task(
     attempted_objectives: list[str] = []
     candidate_assessments: list[CandidateAssessment] = []
     accepted_assessments: list[SynthesisAssessment] = []
+    open_tabs_at_end: list[OpenTab] = []
+    retained_tabs: list[OpenTab] = []
     assessment: EvidenceAssessment | None = None
     url = task.seed_urls[0] if task.seed_urls else task.inferred_seeds[0].url
     if not task.seed_urls and task.inferred_seeds:
@@ -349,14 +356,18 @@ async def run_task(
             warnings=warnings,
         )
 
-    cfg = GhostConfig.from_kwargs(
-        {
-            "cdp_url": cdp_url,
-            "headless": headless,
-            "auto_scroll": False,
-            "timeout_ms": task.limits.timeout_ms,
-        }
-    )
+    ghost_kwargs: dict[str, Any] = {
+        "cdp_url": cdp_url,
+        "headless": headless,
+        "mute_audio": mute_audio,
+        "auto_scroll": False,
+        "timeout_ms": task.limits.timeout_ms,
+    }
+    if user_data_dir is not None:
+        ghost_kwargs["user_data_dir"] = str(user_data_dir)
+    if channel is not None:
+        ghost_kwargs["channel"] = channel
+    cfg = GhostConfig.from_kwargs(ghost_kwargs)
     if not cfg.enabled:
         cfg.enabled = True
     if task.collection.preferred_method == "export" and not (
@@ -376,7 +387,6 @@ async def run_task(
                 "Browse task {} fetching seed URL without navigation", task.task_id
             )
             html, usage = await asyncio.to_thread(fetcher, url, cfg)
-            retained_tabs = []
             artifacts = []
             # A single non-interactive fetch has no further pages to reach.
             stop_reason = "sufficient"
@@ -465,14 +475,11 @@ async def run_task(
                             f"Navigation reported {navigation_outcome.value}, but reached "
                             "page was captured for evidence assessment."
                         )
-                    elif navigation_outcome is NavigationOutcome.NO_RESULTS:
-                        # A verified empty result set needs one page, never pagination.
-                        max_iterations = 1
-                        stop_reason = "budget_exhausted"
                     else:
                         max_iterations = task.limits.max_pages
                         stop_reason = "budget_exhausted"
 
+                    capture_outcome = navigation_outcome
                     seen_hashes: set[str] = set()
                     for index in range(max_iterations):
                         current_tab = await session.tab(toolset.tab_id)
@@ -574,6 +581,12 @@ async def run_task(
                             if assessment.next_action == "stop":
                                 stop_reason = "no_next_action"
                                 break
+                        if (
+                            assessment is None
+                            and capture_outcome is NavigationOutcome.NO_RESULTS
+                        ):
+                            stop_reason = "no_next_action"
+                            break
                         if index == max_iterations - 1:
                             if stop_reason != "blocked":
                                 stop_reason = "budget_exhausted"
@@ -581,9 +594,17 @@ async def run_task(
                         if (
                             assessment is not None
                             and assessment.next_action == "investigate"
-                            and assessment.objective
-                            and toolset.remaining_task_actions > 0
                         ):
+                            if not assessment.objective:
+                                warnings.append(
+                                    "Assessor requested investigation without an "
+                                    "objective; stopping."
+                                )
+                                stop_reason = "no_next_action"
+                                break
+                            if toolset.remaining_task_actions == 0:
+                                stop_reason = "budget_exhausted"
+                                break
                             if navigator_client is None:
                                 warnings.append(
                                     "Assessor proposed an investigation objective, but "
@@ -608,6 +629,7 @@ async def run_task(
                                 role_options=navigator_options,
                             )
                             agent_usage = _add_usage(agent_usage, investigate_usage)
+                            capture_outcome = investigate_outcome
                             attempted_objectives.append(
                                 f"{assessment.objective} -> {investigate_outcome.value}"
                             )
@@ -657,11 +679,13 @@ async def run_task(
                             stop_reason = "no_next_action"
                             break
                 html = artifacts[0].text if artifacts else None
-                retained_tabs = (
-                    [await session.retain_page(toolset.tab_id)]
-                    if task.retain_final_page and cdp_url and not toolset.is_quarantined
-                    else []
-                )
+                open_tabs_at_end = await session.capture_open_tabs()
+                if task.retain_final_page and cdp_url and not toolset.is_quarantined:
+                    for tab in open_tabs_at_end:
+                        await session.retain_page(tab.tab_id)
+                    retained_tabs = open_tabs_at_end
+                else:
+                    retained_tabs = []
                 usage = {"input": 0, "output": 0, "total": 0}
     except asyncio.CancelledError:
         logger.debug("Browse task {} cancelled", task.task_id)
@@ -904,6 +928,7 @@ async def run_task(
         assessments=accepted_assessments,
         trace=publisher.events,
         retained_tabs=retained_tabs,
+        open_tabs_at_end=open_tabs_at_end,
         usage=normalized_usage,
         plan_outcome=plan_outcome,
     )

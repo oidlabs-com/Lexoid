@@ -80,7 +80,10 @@ async def browse(
     *,
     model_config: str | BrowseModelConfig | dict[str, Any] | None = None,
     cdp_url: str | None = None,
+    user_data_dir: str | os.PathLike[str] | None = None,
+    channel: str | None = None,
     headless: bool = True,
+    mute_audio: bool = True,
     limits: BrowseLimits | None = None,
     event_listener: BrowseEventListener | None = None,
 ) -> BrowseResult:
@@ -96,6 +99,14 @@ async def browse(
     Pass a single model string to use that model for all roles, or a mapping/BrowseModelConfig
       to override individual roles. Lexoid retains browser lifecycle, policy,
       provenance, pagination, and tab ownership.
+    Pass ``user_data_dir`` (or set ``LEXOID_GHOST_PROFILE_DIR``) to use a
+      dedicated persistent browser profile, and ``channel`` (or
+      ``LEXOID_GHOST_CHANNEL``) to select a specific browser distribution such
+      as ``"chrome"`` (auto-preferred with Chromium fallback when unset).
+    Locally launched Chromium browsers require an environment that supports
+      Chromium sandboxing; CDP-attached browsers retain their own settings.
+    Audio is muted by default for browsers Lexoid launches; set ``mute_audio``
+    to ``False`` to keep audio enabled. This option does not change CDP sessions.
     """
     cfg = BrowseModelConfig.from_value(model_config)
     resolved_models = {
@@ -136,7 +147,10 @@ async def browse(
     return await run_task(
         task,
         cdp_url=cdp_url,
+        user_data_dir=user_data_dir,
+        channel=channel,
         headless=headless,
+        mute_audio=mute_audio,
         event_listener=event_listener,
         navigator_client=(
             create_chat_client(resolved_models["navigator"])
@@ -384,7 +398,8 @@ def parse(
                 A persistent profile is used when ``LEXOID_GHOST_PROFILE_DIR`` /
                 ``{"user_data_dir": ...}`` is set. Requires the optional
                 ``patchright`` package for the strongest anti-bot stealth; falls
-                back gracefully otherwise.
+                back gracefully otherwise. Locally launched Chromium browsers
+                require an environment that supports Chromium sandboxing.
 
     Returns:
         Dict: Dictionary containing:

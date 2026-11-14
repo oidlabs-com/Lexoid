@@ -3,7 +3,7 @@
 import pytest
 
 from lexoid.core.browse.collector import capture_page
-from lexoid.core.browse.schemas import OpenTab
+from lexoid.core.browse.schemas import MediaState, OpenTab
 
 
 class FakeSession:
@@ -23,6 +23,18 @@ class FakeSession:
     async def content(self, tab_id: str) -> str:
         return self.pages[self.index]
 
+    async def media_state(self, tab_id: str) -> list[MediaState] | None:
+        return [
+            MediaState(
+                media_type="video",
+                paused=False,
+                current_time=1.5,
+                duration=600,
+                ended=False,
+                ready_state=4,
+            )
+        ]
+
 
 @pytest.mark.asyncio
 async def test_capture_page_returns_one_markdown_artifact():
@@ -31,6 +43,8 @@ async def test_capture_page_returns_one_markdown_artifact():
     assert artifact.text == "first result"
     assert artifact.artifact_id == "artifact-1"
     assert artifact.truncated is False
+    assert artifact.media_state[0].paused is False
+    assert artifact.media_state[0].current_time == 1.5
 
 
 @pytest.mark.asyncio

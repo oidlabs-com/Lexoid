@@ -19,6 +19,7 @@ async def capture_page(
     """Capture the current page as one markdown artifact; loop control lives in the caller."""
     tab = await session.tab(tab_id)
     html = await session.content(tab_id)
+    media_state = await session.media_state(tab_id)
     content_hash = hashlib.sha256(html.encode("utf-8")).hexdigest()
     markdown = html_to_markdown(html, tab.title, tab.url)["raw"]
     text = markdown[:max_artifact_chars]
@@ -36,5 +37,6 @@ async def capture_page(
         tab_id=tab_id,
         content_hash=content_hash,
         text=text,
+        media_state=media_state,
         truncated=len(text) < len(markdown),
     )

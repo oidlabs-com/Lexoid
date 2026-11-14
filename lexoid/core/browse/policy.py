@@ -39,6 +39,7 @@ _ALLOWED_ACTIONS = {
     "hover",
     "scroll",
     "navigate",
+    "open_tab",
     "back",
     "refresh",
     "wait",
@@ -60,6 +61,11 @@ SEARCH_PROVIDER_HOSTS = frozenset(
         "search.brave.com",
     }
 )
+_SEARCH_REDIRECT_PATHS = {
+    "google.com": ("/url", "/goto"),
+    "bing.com": ("/ck/a",),
+    "duckduckgo.com": ("/l/",),
+}
 
 PUBLIC_SUFFIXES = {
     "com",
@@ -277,7 +283,9 @@ def search_discovery_domain(
 ) -> str | None:
     """Admit an observed link from an initial or policy-authorized search provider.
 
-    The authorization domains must not include dynamically discovered sites.
+    Direct links and known provider redirect paths may admit the validated
+    landing domain. The authorization domains must not include dynamically
+    discovered sites.
     """
     if not link_url:
         logger.debug("Search discovery rejected: observed element has no href")
@@ -302,9 +310,20 @@ def search_discovery_domain(
         return None
     link_domain = derive_allowed_domains([link])[0]
     destination_domain = derive_allowed_domains([destination])[0]
-    if link_domain != destination_domain:
+    source_domain = normalize_domain(source)
+    if source_domain.startswith("www."):
+        source_domain = source_domain[4:]
+    link_path = urlparse(link).path
+    known_provider_redirect = (
+        link_domain == source_domain
+        and any(
+            link_path == path or (path.endswith("/") and link_path.startswith(path))
+            for path in _SEARCH_REDIRECT_PATHS.get(source_domain, ())
+        )
+    )
+    if link_domain != destination_domain and not known_provider_redirect:
         logger.debug(
-            "Search discovery rejected: link_domain={} differs from landing_domain={}",
+            "Search discovery rejected: link_domain={} differs from landing_domain={} and is not a known provider redirect",
             link_domain,
             destination_domain,
         )
@@ -330,7 +349,7 @@ def authorize(action: BrowserAction, allowed_domains: list[str]) -> PolicyResult
             "possible credential entry",
             BrowseErrorCode.POLICY_DENIED,
         )
-    if action.kind == "navigate":
+    if action.kind in {"navigate", "open_tab"}:
         if not action.url or not is_allowed_url(action.url, allowed_domains):
             return PolicyResult(
                 PolicyDecision.DENY,
