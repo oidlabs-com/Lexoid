@@ -26,6 +26,7 @@ from lexoid.core.browse.session import GhostBrowserSession, TabGoneError
 from loguru import logger
 
 TraceEmitter = Callable[[BrowserActionTrace], Awaitable[None]]
+_MAX_OPEN_TABS = 10
 
 
 def _contains_normalized(haystack: str, needle: str) -> bool:
@@ -81,8 +82,9 @@ def _format_action_call(action: BrowserAction, snapshot: BrowserSnapshot | None)
     if action.kind == "scroll":
         direction = action.text or "down"
         return f"scroll {direction} {target}".strip()
-    if action.kind == "navigate":
-        return f"navigate to {action.url or ''}"
+    if action.kind in {"navigate", "open_tab"}:
+        verb = "navigate to" if action.kind == "navigate" else "open new tab at"
+        return f"{verb} {action.url or ''}"
     if action.kind == "wait":
         return f'wait for "{action.text}"' if action.text else "wait"
     if action.kind in {"back", "refresh", "done", "accept_terms"}:
@@ -226,6 +228,32 @@ class BrowserToolset:
             self.outcome = NavigationOutcome.BLOCKED
             self.last_error_code = BrowseErrorCode.TAB_GONE
 
+    async def _restore_allowed_source(self, tab_id: str, source_url: str) -> str | None:
+        if not is_allowed_url(source_url, self._task.allowed_domains):
+            return None
+        restore_page = getattr(self._session, "restore_page", None)
+        if restore_page is None:
+            return None
+        try:
+            restored_tab = await restore_page(tab_id, source_url)
+        except Exception as error:
+            logger.warning(
+                "Could not restore tab {} to its allowlisted source {}: {}",
+                tab_id,
+                source_url,
+                error,
+            )
+            return None
+        if not is_allowed_url(restored_tab.url, self._task.allowed_domains):
+            logger.warning(
+                "Restoring tab {} landed outside the task allowlist: {}",
+                tab_id,
+                restored_tab.url,
+            )
+            return None
+        self._snapshot = None
+        return restored_tab.url
+
     async def _active_tab_allowed(self) -> bool:
         if self._quarantined:
             return False
@@ -354,6 +382,14 @@ class BrowserToolset:
         """Navigate to an allowlisted URL only."""
         return await self._run(BrowserAction(kind="navigate", url=url))
 
+    async def open_tab(self, url: str) -> str:
+        """Open an allowlisted HTTPS URL in a new tab and switch to it."""
+        if len(await self._session.list_tabs()) >= _MAX_OPEN_TABS:
+            return json.dumps(
+                {"success": False, "outcome": f"open-tab limit reached ({_MAX_OPEN_TABS})"}
+            )
+        return await self._run(BrowserAction(kind="open_tab", url=url))
+
     async def list_tabs(self) -> str:
         """List active tabs to inspect open pages."""
         if self._quarantined:
@@ -466,6 +502,7 @@ class BrowserToolset:
             self.back,
             self.refresh,
             self.navigate,
+            self.open_tab,
             self.list_tabs,
             self.switch_tab,
             self.report_outcome,
@@ -537,6 +574,7 @@ class BrowserToolset:
                             "hover",
                             "scroll",
                             "navigate",
+                            "open_tab",
                             "back",
                             "refresh",
                             "wait",
@@ -557,6 +595,7 @@ class BrowserToolset:
         )
         discovered_domain = None
         discovery_diagnostics: dict[str, object] = {}
+        restored_after_denial = False
         if decision.decision is PolicyDecision.ALLOW:
             result = await self._session.execute(action)
         else:
@@ -627,13 +666,29 @@ class BrowserToolset:
                 current_url = await self._get_tab_url(self._tab_id)
                 discovered_domain = admit_search_destination(current_url)
                 if not is_allowed_url(current_url, self._task.allowed_domains):
-                    await self._handle_bad_tab(self._tab_id)
+                    restored_url = await self._restore_allowed_source(
+                        self._tab_id, source_url
+                    )
+                    if restored_url is None:
+                        await self._handle_bad_tab(self._tab_id)
+                    else:
+                        restored_after_denial = True
                     result = BrowserActionResult(
                         success=False,
-                        outcome="navigation destination outside allowlist",
+                        outcome=(
+                            "navigation destination outside allowlist; "
+                            "restored previous page"
+                            if restored_url
+                            else "navigation destination outside allowlist"
+                        ),
                         error_code=BrowseErrorCode.POLICY_DENIED,
                         before_url=result.before_url,
-                        after_url=current_url,
+                        after_url=restored_url or current_url,
+                        warnings=(
+                            ["Restored the allowlisted source page."]
+                            if restored_url
+                            else []
+                        ),
                     )
             except TabGoneError:
                 await self._handle_bad_tab(self._tab_id)
@@ -722,7 +777,7 @@ class BrowserToolset:
             )
         )
         payload = {"action": safe_action.model_dump(), "result": result.model_dump()}
-        if result.success:
+        if result.success or restored_after_denial:
             if result.opened_tab_id:
                 self._openers[result.opened_tab_id] = self._tab_id
                 self._tab_id = result.opened_tab_id

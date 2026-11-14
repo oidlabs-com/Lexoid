@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from evaluate import odysseys_judge
+from evaluate.judge_view import build_judge_view
 from evaluate.odysseys_judge import (
     aggregate,
     execute_task,
@@ -50,7 +51,7 @@ KITCHEN_RUBRICS = {
         "verification": "Grader can confirm the open recipe page contains the recipe title and visible recipe details, and the ingredients or recipe text visibly includes Parmesan and balsamic vinegar.",
     },
     "R2": {
-        "requirement": "A light green Le Creuset Dutch oven product page was opened and the agent correctly confirmed whether the 5.5 qt size is available in that color, including product name and color.",
+        "requirement": "A light green (a shade of green works) Le Creuset Dutch oven product page was opened and the agent correctly confirmed whether the 5.5 qt size is available in that color, including product name and color.",
         "verification": "Grader can inspect the open Le Creuset product page and see the product name, the selected or referenced light green color, and visible size options or product details indicating whether 5.5 qt is available.",
     },
     "R3": {
@@ -271,6 +272,100 @@ def test_saved_run_grading_and_missing_run_denominator(tmp_path, monkeypatch):
     assert report["summary"]["rubrics"] == 4
     assert report["summary"]["needs_review"] == 4
     assert "rubric" in json.loads(prompts[0])
+    sent = json.loads(prompts[0])["run"]
+    assert sent["answer"] == "A fact"
+    saved = tmp_path / "grades-inputs" / f"{task()['task_id']}.json"
+    assert json.loads(saved.read_text()) == sent
+
+
+def test_judge_view_keeps_evidence_and_excerpts_pages():
+    filler = "menu " * 5_000
+    page = (
+        f"Recipe title{filler}Parmesan and balsamic vinegar{filler}Bake 425 F{filler}"
+    )
+    long_url = "https://www.google.com/search?q=" + "x" * 1_000
+    record = {
+        "task_id": "t",
+        "status": "returned",
+        "events": [
+            {"event": "observation"},
+            {
+                "event": "action",
+                "tab_id": "tab-1",
+                "action": {"kind": "click"},
+                "result": {"success": True, "after_url": long_url},
+                "metadata": {"description": 'click link "Recipe"'},
+            },
+        ],
+        "result": {
+            "answer": "Found it",
+            "task_results": [
+                {
+                    "status": "completed",
+                    "trace": [{"event": "duplicate"}],
+                    "claims": [
+                        {
+                            "claim_id": "claim-1",
+                            "text": "Uses Parmesan",
+                            "quote": "Parmesan and balsamic vinegar",
+                            "artifact_id": "artifact-1",
+                        }
+                    ],
+                    "open_tabs_at_end": [
+                        {
+                            "tab_id": "tab-1",
+                            "url": long_url,
+                            "title": "Recipe",
+                            "media_state": [
+                                {
+                                    "media_type": "video",
+                                    "paused": False,
+                                    "current_time": 1.5,
+                                    "duration": 600,
+                                    "ended": False,
+                                    "ready_state": 4,
+                                }
+                            ],
+                        }
+                    ],
+                    "artifacts": [
+                        {
+                            "artifact_id": "artifact-1",
+                            "url": long_url,
+                            "text": page,
+                            "media_state": [
+                                {
+                                    "media_type": "video",
+                                    "paused": False,
+                                    "current_time": 1.5,
+                                    "duration": 600,
+                                    "ended": False,
+                                    "ready_state": 4,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+    }
+    rubrics = {"R1": {"requirement": "Oven 425 recipe.", "verification": "Check."}}
+
+    view = build_judge_view(record, rubrics)
+
+    excerpts = view["pages"][0]["excerpts"]
+    assert "trace" not in json.dumps(view)
+    assert view["actions"][0]["event_index"] == 1
+    assert view["actions"][0]["url"].endswith("…")
+    assert view["pages"][0]["captured_chars"] == len(page)
+    assert view["pages"][0]["media_state"][0]["paused"] is False
+    assert view["outcomes"][0]["open_tabs_at_end"][0]["media_state"][0][
+        "current_time"
+    ] == 1.5
+    assert excerpts[0].startswith("Recipe title")
+    assert any("Parmesan and balsamic vinegar" in text for text in excerpts)
+    assert any("425 F" in text for text in excerpts)
+    assert sum(map(len, excerpts)) < 5_000
 
 
 def test_grading_accepts_fenced_json_response(tmp_path, monkeypatch):
@@ -368,8 +463,15 @@ async def test_end_to_end(tmp_path):
         output=output,
         model=os.getenv("ODYSSEYS_SMOKE_BROWSER_MODEL", "gpt-5.6-sol"),
         cdp_url=None,
+        user_data_dir=Path(
+            os.getenv(
+                "ODYSSEYS_SMOKE_PROFILE_DIR",
+                "evaluate/runs/.browser-profile",
+            )
+        ),
+        channel=os.getenv("ODYSSEYS_SMOKE_BROWSER_CHANNEL"),
         headful=True,
-        deadline=1000,
+        deadline=2000,
         max_steps=100,
         max_steps_per_run=20,
         max_pages=20,

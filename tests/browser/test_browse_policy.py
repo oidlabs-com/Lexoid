@@ -105,6 +105,27 @@ def test_search_discovery_admits_observed_destination(host):
 
 
 @pytest.mark.parametrize(
+    ("source", "href"),
+    [
+        ("https://www.google.com/search?q=recipe", "https://www.google.com/goto?url=opaque"),
+        ("https://www.google.com/search?q=recipe", "https://www.google.com/url?q=opaque"),
+        ("https://www.bing.com/search?q=recipe", "https://www.bing.com/ck/a?url=opaque"),
+        ("https://duckduckgo.com/?q=recipe", "https://duckduckgo.com/l/?uddg=opaque"),
+    ],
+)
+def test_search_discovery_admits_known_provider_redirects(source, href):
+    assert (
+        search_discovery_domain(
+            source,
+            href,
+            "https://www.eatingwell.com/recipe/260844/example/",
+            ["google.com", "bing.com", "duckduckgo.com"],
+        )
+        == "eatingwell.com"
+    )
+
+
+@pytest.mark.parametrize(
     ("source", "href", "destination", "allowed"),
     [
         ("https://allrecipes.com/", "https://other.com/", "https://other.com/", ["allrecipes.com"]),
@@ -113,7 +134,7 @@ def test_search_discovery_admits_observed_destination(host):
         ("https://maps.google.com/", "https://other.com/", "https://other.com/", ["google.com"]),
         ("https://google.com/", None, "https://other.com/", ["google.com"]),
         ("https://google.com/", "https://recipe.com/", "https://evil.com/", ["google.com"]),
-        ("https://google.com/", "https://google.com/url?q=https://evil.com/", "https://evil.com/", ["google.com"]),
+        ("https://google.com/", "https://google.com/redirect?url=https://evil.com/", "https://evil.com/", ["google.com"]),
         ("https://google.com/", "http://other.com/", "http://other.com/", ["google.com"]),
         ("https://google.com/", "https://127.0.0.1/", "https://127.0.0.1/", ["google.com"]),
         ("https://google.com/", "https://localhost/", "https://localhost/", ["google.com"]),

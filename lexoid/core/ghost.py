@@ -36,26 +36,25 @@ import asyncio
 import base64
 import json
 import os
+import sys
+import threading
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
-from typing import List, Optional, Tuple
+from pathlib import Path
+from typing import Any, List, Optional, Tuple
 
 import nest_asyncio
 from loguru import logger
 
-# Default launch args for ghost browser launches (persistent/fresh modes).
-# Note: when using patchright, it manages most anti-automation tweaks itself;
-# we deliberately avoid "--disable-blink-features=AutomationControlled" there.
-_GHOST_LAUNCH_ARGS = [
-    "--no-sandbox",
+# Minimal container-safety flag used only when falling back to stock Playwright
+# without Patchright. Patchright manages its own Chromium launch flags; passing
+# --no-sandbox or fixed --window-size overrides degrades its native fingerprint.
+_STOCK_PLAYWRIGHT_ARGS = [
     "--disable-dev-shm-usage",
-    "--window-size=1920,1080",
 ]
 
-_DEFAULT_USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-)
+_PROFILE_LOCK_GUARD = threading.Lock()
+_ACTIVE_PROFILE_DIRS: set[Path] = set()
 
 # Hand-rolled stealth patches, applied via add_init_script only when patchright
 # is NOT available (and never in CDP mode, where the real browser already has a
@@ -189,14 +188,17 @@ class GhostConfig:
     enabled: bool = False
     cdp_url: Optional[str] = None
     user_data_dir: Optional[str] = None
+    channel: Optional[str] = None
     headless: bool = True
+    no_viewport: Optional[bool] = None
     stealth: bool = True
+    mute_audio: bool = True
     timeout_ms: int = 30000
     wait_until: str = "networkidle"  # domcontentloaded | load | networkidle
     wait_for_selector: Optional[str] = None
     auto_scroll: bool = True
     scroll_max_rounds: int = 15
-    user_agent: str = _DEFAULT_USER_AGENT
+    user_agent: Optional[str] = None
     # Agentic navigation
     navigate: bool = False
     nav_instruction: Optional[str] = None
@@ -229,10 +231,12 @@ class GhostConfig:
 
         env_cdp = os.getenv("LEXOID_CDP_URL")
         env_profile = os.getenv("LEXOID_GHOST_PROFILE_DIR")
+        env_channel = os.getenv("LEXOID_GHOST_CHANNEL")
         env_flag = os.getenv("LEXOID_GHOST", "").lower() in ("1", "true", "yes")
 
         cdp_url = opts.get("cdp_url", env_cdp)
         user_data_dir = opts.get("user_data_dir", env_profile)
+        channel = opts.get("channel", env_channel) or None
 
         enabled = bool(explicit or env_flag or cdp_url)
         if not enabled:
@@ -241,18 +245,24 @@ class GhostConfig:
         def pick(key, default):
             return opts.get(key, default)
 
+        raw_no_viewport = pick("no_viewport", None)
+        no_viewport = None if raw_no_viewport is None else bool(raw_no_viewport)
+
         return cls(
             enabled=True,
             cdp_url=cdp_url,
             user_data_dir=user_data_dir,
+            channel=channel,
             headless=pick("headless", True),
+            no_viewport=no_viewport,
             stealth=pick("stealth", True),
+            mute_audio=bool(pick("mute_audio", True)),
             timeout_ms=int(pick("timeout_ms", 30000)),
             wait_until=pick("wait_until", "networkidle"),
             wait_for_selector=pick("wait_for_selector", None),
             auto_scroll=pick("auto_scroll", True),
             scroll_max_rounds=int(pick("scroll_max_rounds", 15)),
-            user_agent=pick("user_agent", _DEFAULT_USER_AGENT),
+            user_agent=pick("user_agent", None),
             navigate=bool(pick("navigate", False)),
             nav_instruction=pick("nav_instruction", None),
             nav_model=pick("nav_model", None),
@@ -293,6 +303,232 @@ def _get_async_playwright(cfg: GhostConfig):
     return async_playwright, False
 
 
+def resolve_no_viewport(cfg: GhostConfig) -> bool:
+    """Disable Playwright's fixed viewport emulation by default in headed mode."""
+    if cfg.no_viewport is not None:
+        return bool(cfg.no_viewport)
+    return not cfg.headless
+
+
+def _browser_launch_args(cfg: GhostConfig, patchright_active: bool) -> list[str]:
+    """Keep fallback hygiene and mute media audio for browsers Lexoid launches."""
+    args = [] if patchright_active else list(_STOCK_PLAYWRIGHT_ARGS)
+    if cfg.mute_audio:
+        args.append("--mute-audio")
+    return args
+
+
+def _system_chrome_user_data_roots() -> list[Path]:
+    """Return OS-default everyday Chrome/Chromium User Data directories."""
+    home = Path.home()
+    candidates = [
+        home / "Library" / "Application Support" / "Google" / "Chrome",
+        home / "Library" / "Application Support" / "Chromium",
+        home / ".config" / "google-chrome",
+        home / ".config" / "chromium",
+        home / "AppData" / "Local" / "Google" / "Chrome" / "User Data",
+        home / "AppData" / "Local" / "Chromium" / "User Data",
+    ]
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if local_app_data:
+        base = Path(local_app_data)
+        candidates.extend(
+            [
+                base / "Google" / "Chrome" / "User Data",
+                base / "Chromium" / "User Data",
+            ]
+        )
+    roots: list[Path] = []
+    for item in candidates:
+        try:
+            resolved = item.expanduser().resolve()
+        except OSError:
+            continue
+        if resolved not in roots:
+            roots.append(resolved)
+    return roots
+
+
+def validate_dedicated_profile_dir(user_data_dir: str | os.PathLike[str]) -> Path:
+    """Resolve a persistent profile path and reject the user's primary Chrome profile."""
+    raw = str(user_data_dir).strip()
+    if not raw:
+        raise ValueError("user_data_dir must not be empty")
+    resolved = Path(raw).expanduser().resolve()
+    for root in _system_chrome_user_data_roots():
+        if resolved == root or root in resolved.parents:
+            raise ValueError(
+                f"Refusing to use system Chrome profile directory {resolved}; "
+                "specify a dedicated Lexoid profile directory instead."
+            )
+    return resolved
+
+
+class ProfileDirectoryLock:
+    """Exclusive in-process and cross-process lock for a persistent browser profile."""
+
+    def __init__(self, profile_dir: Path, handle: Any) -> None:
+        self.profile_dir = profile_dir
+        self._handle = handle
+        self._released = False
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        try:
+            if self._handle is not None:
+                if sys.platform == "win32":
+                    import msvcrt
+
+                    self._handle.seek(0)
+                    msvcrt.locking(self._handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+                self._handle.close()
+        finally:
+            with _PROFILE_LOCK_GUARD:
+                _ACTIVE_PROFILE_DIRS.discard(self.profile_dir)
+
+
+def acquire_profile_lock(user_data_dir: str | os.PathLike[str]) -> ProfileDirectoryLock:
+    """Validate and exclusively lock a dedicated persistent profile directory."""
+    profile_dir = validate_dedicated_profile_dir(user_data_dir)
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = profile_dir / ".lexoid-profile.lock"
+
+    with _PROFILE_LOCK_GUARD:
+        if profile_dir in _ACTIVE_PROFILE_DIRS:
+            raise RuntimeError(
+                f"Browser profile directory is already in use by another session: {profile_dir}"
+            )
+        handle = open(lock_path, "a+b")
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                handle.seek(0)
+                if lock_path.stat().st_size == 0:
+                    handle.write(b"1")
+                    handle.flush()
+                    handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            handle.close()
+            raise RuntimeError(
+                f"Browser profile directory is already in use by another process: {profile_dir}"
+            ) from error
+        _ACTIVE_PROFILE_DIRS.add(profile_dir)
+        return ProfileDirectoryLock(profile_dir, handle)
+
+
+def _candidate_channels(cfg: GhostConfig) -> tuple[list[Optional[str]], bool]:
+    """Return ordered channel candidates and whether channel was explicitly pinned."""
+    if cfg.channel == "bundled":
+        return [None], True
+    if cfg.channel:
+        return [cfg.channel], True
+    if cfg.stealth:
+        return ["chrome", None], False
+    return [None], True
+
+
+def _is_missing_channel_error(exc: BaseException, channel: str) -> bool:
+    """Return whether ``exc`` indicates an uninstalled Playwright/Patchright channel."""
+    message = str(exc)
+    return (
+        f"Chromium distribution '{channel}' is not found" in message
+        or f"Chromium distribution '{channel}' is not supported" in message
+        or "Executable doesn't exist at" in message
+    )
+
+
+async def launch_browser_with_config(
+    chromium: Any, cfg: GhostConfig, patchright_active: bool
+) -> tuple[Any, str]:
+    """Launch an ephemeral browser using Patchright hygiene and Chrome fallback."""
+    channels, explicit = _candidate_channels(cfg)
+    base_kwargs: dict[str, Any] = {
+        "headless": cfg.headless,
+        "chromium_sandbox": True,
+    }
+    launch_args = _browser_launch_args(cfg, patchright_active)
+    if launch_args:
+        base_kwargs["args"] = launch_args
+
+    last_error: BaseException | None = None
+    for channel in channels:
+        launch_kwargs = dict(base_kwargs)
+        if channel is not None:
+            launch_kwargs["channel"] = channel
+        try:
+            browser = await chromium.launch(**launch_kwargs)
+            return browser, channel or "chromium"
+        except Exception as error:
+            last_error = error
+            if not explicit and channel and _is_missing_channel_error(error, channel):
+                logger.debug(
+                    "Browser channel '{}' unavailable ({}); falling back to bundled Chromium",
+                    channel,
+                    error,
+                )
+                continue
+            raise
+    assert last_error is not None
+    raise last_error
+
+
+async def launch_persistent_context_with_config(
+    chromium: Any,
+    user_data_dir: str | os.PathLike[str],
+    cfg: GhostConfig,
+    patchright_active: bool,
+) -> tuple[Any, str]:
+    """Launch a persistent browser context without custom UA/header spoofing."""
+    channels, explicit = _candidate_channels(cfg)
+    base_kwargs: dict[str, Any] = {
+        "headless": cfg.headless,
+        "chromium_sandbox": True,
+    }
+    if resolve_no_viewport(cfg):
+        base_kwargs["no_viewport"] = True
+    if cfg.user_agent:
+        base_kwargs["user_agent"] = cfg.user_agent
+    launch_args = _browser_launch_args(cfg, patchright_active)
+    if launch_args:
+        base_kwargs["args"] = launch_args
+
+    last_error: BaseException | None = None
+    for channel in channels:
+        launch_kwargs = dict(base_kwargs)
+        if channel is not None:
+            launch_kwargs["channel"] = channel
+        try:
+            context = await chromium.launch_persistent_context(
+                str(user_data_dir),
+                **launch_kwargs,
+            )
+            return context, channel or "chromium"
+        except Exception as error:
+            last_error = error
+            if not explicit and channel and _is_missing_channel_error(error, channel):
+                logger.debug(
+                    "Browser channel '{}' unavailable ({}); falling back to bundled Chromium",
+                    channel,
+                    error,
+                )
+                continue
+            raise
+    assert last_error is not None
+    raise last_error
+
+
 @asynccontextmanager
 async def acquire_page(p, cfg: GhostConfig, patchright_active: bool):
     """
@@ -301,14 +537,20 @@ async def acquire_page(p, cfg: GhostConfig, patchright_active: bool):
 
     Teardown semantics differ critically by mode:
       - cdp: close ONLY the tab we opened; never close the user's browser/context.
-      - persistent: close the launched persistent context.
+      - persistent: close the launched persistent context and release profile lock.
       - fresh: close the launched browser.
     """
+    driver_name = "patchright" if patchright_active else "playwright"
+    no_viewport = resolve_no_viewport(cfg)
+
     if cfg.cdp_url:
         # CDP attach — reuse the existing real context; do not create a new one.
         browser = await p.chromium.connect_over_cdp(cfg.cdp_url)
         context = (
             browser.contexts[0] if browser.contexts else await browser.new_context()
+        )
+        logger.debug(
+            "Ghost browser started: driver={}, mode=cdp, channel=attached", driver_name
         )
         page = await context.new_page()
         try:
@@ -320,44 +562,63 @@ async def acquire_page(p, cfg: GhostConfig, patchright_active: bool):
                 pass
 
     elif cfg.user_data_dir:
-        # Persistent stealth context — cookies/fingerprint persist across runs.
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=cfg.user_data_dir,
-            headless=cfg.headless,
-            args=_GHOST_LAUNCH_ARGS,
-            user_agent=cfg.user_agent,
-            viewport={"width": 1920, "height": 1080},
-            bypass_csp=True,
-        )
-        if cfg.stealth and not patchright_active:
-            await context.add_init_script(_STEALTH_INIT_SCRIPT)
-        page = context.pages[0] if context.pages else await context.new_page()
+        # Persistent context — cookies/storage persist across runs in a dedicated profile.
+        profile_lock = acquire_profile_lock(cfg.user_data_dir)
+        context = None
         try:
+            context, used_channel = await launch_persistent_context_with_config(
+                p.chromium,
+                profile_lock.profile_dir,
+                cfg,
+                patchright_active,
+            )
+            logger.debug(
+                "Ghost browser started: driver={}, mode=persistent, channel={}, headless={}, no_viewport={}",
+                driver_name,
+                used_channel,
+                cfg.headless,
+                no_viewport,
+            )
+            if cfg.stealth and not patchright_active:
+                await context.add_init_script(_STEALTH_INIT_SCRIPT)
+            page = context.pages[0] if context.pages else await context.new_page()
             yield page, "persistent"
         finally:
             try:
-                await context.close()
+                if context is not None:
+                    await context.close()
             except Exception as e:
                 logger.debug(
                     "Failed to close persistent context during teardown: {}",
                     e,
                 )
+            finally:
+                profile_lock.release()
 
     else:
-        # Fresh stealth launch — throwaway browser, closest to the legacy path.
-        browser = await p.chromium.launch(
-            headless=cfg.headless,
-            args=_GHOST_LAUNCH_ARGS,
+        # Fresh launch — ephemeral browser without custom UA/header fingerprint overrides.
+        browser, used_channel = await launch_browser_with_config(
+            p.chromium,
+            cfg,
+            patchright_active,
         )
-        context = await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=cfg.user_agent,
-            bypass_csp=True,
-        )
-        if cfg.stealth and not patchright_active:
-            await context.add_init_script(_STEALTH_INIT_SCRIPT)
-        page = await context.new_page()
         try:
+            context_kwargs: dict[str, Any] = {}
+            if no_viewport:
+                context_kwargs["no_viewport"] = True
+            if cfg.user_agent:
+                context_kwargs["user_agent"] = cfg.user_agent
+            context = await browser.new_context(**context_kwargs)
+            logger.debug(
+                "Ghost browser started: driver={}, mode=fresh, channel={}, headless={}, no_viewport={}",
+                driver_name,
+                used_channel,
+                cfg.headless,
+                no_viewport,
+            )
+            if cfg.stealth and not patchright_active:
+                await context.add_init_script(_STEALTH_INIT_SCRIPT)
+            page = await context.new_page()
             yield page, "fresh"
         finally:
             try:

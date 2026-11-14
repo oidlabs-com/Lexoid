@@ -8,7 +8,9 @@ from lexoid.core.browse.schemas import (
     BrowserAction,
     BrowserActionResult,
     BrowseTask,
+    ElementRef,
     InferredSeed,
+    MediaState,
 )
 from lexoid.core.browse.session import GhostBrowserSession
 from lexoid.core.browse.tools import BrowserToolset
@@ -52,6 +54,76 @@ async def test_cdp_session_teardown_does_not_close_attached_browser():
 
     assert browser.closed is False
     assert playwright.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_restore_page_returns_owned_tab_to_allowlisted_url():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakePageWithPopup()
+    page.url = "https://off-scope.example/"
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 2
+
+    restored = await session.restore_page("tab-1", "https://google.com/search?q=recipe")
+
+    assert restored.url == "https://google.com/search?q=recipe"
+    assert session._revisions["tab-1"] == 3
+
+
+class _FakeSettlePage:
+    def __init__(self, outcome: object) -> None:
+        self.outcome = outcome
+        self.evaluate_args: tuple[object, ...] = ()
+
+    async def wait_for_load_state(self, *args: object, **kwargs: object) -> None:
+        return None
+
+    async def evaluate(self, script: str, *args: object) -> object:
+        assert "MutationObserver" in script
+        self.evaluate_args = args
+        if self.outcome == "hang":
+            import asyncio
+
+            await asyncio.sleep(10)
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "expected", "log_fragment"),
+    [
+        ("quiet", "quiet", None),
+        ("max_wait", "max_wait", None),
+        (RuntimeError("Execution context was destroyed"), "error", "failed"),
+        ("hang", "timeout", "did not return"),
+    ],
+)
+async def test_settle_is_bounded_and_reports_status(
+    monkeypatch, outcome, expected, log_fragment
+):
+    session = GhostBrowserSession(GhostConfig.from_kwargs({"timeout_ms": 60_000}))
+    monkeypatch.setattr(session, "_settle_max_wait_ms", 10)
+    monkeypatch.setattr(browse_session, "_SETTLE_GRACE_S", 0.05)
+    messages: list[str] = []
+    monkeypatch.setattr(browse_session.logger, "debug", messages.append)
+    page = _FakeSettlePage(outcome)
+
+    status = await session._settle_page(page)
+
+    assert status == expected
+    assert page.evaluate_args == ({"idleMs": 500, "maxMs": 10},)
+    if log_fragment is None:
+        assert messages == []
+    else:
+        assert any(log_fragment in message for message in messages)
+
+
+def test_settle_max_wait_is_independent_of_navigation_timeout():
+    session = GhostBrowserSession(GhostConfig.from_kwargs({"timeout_ms": 60_000}))
+
+    assert session._settle_max_wait_ms == browse_session._SETTLE_MAX_WAIT_MS
 
 
 class _FakeNextControl:
@@ -256,7 +328,33 @@ class _FakeSnapshotPage:
         if "MutationObserver" in script:
             return True
         if "innerWidth" in script:
-            return {"width": 1280, "height": 720, "scrollX": 0, "scrollY": 180}
+            return {
+                "width": 1280,
+                "height": 720,
+                "scrollX": 0,
+                "scrollY": 180,
+                "media_state": [
+                    {
+                        "media_type": "video",
+                        "paused": False,
+                        "current_time": 1.5,
+                        "duration": 600,
+                        "ended": False,
+                        "ready_state": 4,
+                    }
+                ],
+            }
+        if "querySelectorAll" in script:
+            return [
+                {
+                    "media_type": "video",
+                    "paused": False,
+                    "current_time": 1.5,
+                    "duration": 600,
+                    "ended": False,
+                    "ready_state": 4,
+                }
+            ]
         return True
 
     async def title(self) -> str:
@@ -302,9 +400,34 @@ async def test_snapshot_excludes_hidden_controls_and_executes_captured_handle():
     assert snapshot.elements[0].bbox_height == 32
     assert snapshot.viewport_width == 1280
     assert snapshot.scroll_y == 180
+    assert snapshot.media_state == [
+        MediaState(
+            media_type="video",
+            paused=False,
+            current_time=1.5,
+            duration=600,
+            ended=False,
+            ready_state=4,
+        )
+    ]
     assert result.success is True
     assert page.handles[0].clicked is False
     assert page.handles[1].clicked is True
+
+
+@pytest.mark.asyncio
+async def test_capture_open_tabs_records_media_state_before_cleanup():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeSnapshotPage()
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 0
+
+    tabs = await session.capture_open_tabs()
+
+    assert len(tabs) == 1
+    assert tabs[0].url == page.url
+    assert tabs[0].media_state[0].paused is False
+    assert tabs[0].media_state[0].current_time == 1.5
 
 
 @pytest.mark.asyncio
@@ -552,6 +675,19 @@ class _FakePageWithPopup(_FakeSnapshotPage):
     async def close(self) -> None:
         self.closed = True
 
+    async def goto(self, url: str, **kwargs: object) -> None:
+        self.url = url
+
+
+class _FakePageContext:
+    def __init__(self) -> None:
+        self.pages: list[_FakePageWithPopup] = []
+
+    async def new_page(self) -> _FakePageWithPopup:
+        page = _FakePageWithPopup()
+        self.pages.append(page)
+        return page
+
 
 class _FakeClickTriggersPopupHandle(_FakeSnapshotHandle):
     def __init__(self, page: _FakePageWithPopup) -> None:
@@ -573,7 +709,9 @@ class _FakeClickTriggersPopupHandle(_FakeSnapshotHandle):
         ("https://www.bing.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
         ("https://www.duckduckgo.com/", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
         ("https://search.brave.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
+        ("https://www.google.com/search", "https://www.google.com/goto?url=opaque", "https://www.allrecipes.com/recipe/1", True),
         ("https://www.google.com/search", "https://www.allrecipes.com/recipe/1", "https://unrelated.com/", False),
+        ("https://www.google.com/search", "https://www.google.com/redirect?url=opaque", "https://unrelated.com/", False),
         ("https://www.google.com/search", None, "https://www.allrecipes.com/recipe/1", False),
         ("https://example.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", False),
     ],
@@ -619,6 +757,13 @@ async def test_toolset_search_discovery(
     assert action_trace.metadata.get("discovered_domain") == (
         "allrecipes.com" if admitted else None
     )
+    if not popup and not admitted:
+        assert page.url == source
+        assert not toolset.is_quarantined
+        assert "restored previous page" in response["result"]["outcome"]
+        assert response["result"]["warnings"] == [
+            "Restored the allowlisted source page."
+        ]
     if admitted:
         assert not toolset.is_quarantined
         assert action_trace.metadata["discovery_check"]["initial_domains"] == [
@@ -646,6 +791,43 @@ async def test_toolset_search_discovery(
         denied = json.loads(await toolset.click("e1"))
         assert denied["result"]["success"] is False
         assert "unrelated.com" not in task.allowed_domains
+
+
+@pytest.mark.asyncio
+async def test_open_tab_opens_only_allowlisted_url_and_switches_active_tab():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    root = _FakePageWithPopup()
+    root.url = "https://google.com/"
+    root_id = session._register_page(root, "tab-root")
+    context = _FakePageContext()
+    session._context = context
+    traces = []
+
+    async def emit(trace):
+        traces.append(trace)
+
+    task = BrowseTask(
+        seed_urls=["https://google.com/"],
+        subject="Inspect a product and a video",
+        allowed_domains=["google.com", "youtube.com"],
+    )
+    toolset = BrowserToolset(session, task, root_id, emit)
+
+    response = json.loads(await toolset.open_tab("https://www.youtube.com/"))
+
+    assert response["result"]["success"] is True
+    assert response["result"]["opened_tab_id"] == toolset.tab_id
+    assert toolset.tab_id != root_id
+    assert len(session._owned_pages) == 2
+    assert response["observation"]["url"] == "https://www.youtube.com/"
+    action_trace = next(trace for trace in traces if trace.event == "action")
+    assert action_trace.action.kind == "open_tab"
+    assert action_trace.result.opened_tab_id == toolset.tab_id
+
+    denied = json.loads(await toolset.open_tab("https://unrelated.example/"))
+    assert denied["result"]["success"] is False
+    assert denied["result"]["error_code"] == "policy_denied"
+    assert len(session._owned_pages) == 2
 
 
 @pytest.mark.asyncio
@@ -919,3 +1101,113 @@ async def test_browser_toolset_blocks_off_domain_popup():
     assert "outside allowlist" in res["result"]["outcome"]
     assert off_domain_popup.closed is True
     assert toolset.tab_id == search_tab_id
+
+
+@pytest.mark.asyncio
+async def test_persistent_session_reuses_initial_tab_and_releases_profile_lock(
+    tmp_path, monkeypatch
+):
+    profile_dir = tmp_path / "persistent-profile"
+    launched_kwargs: dict[str, object] = {}
+
+    class _InitialBlankPage(_FakePageWithPopup):
+        def __init__(self) -> None:
+            super().__init__()
+            self.url = "about:blank"
+            self.goto_calls: list[str] = []
+
+        async def goto(self, url: str, **kwargs: object) -> None:
+            self.goto_calls.append(url)
+            self.url = url
+
+    initial_page = _InitialBlankPage()
+
+    class _FakePersistentContext:
+        def __init__(self) -> None:
+            self.pages = [initial_page]
+            self.new_page_calls = 0
+            self.closed = False
+            self.init_scripts: list[str] = []
+
+        async def new_page(self) -> _InitialBlankPage:
+            self.new_page_calls += 1
+            return _InitialBlankPage()
+
+        async def add_init_script(self, script: str) -> None:
+            self.init_scripts.append(script)
+
+        async def close(self) -> None:
+            self.closed = True
+
+    persistent_context = _FakePersistentContext()
+
+    class _FakeChromium:
+        async def launch_persistent_context(self, user_data_dir: str, **kwargs: object):
+            launched_kwargs["user_data_dir"] = user_data_dir
+            launched_kwargs["kwargs"] = kwargs
+            return persistent_context
+
+    class _FakePlaywrightInstance:
+        def __init__(self) -> None:
+            self.chromium = _FakeChromium()
+            self.stopped = False
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    pw_instance = _FakePlaywrightInstance()
+
+    class _FakePlaywrightFactory:
+        async def start(self) -> _FakePlaywrightInstance:
+            return pw_instance
+
+    monkeypatch.setattr(
+        browse_session,
+        "_get_async_playwright",
+        lambda cfg: (_FakePlaywrightFactory, True),
+    )
+
+    cfg = GhostConfig.from_kwargs(
+        {"headless": False, "user_data_dir": str(profile_dir)}
+    )
+    async with GhostBrowserSession(cfg) as session:
+        # While active, a second session cannot share the same profile directory.
+        with pytest.raises(RuntimeError, match="already in use"):
+            async with GhostBrowserSession(cfg):
+                pass
+        first_tab = await session.open_page("https://example.com/start")
+        second_tab = await session.open_page("https://example.com/second")
+        assert first_tab.url == "https://example.com/start"
+        assert second_tab.url == "https://example.com/second"
+        assert initial_page.goto_calls == ["https://example.com/start"]
+        assert persistent_context.new_page_calls == 1
+
+    assert launched_kwargs["kwargs"] == {
+        "headless": False,
+        "chromium_sandbox": True,
+        "no_viewport": True,
+        "channel": "chrome",
+        "args": ["--mute-audio"],
+    }
+    assert persistent_context.init_scripts == []
+    assert persistent_context.closed is True
+    assert pw_instance.stopped is True
+
+    # Lock is released after teardown so a subsequent run can reuse the profile.
+    lock = browse_session.acquire_profile_lock(profile_dir)
+    lock.release()
+
+
+def test_element_geometry_accepts_long_page_dimensions():
+    element = ElementRef(
+        ref="e1",
+        snapshot_id="snapshot-1",
+        tab_id="tab-1",
+        frame_id="main",
+        node_id="0:1",
+        bbox_y=45_000.5,
+        bbox_width=1_200,
+        bbox_height=23_145.9921875,
+    )
+
+    assert element.bbox_height == 23_145.9921875

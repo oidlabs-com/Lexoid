@@ -5,21 +5,66 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from contextlib import AbstractAsyncContextManager
-from typing import Any
+from typing import Any, Self
 from urllib.parse import urlparse
 from uuid import uuid4
+
+from loguru import logger
+from playwright.async_api import Error as PlaywrightError
 
 from lexoid.core.browse.schemas import (
     BrowserAction,
     BrowserActionResult,
     BrowserSnapshot,
     ElementRef,
+    MediaState,
     OpenTab,
 )
-from lexoid.core.ghost import GhostConfig, _get_async_playwright
-from loguru import logger
+from lexoid.core.ghost import (
+    _STEALTH_INIT_SCRIPT,
+    GhostConfig,
+    ProfileDirectoryLock,
+    _get_async_playwright,
+    acquire_profile_lock,
+    launch_browser_with_config,
+    launch_persistent_context_with_config,
+    resolve_no_viewport,
+)
 
 _SNAPSHOT_ATTEMPTS = 3
+
+_MEDIA_STATE_JS = """
+() => Array.from(document.querySelectorAll("video, audio"))
+    .slice(0, 5)
+    .map(element => ({
+        media_type: element.tagName.toLowerCase(),
+        paused: Boolean(element.paused),
+        current_time: Number.isFinite(element.currentTime)
+            ? Math.max(0, element.currentTime) : 0,
+        duration: Number.isFinite(element.duration) && element.duration >= 0
+            ? element.duration : null,
+        ended: Boolean(element.ended),
+        ready_state: element.readyState
+    }))
+"""
+_SNAPSHOT_STATE_JS = f"""
+() => {{
+    const mediaState = ({_MEDIA_STATE_JS.strip()})();
+    return {{
+        width: window.innerWidth,
+        height: window.innerHeight,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        media_state: mediaState
+    }};
+}}
+"""
+
+
+def _parse_media_state(values: Any) -> list[MediaState]:
+    if not isinstance(values, list):
+        raise TypeError("Media-state evaluation did not return a list")
+    return [MediaState.model_validate(value) for value in values[:5]]
 
 
 def _is_navigation_context_error(error: Exception) -> bool:
@@ -33,19 +78,36 @@ class TabGoneError(RuntimeError):
     """Raised when an action targets a closed  tab."""
 
 
+# Attribute churn (animations, carousels, ad slots) is ignored so dynamic pages can
+# report quiet; the in-page max wait guarantees the observer always disconnects.
 _DOM_QUIET_JS = """
-(idleMs) => new Promise((resolve) => {
-    let timer;
-    const observer = new MutationObserver(() => {
-        clearTimeout(timer);
-        timer = setTimeout(() => { observer.disconnect(); resolve(true); }, idleMs);
-    });
-    observer.observe(document.documentElement, {
-        childList: true, subtree: true, characterData: true, attributes: true
-    });
-    timer = setTimeout(() => { observer.disconnect(); resolve(true); }, idleMs);
+({idleMs, maxMs}) => new Promise((resolve) => {
+    let idleTimer;
+    let done = false;
+    const root = document.documentElement;
+    const finish = (status) => {
+        if (done) return;
+        done = true;
+        clearTimeout(idleTimer);
+        clearTimeout(maxTimer);
+        if (observer) observer.disconnect();
+        resolve(status);
+    };
+    const observer = root ? new MutationObserver(() => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => finish("quiet"), idleMs);
+    }) : null;
+    if (observer) {
+        observer.observe(root, { childList: true, subtree: true, characterData: true });
+    }
+    idleTimer = setTimeout(() => finish("quiet"), idleMs);
+    const maxTimer = setTimeout(() => finish("max_wait"), maxMs);
 });
 """
+
+_SETTLE_IDLE_MS = 500
+_SETTLE_MAX_WAIT_MS = 4_000
+_SETTLE_GRACE_S = 2.0
 
 _FORM_STATE_JS = """
 () => Array.from(document.querySelectorAll('input, textarea, select'))
@@ -264,36 +326,100 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         self._playwright = None
         self._browser = None
         self._context = None
+        self._profile_lock: ProfileDirectoryLock | None = None
+        self._unclaimed_initial_page: Any = None
+        self._effective_driver: str = "playwright"
+        self._effective_mode: str = "fresh"
+        self._effective_channel: str | None = None
         self._owned_pages: dict[str, object] = {}
         self._retained_tabs: set[str] = set()
         self._revisions: dict[str, int] = {}
         self._snapshots: dict[str, BrowserSnapshot] = {}
         self._snapshot_handles: dict[str, dict[str, Any]] = {}
         self._pending_popups: list[tuple[str, str]] = []
-        self._settle_idle_ms = 500
+        self._settle_idle_ms = _SETTLE_IDLE_MS
         self._settle_timeout_ms = min(config.timeout_ms, 15_000)
+        self._settle_max_wait_ms = min(config.timeout_ms, _SETTLE_MAX_WAIT_MS)
 
-    async def __aenter__(self) -> "GhostBrowserSession":
-        factory, _ = _get_async_playwright(self._config)
-        self._playwright = await factory().start()
-        if self._config.cdp_url:
-            self._browser = await self._playwright.chromium.connect_over_cdp(
-                self._config.cdp_url
+    async def __aenter__(self) -> Self:
+        factory, patchright_active = _get_async_playwright(self._config)
+        self._effective_driver = "patchright" if patchright_active else "playwright"
+        no_viewport = resolve_no_viewport(self._config)
+        if self._config.user_data_dir and not self._config.cdp_url:
+            self._profile_lock = acquire_profile_lock(self._config.user_data_dir)
+        try:
+            self._playwright = await factory().start()
+            if self._config.cdp_url:
+                self._effective_mode = "cdp"
+                self._effective_channel = "attached"
+                self._browser = await self._playwright.chromium.connect_over_cdp(
+                    self._config.cdp_url
+                )
+                self._context = (
+                    self._browser.contexts[0]
+                    if self._browser.contexts
+                    else await self._browser.new_context()
+                )
+            elif self._profile_lock is not None:
+                self._effective_mode = "persistent"
+                self._context, self._effective_channel = (
+                    await launch_persistent_context_with_config(
+                        self._playwright.chromium,
+                        self._profile_lock.profile_dir,
+                        self._config,
+                        patchright_active,
+                    )
+                )
+                if self._config.stealth and not patchright_active:
+                    await self._context.add_init_script(_STEALTH_INIT_SCRIPT)
+                if self._context.pages:
+                    self._unclaimed_initial_page = self._context.pages[0]
+            else:
+                self._effective_mode = "fresh"
+                self._browser, self._effective_channel = (
+                    await launch_browser_with_config(
+                        self._playwright.chromium,
+                        self._config,
+                        patchright_active,
+                    )
+                )
+                context_kwargs: dict[str, Any] = {}
+                if no_viewport:
+                    context_kwargs["no_viewport"] = True
+                if self._config.user_agent:
+                    context_kwargs["user_agent"] = self._config.user_agent
+                self._context = await self._browser.new_context(**context_kwargs)
+                if self._config.stealth and not patchright_active:
+                    await self._context.add_init_script(_STEALTH_INIT_SCRIPT)
+            logger.debug(
+                "Browse session started: driver={}, mode={}, channel={}, headless={}, no_viewport={}",
+                self._effective_driver,
+                self._effective_mode,
+                self._effective_channel,
+                None if self._config.cdp_url else self._config.headless,
+                None if self._config.cdp_url else no_viewport,
             )
-            self._context = self._browser.contexts[0]
-        else:
-            self._browser = await self._playwright.chromium.launch(
-                headless=self._config.headless
-            )
-            self._context = await self._browser.new_context()
-        return self
+            return self
+        except Exception:
+            await self.__aexit__(None, None, None)
+            raise
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
-        await self.cleanup()
-        if self._browser is not None and not self._config.cdp_url:
-            await self._browser.close()
-        if self._playwright is not None:
-            await self._playwright.stop()
+        try:
+            await self.cleanup()
+            if not self._config.cdp_url:
+                if self._browser is not None:
+                    await self._browser.close()
+                elif self._context is not None:
+                    await self._context.close()
+        finally:
+            try:
+                if self._playwright is not None:
+                    await self._playwright.stop()
+            finally:
+                if self._profile_lock is not None:
+                    self._profile_lock.release()
+                    self._profile_lock = None
 
     def _on_popup(self, opener_tab_id: str, popup_page: object) -> None:
         popup_tab_id = self._register_page(popup_page)
@@ -308,7 +434,14 @@ class GhostBrowserSession(AbstractAsyncContextManager):
 
     async def open_page(self, url: str) -> OpenTab:
         """Open and navigate a page without adopting user tabs."""
-        page = await self._context.new_page()
+        if (
+            self._unclaimed_initial_page is not None
+            and not self._unclaimed_initial_page.is_closed()
+        ):
+            page = self._unclaimed_initial_page
+            self._unclaimed_initial_page = None
+        else:
+            page = await self._context.new_page()
         tab_id = self._register_page(page)
         await page.goto(
             url, wait_until="domcontentloaded", timeout=self._config.timeout_ms
@@ -316,7 +449,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         return await self.tab(tab_id)
 
     async def list_tabs(self) -> list[OpenTab]:
-        """Return metadata for all active  tabs."""
+        """Return metadata for all active tabs."""
         tabs: list[OpenTab] = []
         for tab_id in list(self._owned_pages.keys()):
             try:
@@ -324,6 +457,29 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             except (TabGoneError, Exception):
                 continue
         return tabs
+
+    async def capture_open_tabs(self) -> list[OpenTab]:
+        """Capture final owned-tab and HTML media state before session cleanup."""
+        captured: list[OpenTab] = []
+        for tab in await self.list_tabs():
+            try:
+                media_state = await self.media_state(tab.tab_id)
+                tab = await self.tab(tab.tab_id)
+            except TabGoneError:
+                continue
+            captured.append(tab.model_copy(update={"media_state": media_state}))
+        return captured
+
+    async def media_state(self, tab_id: str) -> list[MediaState] | None:
+        """Capture bounded playback state, or ``None`` when the page cannot report it."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            raise TabGoneError(tab_id)
+        try:
+            return _parse_media_state(await page.evaluate(_MEDIA_STATE_JS))
+        except PlaywrightError as error:
+            logger.warning("Could not capture media state for tab {}: {}", tab_id, error)
+            return None
 
     async def tab(self, tab_id: str) -> OpenTab:
         """Return metadata for an active owned tab or raise ``TabGoneError``."""
@@ -367,6 +523,18 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             except Exception as error:
                 logger.warning("Could not close browser tab {}: {}", tab_id, error)
 
+    async def restore_page(self, tab_id: str, url: str) -> OpenTab:
+        """Return an owned page to a previously authorized URL."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            raise TabGoneError(tab_id)
+        await page.goto(
+            url, wait_until="domcontentloaded", timeout=self._config.timeout_ms
+        )
+        await self._settle_page(page)
+        self._revisions[tab_id] += 1
+        return await self.tab(tab_id)
+
     async def content(self, tab_id: str) -> str:
         """Return the current HTML for an owned tab."""
         page = self._owned_pages.get(tab_id)
@@ -401,20 +569,37 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             raise TabGoneError(tab_id)
         await self._settle_page(page)
 
-    async def _settle_page(self, page) -> None:
+    async def _settle_page(self, page) -> str:
+        """Best-effort wait for a page to stop changing.
+
+        Returns ``"quiet"``, ``"max_wait"`` (page kept changing; expected on
+        dynamic sites), ``"timeout"`` or ``"error"``. Never raises.
+        """
         try:
             await page.wait_for_load_state(
                 "domcontentloaded", timeout=self._settle_timeout_ms
             )
-        except Exception:
-            logger.debug("Browse settle: load state wait timed out")
+        except Exception as exc:
+            logger.debug(f"Browse settle: load state wait failed: {exc}")
         try:
-            await asyncio.wait_for(
-                page.evaluate(_DOM_QUIET_JS, self._settle_idle_ms),
-                timeout=self._settle_timeout_ms / 1000,
+            status = await asyncio.wait_for(
+                page.evaluate(
+                    _DOM_QUIET_JS,
+                    {"idleMs": self._settle_idle_ms, "maxMs": self._settle_max_wait_ms},
+                ),
+                timeout=self._settle_max_wait_ms / 1000 + _SETTLE_GRACE_S,
             )
-        except Exception:
-            logger.debug("Browse settle: DOM quiescence wait timed out")
+        except asyncio.TimeoutError:
+            logger.debug(
+                "Browse settle: DOM quiescence check did not return within "
+                f"{self._settle_max_wait_ms} ms"
+            )
+            return "timeout"
+        except Exception as exc:
+            # Typically "Execution context was destroyed" after a navigation.
+            logger.debug(f"Browse settle: DOM quiescence check failed: {exc}")
+            return "error"
+        return status if status in ("quiet", "max_wait") else "quiet"
 
     async def snapshot(self, tab_id: str) -> BrowserSnapshot:
         """Create a compact accessibility-oriented observation for one owned tab."""
@@ -490,14 +675,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             )
             handles[ref] = handle
         digest = hashlib.sha256(repr(entries).encode("utf-8")).hexdigest()
-        viewport = await page.evaluate(
-            """() => ({
-                width: window.innerWidth,
-                height: window.innerHeight,
-                scrollX: window.scrollX,
-                scrollY: window.scrollY
-            })"""
-        )
+        viewport = await page.evaluate(_SNAPSHOT_STATE_JS)
         snapshot = BrowserSnapshot(
             snapshot_id=snapshot_id,
             tab_id=tab_id,
@@ -508,6 +686,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             viewport_height=viewport["height"],
             scroll_x=viewport["scrollX"],
             scroll_y=viewport["scrollY"],
+            media_state=_parse_media_state(viewport.get("media_state", [])),
             elements=refs,
             content_hash=digest,
         )
@@ -536,6 +715,20 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 success=False, outcome="tab closed", error_code="tab_gone"
             )
         before_url = page.url
+        if action.kind == "open_tab":
+            try:
+                opened = await self.open_page(action.url or "")
+                await self._settle_page(self._owned_pages[opened.tab_id])
+                opened = await self.tab(opened.tab_id)
+            except Exception as error:
+                return BrowserActionResult(success=False, outcome=str(error)[:1000])
+            return BrowserActionResult(
+                success=True,
+                outcome="opened new tab",
+                before_url=before_url,
+                after_url=opened.url,
+                opened_tab_id=opened.tab_id,
+            )
         try:
             if action.kind in {"click", "type", "select", "hover"} and not action.ref:
                 return BrowserActionResult(
