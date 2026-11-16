@@ -120,6 +120,83 @@ async def test_settle_is_bounded_and_reports_status(
         assert any(log_fragment in message for message in messages)
 
 
+class _FakeNavigatingPage:
+    def __init__(self, error: Exception, failures: int) -> None:
+        self.error = error
+        self.failures = failures
+        self.calls = 0
+
+    def is_closed(self) -> bool:
+        return False
+
+    async def content(self) -> str:
+        self.calls += 1
+        if self.calls <= self.failures:
+            raise self.error
+        return "<html>done</html>"
+
+
+@pytest.mark.asyncio
+async def test_content_retries_after_patchright_navigation_race(monkeypatch):
+    patchright_api = pytest.importorskip("patchright.async_api")
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    settled: list[object] = []
+
+    async def settle(page):
+        settled.append(page)
+        return "quiet"
+
+    monkeypatch.setattr(session, "_settle_page", settle)
+    error = patchright_api.Error(
+        "Page.content: Unable to retrieve content because the page is navigating "
+        "and changing the content."
+    )
+    page = _FakeNavigatingPage(error, failures=1)
+    session._owned_pages["tab-1"] = page
+
+    assert await session.content("tab-1") == "<html>done</html>"
+    assert settled == [page]
+
+    stuck = _FakeNavigatingPage(error, failures=10)
+    session._owned_pages["tab-2"] = stuck
+    with pytest.raises(patchright_api.Error):
+        await session.content("tab-2")
+    assert stuck.calls == browse_session._READ_ATTEMPTS
+
+
+class _FakeHighlightHandle:
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.calls: list[object] = []
+
+    async def scroll_into_view_if_needed(self, **kwargs: object) -> None:
+        self.calls.append("scroll")
+
+    async def evaluate(self, script: str, *args: object) -> None:
+        if self.fail:
+            raise RuntimeError("element detached")
+        self.calls.append(args)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        ({"headless": True}, []),
+        ({"headless": False}, ["scroll", (0,)]),
+    ],
+)
+async def test_highlight_only_when_browser_is_visible(monkeypatch, options, expected):
+    monkeypatch.setattr(browse_session, "_HIGHLIGHT_MS", 0)
+    session = GhostBrowserSession(GhostConfig.from_kwargs(options))
+    handle = _FakeHighlightHandle()
+
+    await session._highlight(handle)
+
+    assert handle.calls == expected
+    await session._highlight(_FakeHighlightHandle(fail=True))
+
+
 def test_settle_max_wait_is_independent_of_navigation_timeout():
     session = GhostBrowserSession(GhostConfig.from_kwargs({"timeout_ms": 60_000}))
 
@@ -315,9 +392,13 @@ class _FakeSnapshotPage:
     def __init__(self) -> None:
         self.handles = [_FakeSnapshotHandle(), _FakeSnapshotHandle()]
         self.evaluated: list[tuple[str, tuple[object, ...]]] = []
+        self.front_count = 0
 
     def is_closed(self) -> bool:
         return False
+
+    async def bring_to_front(self) -> None:
+        self.front_count += 1
 
     def locator(self, selector: str) -> _FakeSnapshotLocator:
         assert selector == "button, a, input, select, textarea, [role]"
@@ -632,10 +713,14 @@ class _FakePopupPage:
     def __init__(self, url: str) -> None:
         self.url = url
         self.closed = False
+        self.front_count = 0
         self._handlers: dict[str, list] = {}
 
     def is_closed(self) -> bool:
         return self.closed
+
+    async def bring_to_front(self) -> None:
+        self.front_count += 1
 
     async def title(self) -> str:
         return f"Title of {self.url}"
@@ -827,6 +912,12 @@ async def test_open_tab_opens_only_allowlisted_url_and_switches_active_tab():
     denied = json.loads(await toolset.open_tab("https://unrelated.example/"))
     assert denied["result"]["success"] is False
     assert denied["result"]["error_code"] == "policy_denied"
+    assert len(session._owned_pages) == 2
+
+    youtube_id = toolset.tab_id
+    await toolset.switch_tab(root_id)
+    await toolset.open_tab("https://www.youtube.com/")
+    assert toolset.tab_id == youtube_id
     assert len(session._owned_pages) == 2
 
 
@@ -1062,6 +1153,8 @@ async def test_toolset_active_tab_tracking_and_switching():
     switch_res = json.loads(await toolset.switch_tab(search_tab_id))
     assert switch_res["success"] is True
     assert toolset.tab_id == search_tab_id
+    assert session._owned_pages[listing_tab_id].front_count == 1
+    assert session._owned_pages[search_tab_id].front_count == 1
 
     # switch_tab with invalid id fails and preserves active tab
     invalid_res = json.loads(await toolset.switch_tab("tab-nonexistent"))

@@ -93,7 +93,11 @@ explicitly required. On search providers, submit queries through the observed
 search input rather than navigating directly to constructed /search?q= URLs.
 Try the requested search provider first. If it is unavailable or blocks progress,
 you may navigate to an HTTPS homepage in fallback_search_domains and search there,
-unless the task explicitly restricts searching to the requested provider.
+unless the task explicitly restricts searching to the requested provider. Once a
+provider has shown a challenge in this task, keep using the alternative that
+worked instead of returning to it.
+Search-result cards, snippets, and previews are leads, not destination pages:
+open the linked source page before relying on its facts.
 Do not use fallbacks simply to broaden a user's search constraints.
 For open-web discovery, click an observed direct HTTPS link
 on an initially allowed or policy-authorized fallback Google, Bing, DuckDuckGo,
@@ -125,10 +129,17 @@ At each step, decide from the current observation and tool results:
     If the target is ambiguous, inspect further instead of guessing.
 - Media: observations include `media_state` for HTML audio/video elements.
     Check it before using player controls: never click Pause on playing media
-    (`paused=false`, `current_time > 0`), and press Play only when it is paused
-    or ended. Do not wait for media to finish; read its content from on-page text
-    such as transcripts, captions, or descriptions, and use their timestamps
-    instead of waiting in real time.
+    (`paused=false`, `current_time > 0`) when playback was requested, and press
+    Play only when it is paused or ended. If an enabled autoplay toggle is
+    observed, turn it off so the tab stays on the target media. If an ad plays
+    first, click its skip control once it is available; ad playback does not
+    confirm the target media is playing. Once playback
+    is confirmed (`paused=false`, `current_time > 0`), do not wait for media to
+    finish; read its content from on-page text such as transcripts, captions, or
+    descriptions (using their timestamps instead of waiting in real time), and
+    move on immediately. Do not reopen or reload media at other timestamps to
+    read its content, and do not search the web for quotes you already read.
+    If the media does not cover a requested point, say so or use another source.
 - Progress: after each action, check the next observation or tool result for an
     observable change relevant to the current objective. Tool success alone is
     not progress. If progress is absent or unclear, observe/read text, do not
@@ -154,11 +165,17 @@ loaded or what records appeared.
 Clicking a link may open a new tab; observation automatically switches to it.
 Use `open_tab(url)` to open an allowlisted page separately, and use `list_tabs`
 and `switch_tab` to inspect or return to open tabs. After switching tabs, call
-observe to refresh page controls and media state. Avoid opening pages that are
-already open in another tab. When the task asks to keep pages open or media
-playing, do not navigate away from such a page: continue in a new tab with
-`open_tab` (for example, the search provider's homepage), and before finishing
-revisit those tabs to confirm their state.
+observe to refresh page controls and media state. The payload's open_tabs lists
+pages already open; switch to a page that is already open instead of navigating
+another tab to it. Search-result tabs are working tabs: reuse an open one for
+new searches instead of opening another. When the task asks to keep pages open
+or media playing, do not leave such a page by any action (navigate, links, or
+its own site search): open further pages with `open_tab`, or continue in an
+open search tab, and before finishing
+revisit those tabs to confirm their state. If a kept page drifted to a different
+URL (for example, autoplay advanced to another video), navigate back to the
+original URL. If the task asks for media to keep playing, observe `media_state`
+after returning and press Play when it is paused or ended.
 Do not return an action as text: call a tool for each browser interaction.
 Before finishing you must call report_outcome exactly once with results_ready,
 no_results, blocked, timeout, or budget_exhausted, quoting visible page text as
@@ -561,7 +578,9 @@ async def navigate_with_tools(
         instructions = (
             f"{instructions}\nYour only objective right now: {objective}\n"
             "Do not attempt the broader task; call report_outcome once this "
-            "objective's content is visible or you determine it cannot be reached."
+            "objective's content is visible or you determine it cannot be reached. "
+            "Still respect end-state requirements in task_completion_criteria, "
+            "such as pages that must remain open."
         )
     if reason:
         instructions = f"{instructions}\nInvestigation reason: {reason}"
@@ -595,6 +614,8 @@ async def navigate_with_tools(
             "completion_criteria": [objective]
             if objective
             else task.completion_criteria,
+            "task_completion_criteria": task.completion_criteria if objective else [],
+            "open_tabs": json.loads(await toolset.list_tabs()),
             "constraints": task.constraints.model_dump(mode="json"),
             "planner_guidance": task.strategy.navigation_guidance,
             "unresolved_gaps": gaps or [],

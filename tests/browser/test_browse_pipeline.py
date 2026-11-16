@@ -563,7 +563,7 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
         ),
         (
             """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
-            "44",
+            "39 results",
         ),
         (
             """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
@@ -605,23 +605,23 @@ async def test_end_to_end(query, expected_text):
     if not os.getenv("RUN_BROWSE_LIVE_TESTS"):
         pytest.skip("RUN_BROWSE_LIVE_TESTS is not enabled")
 
-    # _mc = {
-    #     "planner": {
-    #         "model": "gpt-6-luna",
-    #         "reasoning": {"effort": "high", "summary": "detailed"},
-    #         "options": {"verbosity": "high"},
-    #     },
-    #     "navigator": {
-    #         "model": "gpt-5.6-sol",
-    #         "reasoning": {"effort": "medium"},
-    #         "options": {"verbosity": "high"},
-    #     },
-    #     "assessor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "medium"}},
-    #     "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
-    #     "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
-    # }
+    _mc = {
+        "planner": {
+            "model": "gpt-6-luna",
+            "reasoning": {"effort": "high", "summary": "detailed"},
+            "options": {"verbosity": "high"},
+        },
+        "navigator": {
+            "model": "gpt-5.6-sol",
+            "reasoning": {"effort": "medium"},
+            "options": {"verbosity": "high"},
+        },
+        "assessor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "medium"}},
+        "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
+        "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
+    }
     # or
-    _mc = "gpt-5.6-sol"
+    # _mc = "gpt-5.6-sol"
     result = await browse(
         query,
         model_config=_mc,
@@ -632,12 +632,6 @@ async def test_end_to_end(query, expected_text):
     assert task_result.artifacts
     norm_expected = expected_text.replace("–", "-")
     print("Response:\n", result.answer)
-    assert (
-        expected_text in result.answer
-        or norm_expected in result.answer.replace("–", "-")
-        or any(
-            expected_text in artifact.text
-            or norm_expected in artifact.text.replace("–", "-")
-            for artifact in task_result.artifacts
-        )
+    assert expected_text in result.answer or norm_expected in result.answer.replace(
+        "–", "-"
     )

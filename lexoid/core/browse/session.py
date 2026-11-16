@@ -10,7 +10,15 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from loguru import logger
-from playwright.async_api import Error as PlaywrightError
+from playwright.async_api import Error as _PlaywrightError
+
+try:
+    from patchright.async_api import Error as _PatchrightError
+
+    # Patchright's Error is a separate class, not a playwright Error subclass.
+    PlaywrightError: tuple[type[Exception], ...] = (_PlaywrightError, _PatchrightError)
+except ImportError:
+    PlaywrightError = (_PlaywrightError,)
 
 from lexoid.core.browse.schemas import (
     BrowserAction,
@@ -108,6 +116,11 @@ _DOM_QUIET_JS = """
 _SETTLE_IDLE_MS = 500
 _SETTLE_MAX_WAIT_MS = 4_000
 _SETTLE_GRACE_S = 2.0
+_READ_ATTEMPTS = 3
+_NAVIGATING_ERRORS = (
+    "page is navigating",
+    "Execution context was destroyed",
+)
 
 _FORM_STATE_JS = """
 () => Array.from(document.querySelectorAll('input, textarea, select'))
@@ -285,6 +298,24 @@ elements => {
             in_modal: inModal,
         };
     }).filter(entry => entry.visible).slice(0, 100);
+}
+"""
+
+_HIGHLIGHT_MS = 450
+# Draws a temporary box over the action target on a separate non-interactive
+# layer so the element's own styles and the page's controls stay untouched.
+_HIGHLIGHT_JS = """
+(el, ms) => {
+  const r = el.getBoundingClientRect();
+  const box = document.createElement('div');
+  box.setAttribute('aria-hidden', 'true');
+  box.style.cssText =
+    'position:fixed;pointer-events:none;z-index:2147483647;box-sizing:border-box;' +
+    'border:3px solid #FF007F;border-radius:4px;background:rgba(255,0,127,0.12);' +
+    'left:' + (r.left - 3) + 'px;top:' + (r.top - 3) + 'px;' +
+    'width:' + (r.width + 6) + 'px;height:' + (r.height + 6) + 'px;';
+  document.documentElement.appendChild(box);
+  setTimeout(() => box.remove(), ms + 150);
 }
 """
 
@@ -481,6 +512,27 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             logger.warning("Could not capture media state for tab {}: {}", tab_id, error)
             return None
 
+    async def activate_tab(self, tab_id: str) -> None:
+        """Bring an owned tab to the front so the visible tab matches the work."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            return
+        try:
+            await page.bring_to_front()
+        except PlaywrightError as error:
+            logger.debug("Could not bring tab {} to front: {}", tab_id, error)
+
+    async def _highlight(self, handle) -> None:
+        """Briefly outline an action target when a person can see the browser."""
+        if self._config.headless and not self._config.cdp_url:
+            return
+        try:
+            await handle.scroll_into_view_if_needed(timeout=1_000)
+            await handle.evaluate(_HIGHLIGHT_JS, _HIGHLIGHT_MS)
+            await asyncio.sleep(_HIGHLIGHT_MS / 1000)
+        except Exception as error:
+            logger.debug("Could not highlight action target: {}", error)
+
     async def tab(self, tab_id: str) -> OpenTab:
         """Return metadata for an active owned tab or raise ``TabGoneError``."""
         page = self._owned_pages.get(tab_id)
@@ -540,16 +592,33 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         page = self._owned_pages.get(tab_id)
         if page is None or page.is_closed():
             raise TabGoneError(tab_id)
-        return await page.content()
+        return await self._read_settled(page, page.content)
 
     async def text_content(self, tab_id: str) -> str:
         """Return the rendered visible text for an owned tab."""
         page = self._owned_pages.get(tab_id)
         if page is None or page.is_closed():
             raise TabGoneError(tab_id)
-        return await page.evaluate(
-            "() => (document.body && document.body.innerText) || ''"
+        return await self._read_settled(
+            page,
+            lambda: page.evaluate(
+                "() => (document.body && document.body.innerText) || ''"
+            ),
         )
+
+    async def _read_settled(self, page, read):
+        """Read page state, settling and retrying if a navigation is in flight."""
+        for attempt in range(_READ_ATTEMPTS):
+            try:
+                return await read()
+            except PlaywrightError as error:
+                message = str(error)
+                if attempt == _READ_ATTEMPTS - 1 or not any(
+                    marker in message for marker in _NAVIGATING_ERRORS
+                ):
+                    raise
+                logger.debug("Page read raced a navigation; retrying: {}", message)
+                await self._settle_page(page)
 
     async def form_state(self, tab_id: str) -> list[str]:
         """Return visible non-credential field values, showing what was submitted."""
@@ -759,6 +828,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                             outcome="stale reference",
                             error_code="stale_ref",
                         )
+                    await self._highlight(handle)
             if action.kind == "click":
                 assert handle is not None
                 await handle.click(timeout=self._config.timeout_ms)

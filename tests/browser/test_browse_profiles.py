@@ -321,6 +321,48 @@ async def test_navigator_run_does_not_reuse_prior_outcome(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_objective_run_sees_open_tabs_and_task_end_state(monkeypatch):
+    prompts: list[str] = []
+
+    class _Agent:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run(self, prompt):
+            prompts.append(prompt)
+            return SimpleNamespace(text="")
+
+    monkeypatch.setattr(browse_agents, "Agent", _Agent)
+    monkeypatch.setattr(
+        browse_agents, "browse_usage_from_response", lambda _response: BrowseUsage()
+    )
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+        completion_criteria=["All pages remain open in separate tabs."],
+        limits=BrowseLimits(max_steps=5),
+    )
+
+    async def emit(_trace):
+        return None
+
+    toolset = BrowserToolset(
+        cast(Any, _OutcomeSession("text")), task, "tab-1", emit
+    )
+    await browse_agents.navigate_with_tools(
+        object(), toolset, task, "{}", objective="inspect a product page"
+    )
+
+    payload = json.loads(prompts[0])
+    assert payload["completion_criteria"] == ["inspect a product page"]
+    assert payload["task_completion_criteria"] == [
+        "All pages remain open in separate tabs."
+    ]
+    assert [tab["tab_id"] for tab in payload["open_tabs"]] == ["tab-1"]
+
+
+@pytest.mark.asyncio
 async def test_begin_run_preserves_quarantine_state():
     toolset = _toolset("some text")
     toolset._quarantined = True

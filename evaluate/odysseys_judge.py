@@ -34,9 +34,10 @@ successful action records to check actions.
   captured source text explicitly places them in that category. Return needs_review
   when an attribute depends on uncaptured visual appearance or ambiguous shade/style.
 - Media playback is supported by captured `media_state` only when the relevant
-  media element has `paused=false`, `current_time > 0`, and `ended=false`; opening a
-  media URL or clicking a player control alone is not proof. A null or absent
-  `media_state` means playback state is unknown. Use
+  media element has `paused=false`, `current_time > 0`, and `ended=false`, or, for
+  requirements that playback started, `ended=true` with `current_time > 0`;
+  opening a media URL or clicking a player control alone is not proof. A null or
+  absent `media_state` means playback state is unknown. Use
   `open_tabs_at_end` for browser state captured immediately before session cleanup.
   That field does not prove tabs remained open after `browse()` returned. Apply
   end-state checks only when the rubric requirement asks for a page/tab to remain

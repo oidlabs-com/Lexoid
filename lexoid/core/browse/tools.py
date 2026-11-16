@@ -174,6 +174,12 @@ class BrowserToolset:
         self.run_action_count = 0
         self.step_limit_reached = False
 
+    async def _activate(self, tab_id: str) -> None:
+        self._tab_id = tab_id
+        activate = getattr(self._session, "activate_tab", None)
+        if activate is not None:
+            await activate(tab_id)
+
     async def _get_tab_url(self, tab_id: str) -> str:
         if hasattr(self._session, "tab_url"):
             res = self._session.tab_url(tab_id)
@@ -217,7 +223,7 @@ class BrowserToolset:
                 bad_tab_id,
                 candidate_id,
             )
-            self._tab_id = candidate_id
+            await self._activate(candidate_id)
             self._snapshot = None
         else:
             logger.warning(
@@ -384,9 +390,18 @@ class BrowserToolset:
 
     async def open_tab(self, url: str) -> str:
         """Open an allowlisted HTTPS URL in a new tab and switch to it."""
-        if len(await self._session.list_tabs()) >= _MAX_OPEN_TABS:
+        tabs = await self._session.list_tabs()
+        existing = next(
+            (t for t in tabs if t.url.split("#")[0] == url.split("#")[0]), None
+        )
+        if existing is not None:
+            return await self.switch_tab(existing.tab_id)
+        if len(tabs) >= _MAX_OPEN_TABS:
             return json.dumps(
-                {"success": False, "outcome": f"open-tab limit reached ({_MAX_OPEN_TABS})"}
+                {
+                    "success": False,
+                    "outcome": f"open-tab limit reached ({_MAX_OPEN_TABS})",
+                }
             )
         return await self._run(BrowserAction(kind="open_tab", url=url))
 
@@ -427,7 +442,7 @@ class BrowserToolset:
                     "outcome": f"tab {tab_id} destination outside allowlist",
                 }
             )
-        self._tab_id = tab_id
+        await self._activate(tab_id)
         await self._emit(
             BrowserActionTrace(
                 event="observation",
@@ -780,6 +795,6 @@ class BrowserToolset:
         if result.success or restored_after_denial:
             if result.opened_tab_id:
                 self._openers[result.opened_tab_id] = self._tab_id
-                self._tab_id = result.opened_tab_id
+                await self._activate(result.opened_tab_id)
             payload["observation"] = json.loads(await self.observe())
         return json.dumps(payload)
