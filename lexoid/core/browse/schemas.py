@@ -357,6 +357,7 @@ class MediaState(BaseModel):
     duration: float | None = Field(default=None, ge=0)
     ended: bool
     ready_state: int = Field(ge=0, le=4)
+    ad_showing: bool | None = None
 
 
 class BrowserSnapshot(BaseModel):
@@ -594,7 +595,10 @@ class BrowseTaskResult(BaseModel):
     retained_tabs: list[OpenTab] = Field(default_factory=list)
     open_tabs_at_end: list[OpenTab] = Field(
         default_factory=list,
-        description="Owned-tab state immediately before browser-session cleanup.",
+        description=(
+            "Allowlisted owned-tab state before cleanup. A drifted tab may revisit "
+            "its last captured URL once before being excluded."
+        ),
     )
     usage: BrowseUsage = Field(default_factory=BrowseUsage)
     plan_outcome: PlanOutcomeRecord | None = None

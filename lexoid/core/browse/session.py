@@ -16,9 +16,12 @@ try:
     from patchright.async_api import Error as _PatchrightError
 
     # Patchright's Error is a separate class, not a playwright Error subclass.
-    PlaywrightError: tuple[type[Exception], ...] = (_PlaywrightError, _PatchrightError)
+    BrowserDriverError: tuple[type[Exception], ...] = (
+        _PlaywrightError,
+        _PatchrightError,
+    )
 except ImportError:
-    PlaywrightError = (_PlaywrightError,)
+    BrowserDriverError = (_PlaywrightError,)
 
 from lexoid.core.browse.schemas import (
     BrowserAction,
@@ -40,6 +43,13 @@ from lexoid.core.ghost import (
 )
 
 _SNAPSHOT_ATTEMPTS = 3
+_SHORT_WAIT_MS = 5_500
+_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
+_AD_SKIP_SELECTOR = (
+    "#movie_player.ad-showing button:is(.ytp-skip-ad-button, "
+    ".ytp-ad-skip-button-modern, .ytp-ad-skip-button):visible"
+)
+_YOUTUBE_PAGE_JS = r"/^(?:www\.|m\.)?youtube\.com$/.test(location.hostname)"
 
 _MEDIA_STATE_JS = """
 () => Array.from(document.querySelectorAll("video, audio"))
@@ -52,9 +62,11 @@ _MEDIA_STATE_JS = """
         duration: Number.isFinite(element.duration) && element.duration >= 0
             ? element.duration : null,
         ended: Boolean(element.ended),
-        ready_state: element.readyState
+        ready_state: element.readyState,
+        ad_showing: YOUTUBE_PAGE && element.closest('#movie_player')
+            ? Boolean(element.closest('#movie_player.ad-showing')) : null
     }))
-"""
+""".replace("YOUTUBE_PAGE", _YOUTUBE_PAGE_JS)
 _SNAPSHOT_STATE_JS = f"""
 () => {{
     const mediaState = ({_MEDIA_STATE_JS.strip()})();
@@ -393,13 +405,14 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 )
             elif self._profile_lock is not None:
                 self._effective_mode = "persistent"
-                self._context, self._effective_channel = (
-                    await launch_persistent_context_with_config(
-                        self._playwright.chromium,
-                        self._profile_lock.profile_dir,
-                        self._config,
-                        patchright_active,
-                    )
+                (
+                    self._context,
+                    self._effective_channel,
+                ) = await launch_persistent_context_with_config(
+                    self._playwright.chromium,
+                    self._profile_lock.profile_dir,
+                    self._config,
+                    patchright_active,
                 )
                 if self._config.stealth and not patchright_active:
                     await self._context.add_init_script(_STEALTH_INIT_SCRIPT)
@@ -407,12 +420,13 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                     self._unclaimed_initial_page = self._context.pages[0]
             else:
                 self._effective_mode = "fresh"
-                self._browser, self._effective_channel = (
-                    await launch_browser_with_config(
-                        self._playwright.chromium,
-                        self._config,
-                        patchright_active,
-                    )
+                (
+                    self._browser,
+                    self._effective_channel,
+                ) = await launch_browser_with_config(
+                    self._playwright.chromium,
+                    self._config,
+                    patchright_active,
                 )
                 context_kwargs: dict[str, Any] = {}
                 if no_viewport:
@@ -485,7 +499,8 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         for tab_id in list(self._owned_pages.keys()):
             try:
                 tabs.append(await self.tab(tab_id))
-            except (TabGoneError, Exception):
+            except (TabGoneError, Exception) as exc:
+                logger.debug("Could not retrieve tab {}: {}", tab_id, exc)
                 continue
         return tabs
 
@@ -508,8 +523,10 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             raise TabGoneError(tab_id)
         try:
             return _parse_media_state(await page.evaluate(_MEDIA_STATE_JS))
-        except PlaywrightError as error:
-            logger.warning("Could not capture media state for tab {}: {}", tab_id, error)
+        except BrowserDriverError as error:
+            logger.warning(
+                "Could not capture media state for tab {}: {}", tab_id, error
+            )
             return None
 
     async def activate_tab(self, tab_id: str) -> None:
@@ -519,7 +536,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             return
         try:
             await page.bring_to_front()
-        except PlaywrightError as error:
+        except BrowserDriverError as error:
             logger.debug("Could not bring tab {} to front: {}", tab_id, error)
 
     async def _highlight(self, handle) -> None:
@@ -611,7 +628,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         for attempt in range(_READ_ATTEMPTS):
             try:
                 return await read()
-            except PlaywrightError as error:
+            except BrowserDriverError as error:
                 message = str(error)
                 if attempt == _READ_ATTEMPTS - 1 or not any(
                     marker in message for marker in _NAVIGATING_ERRORS
@@ -693,6 +710,26 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 self._revisions[tab_id] += 1
                 await self._settle_page(page)
         raise TabGoneError(tab_id)
+
+    async def skip_ad(self, tab_id: str) -> bool:
+        """Click a YouTube in-player skip button if an ad is showing."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            raise TabGoneError(tab_id)
+        if urlparse(page.url).hostname not in _YOUTUBE_HOSTS:
+            return False
+        try:
+            if not await page.locator("#movie_player.ad-showing").count():
+                return False
+            # Locator click waits for the button to become visible and enabled.
+            await page.locator(_AD_SKIP_SELECTOR).first.click(
+                timeout=min(_SHORT_WAIT_MS, self._config.timeout_ms)
+            )
+        except BrowserDriverError as error:
+            logger.debug("No ad skip on {}: {}", tab_id, type(error).__name__)
+            return False
+        self._revisions[tab_id] += 1
+        return True
 
     async def _capture_snapshot(self, tab_id: str, page: Any) -> BrowserSnapshot:
         locator = page.locator("button, a, input, select, textarea, [role]")
@@ -878,8 +915,13 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 await page.reload(timeout=self._config.timeout_ms)
             elif action.kind == "wait":
                 if action.text:
-                    await page.get_by_text(action.text, exact=False).first.wait_for(
-                        state="visible", timeout=self._config.timeout_ms
+                    await (
+                        page.get_by_text(action.text, exact=False)
+                        .locator("visible=true")
+                        .first.wait_for(
+                            state="visible",
+                            timeout=min(_SHORT_WAIT_MS, self._config.timeout_ms),
+                        )
                     )
                 else:
                     await page.wait_for_timeout(500)
@@ -887,7 +929,8 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 return BrowserActionResult(success=False, outcome="unsupported action")
         except Exception as error:
             return BrowserActionResult(success=False, outcome=str(error)[:1000])
-        await self._settle_page(page)
+        if action.kind != "wait":
+            await self._settle_page(page)
         opened_tab_id: str | None = None
         opened_url: str | None = None
         reused_existing_tab = False

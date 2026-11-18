@@ -296,6 +296,18 @@ class BrowserToolset:
         """Return the current accessible elements available to navigation tools."""
         if not await self._active_tab_allowed():
             return _denied_json("active tab is outside the task allowlist")
+        if self.remaining_actions and await self._session.skip_ad(self._tab_id):
+            self.action_count += 1
+            self.run_action_count += 1
+            logger.info("|   [OK] Skipped ad")
+            await self._emit(
+                BrowserActionTrace(
+                    event="action",
+                    task_id=self._task.task_id,
+                    tab_id=self._tab_id,
+                    metadata={"automatic_ad_skip": True},
+                )
+            )
         snapshot = await self._session.snapshot(self._tab_id)
         if not await self._active_tab_allowed():
             return _denied_json("active tab is outside the task allowlist")

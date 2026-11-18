@@ -7,6 +7,7 @@ import hashlib
 import os
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 from lexoid.core.browse.agents import (
     assess_page,
@@ -37,7 +38,11 @@ from lexoid.core.browse.schemas import (
     PlanOutcomeRecord,
     SynthesisAssessment,
 )
-from lexoid.core.browse.session import GhostBrowserSession
+from lexoid.core.browse.session import (
+    BrowserDriverError,
+    GhostBrowserSession,
+    TabGoneError,
+)
 from lexoid.core.browse.tools import BrowserToolset
 from lexoid.core.ghost import GhostConfig, ghost_get_html
 from loguru import logger
@@ -679,7 +684,51 @@ async def run_task(
                             stop_reason = "no_next_action"
                             break
                 html = artifacts[0].text if artifacts else None
-                open_tabs_at_end = await session.capture_open_tabs()
+                captured_urls = {
+                    artifact.tab_id: artifact.url for artifact in artifacts
+                }
+                for tab in await session.capture_open_tabs():
+                    if is_allowed_url(tab.url, task.allowed_domains):
+                        open_tabs_at_end.append(tab)
+                        continue
+
+                    host = urlparse(tab.url).hostname or "unknown host"
+                    revisit_url = captured_urls.get(tab.tab_id)
+                    if (
+                        not toolset.is_quarantined
+                        and revisit_url
+                        and is_allowed_url(revisit_url, task.allowed_domains)
+                    ):
+                        try:
+                            restored = await session.restore_page(
+                                tab.tab_id, revisit_url
+                            )
+                            if is_allowed_url(restored.url, task.allowed_domains):
+                                media = await session.media_state(tab.tab_id)
+                                restored = await session.tab(tab.tab_id)
+                                if is_allowed_url(restored.url, task.allowed_domains):
+                                    open_tabs_at_end.append(
+                                        restored.model_copy(
+                                            update={"media_state": media}
+                                        )
+                                    )
+                                    warnings.append(
+                                        f"Restored tab {tab.tab_id} from {host} "
+                                        "to its last captured page."
+                                    )
+                                    continue
+                        except (TabGoneError, *BrowserDriverError) as error:
+                            logger.debug(
+                                "Could not revisit tab {}: {}",
+                                tab.tab_id,
+                                type(error).__name__,
+                            )
+                    warning = (
+                        f"Excluded tab {tab.tab_id} on {host}: "
+                        "outside the HTTPS task allowlist at final capture."
+                    )
+                    logger.warning(warning)
+                    warnings.append(warning)
                 if task.retain_final_page and cdp_url and not toolset.is_quarantined:
                     for tab in open_tabs_at_end:
                         await session.retain_page(tab.tab_id)

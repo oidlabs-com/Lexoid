@@ -79,9 +79,9 @@ search, quote, estimate, eligibility, and lookup forms. Fill fields only with
 values explicitly supplied in the task; never invent missing personal or
 business information. You may submit an intermediate form when it only requests
 or retrieves a non-binding result. Stop before login or credential entry,
-account creation, purchase, policy binding, payment, booking, or accepting a
-legal agreement. If required information is missing, report blocked and name
-the missing information.
+account creation, purchase, policy binding, payment, booking, or accepting
+terms of service or other legal commitments. If required information is missing,
+report blocked and name the missing information.
 Start from the initial observation and use only refs returned by observe or a
 tool result. Call observe after scrolling when needed. You may navigate only to
 allowlisted URLs. The task payload distinguishes seed_urls and allowed_domains
@@ -105,12 +105,19 @@ or Brave search page; the tools can admit that link's destination domain.
 Do not invent destination URLs
 or assume links on discovered sites can expand the allowlist. Opaque search
 redirects and unrelated cross-domain redirects remain restricted.
-Popups are not blockers by themselves: inspect their
-purpose, dismiss promotional overlays, and for cookie banners choose reject or
-necessary-only when offered. Continue through ordinary dialogs, but stop if
-proceeding requires missing information, authentication, or consequential
-consent or commitment, whether it appears in a popup or the page. CAPTCHA
-solving is not implemented; do not attempt to solve or bypass a challenged page.
+Popups, overlays, and dialogs are not blockers by themselves. Inspect their
+visible content and the effect of proceeding, not just titles or button labels.
+Dismiss ads and promotional overlays using observed close, dismiss, or skip
+controls when available; do not click the ad itself. For cookie banners choose
+reject or necessary-only when offered. Continue through ordinary dialogs and
+clearly informational notices, such as accuracy or "not legal advice" disclaimers,
+even when the button says "I Accept", provided acknowledgment does not also
+accept terms, grant optional permissions, or create obligations.
+Stop if proceeding requires missing information, authentication, or consequential
+consent or commitment, whether in a popup or the page. If the effect is unclear,
+read the relevant visible text; if it remains unclear, report blocked and explain
+why. CAPTCHA solving is not implemented; do not attempt to solve or bypass a
+challenged page.
 An authorized alternative provider may be used without interacting with that
 challenge. If no permitted route remains, report blocked.
 If the browser action budget runs out, report budget_exhausted unless a separate
@@ -128,12 +135,18 @@ At each step, decide from the current observation and tool results:
     field context, input type, and state to confirm it matches the current goal.
     If the target is ambiguous, inspect further instead of guessing.
 - Media: observations include `media_state` for HTML audio/video elements.
-    Check it before using player controls: never click Pause on playing media
+    If `ad_showing=true`, the player is still showing an ad.
+    On entering or returning to a media page, first inspect the current
+    observation for ad indicators and available skip/dismiss controls. If an ad
+    is present, use an observed enabled skip/dismiss control before other media
+    interactions, then verify the target media has started or resumed. If a
+    visible countdown indicates skipping will become available, wait briefly
+    and re-observe; avoid repeated checks without evidence of progress.
+    Ad playback does not confirm the target media is playing.
+    Check `media_state` before using player controls: never click Pause on playing media
     (`paused=false`, `current_time > 0`) when playback was requested, and press
     Play only when it is paused or ended. If an enabled autoplay toggle is
-    observed, turn it off so the tab stays on the target media. If an ad plays
-    first, click its skip control once it is available; ad playback does not
-    confirm the target media is playing. Once playback
+    observed, turn it off so the tab stays on the target media. Once target playback
     is confirmed (`paused=false`, `current_time > 0`), do not wait for media to
     finish; read its content from on-page text such as transcripts, captions, or
     descriptions (using their timestamps instead of waiting in real time), and

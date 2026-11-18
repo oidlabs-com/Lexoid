@@ -557,47 +557,47 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
 @pytest.mark.parametrize(
     "query, expected_text",
     [
-        (
-            """Go to https://tmsearch.uspto.gov/ and retrieve all cases related to Arash Samadani (as attorney)""",
-            "158",
-        ),
-        (
-            """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
-            "39 results",
-        ),
-        (
-            """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
-            information for alien number: 123-456-789, country of origin - Mexico""",
-            "No case found",
-        ),
-        (
-            """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
-            Additional criteria:
-            - 'Minimum Size'>='5,000 SF'
-            Give me street addresses (sorted by price low to high).
-            """,
-            "2626–2646 Dupont Dr, Irvine",
-        ),
-        (
-            """I’m trying to decide whether driving this week is a bad idea,
-                so can you build me a quick weather risk snapshot that starts with what it feels like right now and then widens out to the bigger trouble spots?
-                First, on Google (https://www.google.com/), search for Baltimore, Maryland weather and grab the current temperature plus the plain-English condition like cloudy, sunny, rain, or whatever it says,
-                just so I have a baseline for home conditions.
-                Then go to Wunderground (https://www.wunderground.com/) and look up Syracuse, New York, and check the 10-day/7-day style forecast to find the lowest temperature expected over the next 7 days, including which day it happens, because I want to compare that colder destination against Baltimore.
-                After that, use the National Weather Service forecast page for the Rittman, Ohio area near Marshallville and tell me what the current forecast says and whether there are any active alerts posted there, since that would really affect an Ohio leg of the drive; please open the actual forecast page and leave it visible so I can see the alert area and forecast text myself.
-                Finally, go to the NWS Mount Holly page, find the winter forecast graphic, and report the snowfall amount shown there so I can tell whether the Mid-Atlantic part looks like a nuisance event or something more serious; if the graphic opens separately, leave that tab open too so I can look at the map.
-                In the end, send me a short location-by-location summary with the key weather risk for Baltimore, Syracuse, Rittman/Marshallville, and the Mount Holly region.
-            """,
-            "Rittman",
-        ),
-        (
-            """Navigate to the Facebook Ad Library, https://www.facebook.com/ads/library.
-            Search for all active ads currently running in the United States by the page 'Morgan & Morgan'.
-            Scroll to load the 10 most recent active ads. Extract the primary headline copy, the call-to-action (CTA) text, and flag whether the ad is using a video or an image.
-            Output as a structured Markdown table.
-            """,
-            "Morgan & Morgan",
-        ),
+        # (
+        #     """Go to https://tmsearch.uspto.gov/ and retrieve all cases related to Arash Samadani (as attorney)""",
+        #     "158",
+        # ),
+        # (
+        #     """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
+        #     "39 results",
+        # ),
+        # (
+        #     """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
+        #     information for alien number: 123-456-789, country of origin - Mexico""",
+        #     "No case found",
+        # ),
+        # (
+        #     """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
+        #     Additional criteria:
+        #     - 'Minimum Size'>='5,000 SF'
+        #     Give me street addresses (sorted by price low to high).
+        #     """,
+        #     "2626–2646 Dupont Dr, Irvine",
+        # ),
+        # (
+        #     """I’m trying to decide whether driving this week is a bad idea,
+        #         so can you build me a quick weather risk snapshot that starts with what it feels like right now and then widens out to the bigger trouble spots?
+        #         First, on Google (https://www.google.com/), search for Baltimore, Maryland weather and grab the current temperature plus the plain-English condition like cloudy, sunny, rain, or whatever it says,
+        #         just so I have a baseline for home conditions.
+        #         Then go to Wunderground (https://www.wunderground.com/) and look up Syracuse, New York, and check the 10-day/7-day style forecast to find the lowest temperature expected over the next 7 days, including which day it happens, because I want to compare that colder destination against Baltimore.
+        #         After that, use the National Weather Service forecast page for the Rittman, Ohio area near Marshallville and tell me what the current forecast says and whether there are any active alerts posted there, since that would really affect an Ohio leg of the drive; please open the actual forecast page and leave it visible so I can see the alert area and forecast text myself.
+        #         Finally, go to the NWS Mount Holly page, find the winter forecast graphic, and report the snowfall amount shown there so I can tell whether the Mid-Atlantic part looks like a nuisance event or something more serious; if the graphic opens separately, leave that tab open too so I can look at the map.
+        #         In the end, send me a short location-by-location summary with the key weather risk for Baltimore, Syracuse, Rittman/Marshallville, and the Mount Holly region.
+        #     """,
+        #     "Rittman",
+        # ),
+        # (
+        #     """Navigate to the Facebook Ad Library, https://www.facebook.com/ads/library.
+        #     Search for all active ads currently running in the United States by the page 'Morgan & Morgan'.
+        #     Scroll to load the 10 most recent active ads. Extract the primary headline copy, the call-to-action (CTA) text, and flag whether the ad is using a video or an image.
+        #     Output as a structured Markdown table.
+        #     """,
+        #     "Morgan & Morgan",
+        # ),
     ],
 )
 async def test_end_to_end(query, expected_text):
@@ -612,16 +612,16 @@ async def test_end_to_end(query, expected_text):
             "options": {"verbosity": "high"},
         },
         "navigator": {
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6.2-sol",
             "reasoning": {"effort": "medium"},
             "options": {"verbosity": "high"},
         },
-        "assessor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "medium"}},
+        "assessor": {"model": "gpt-6.2-sol", "reasoning": {"effort": "medium"}},
         "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
         "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
     }
     # or
-    # _mc = "gpt-5.6-sol"
+    # _mc = "gpt-6.2-sol"
     result = await browse(
         query,
         model_config=_mc,

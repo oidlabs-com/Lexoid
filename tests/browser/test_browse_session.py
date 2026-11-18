@@ -12,7 +12,11 @@ from lexoid.core.browse.schemas import (
     InferredSeed,
     MediaState,
 )
-from lexoid.core.browse.session import GhostBrowserSession
+from lexoid.core.browse.session import (
+    _AD_SKIP_SELECTOR,
+    BrowserDriverError,
+    GhostBrowserSession,
+)
 from lexoid.core.browse.tools import BrowserToolset
 from lexoid.core.ghost import GhostConfig
 
@@ -88,6 +92,50 @@ class _FakeSettlePage:
         if isinstance(self.outcome, Exception):
             raise self.outcome
         return self.outcome
+
+
+@pytest.mark.asyncio
+async def test_text_wait_filters_visible_matches_before_first_and_does_not_settle(
+    monkeypatch,
+):
+    session = GhostBrowserSession(GhostConfig.from_kwargs({"timeout_ms": 30_000}))
+    page = _FakeSnapshotPage()
+    tab_id = session._register_page(page)
+    queries = []
+
+    class _WaitLocator:
+        def locator(self, selector):
+            queries.append(selector)
+            return self
+
+        @property
+        def first(self):
+            queries.append("first")
+            return self
+
+        async def wait_for(self, **kwargs):
+            queries.append(kwargs)
+
+    def get_by_text(text, *, exact):
+        queries.append((text, exact))
+        return _WaitLocator()
+
+    async def settle(_page):
+        pytest.fail("A wait should not trigger another settle")
+
+    monkeypatch.setattr(page, "get_by_text", get_by_text, raising=False)
+    monkeypatch.setattr(session, "_settle_page", settle)
+    snapshot = await session.snapshot(tab_id)
+    result = await session.execute(
+        BrowserAction(kind="wait", text="Skip", snapshot_id=snapshot.snapshot_id)
+    )
+    assert result.success
+    assert queries == [
+        ("Skip", False),
+        "visible=true",
+        "first",
+        {"state": "visible", "timeout": 5_500},
+    ]
 
 
 @pytest.mark.asyncio
@@ -365,6 +413,9 @@ class _FakeSnapshotLocator:
     def nth(self, index: int) -> _FakeSnapshotLocatorItem:
         return _FakeSnapshotLocatorItem(self.handles[index])
 
+    async def count(self) -> int:
+        return 0
+
 
 class _FakePasswordLocator(_FakeSnapshotLocator):
     async def evaluate_all(self, script: str) -> list[dict[str, object]]:
@@ -401,7 +452,10 @@ class _FakeSnapshotPage:
         self.front_count += 1
 
     def locator(self, selector: str) -> _FakeSnapshotLocator:
-        assert selector == "button, a, input, select, textarea, [role]"
+        assert selector in {
+            "button, a, input, select, textarea, [role]",
+            "#movie_player.ad-showing",
+        }
         return _FakeSnapshotLocator(self.handles)
 
     async def evaluate(self, script: str, *args: object) -> object:
@@ -876,6 +930,101 @@ async def test_toolset_search_discovery(
         denied = json.loads(await toolset.click("e1"))
         assert denied["result"]["success"] is False
         assert "unrelated.com" not in task.allowed_domains
+
+
+class _FakeAdPage:
+    def __init__(self, url: str, ad_showing: bool, skippable: bool) -> None:
+        self.url = url
+        self.ad_showing = ad_showing
+        self.skippable = skippable
+        self.clicks: list[str] = []
+
+    def is_closed(self) -> bool:
+        return False
+
+    def on(self, event: str, handler: object) -> None:
+        pass
+
+    def locator(self, selector: str):
+        page = self
+
+        class _Locator:
+            first = None
+
+            async def count(self) -> int:
+                return int(page.ad_showing)
+
+            async def click(self, timeout: int) -> None:
+                if not page.skippable:
+                    raise BrowserDriverError[0]("Timeout exceeded")
+                page.clicks.append(selector)
+
+        locator = _Locator()
+        locator.first = locator
+        return locator
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "ad_showing", "skippable", "skipped"),
+    [
+        ("https://www.youtube.com/watch?v=x", True, True, True),
+        ("https://www.youtube.com/watch?v=x", False, True, False),
+        ("https://www.youtube.com/watch?v=x", True, False, False),
+        ("https://example.com/watch?v=x", True, True, False),
+    ],
+    ids=["skippable", "no-ad", "unskippable", "not-youtube"],
+)
+async def test_skip_ad_clicks_only_a_visible_youtube_skip_button(
+    url, ad_showing, skippable, skipped
+):
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeAdPage(url, ad_showing, skippable)
+    tab_id = session._register_page(page)
+
+    assert await session.skip_ad(tab_id) is skipped
+    assert page.clicks == ([_AD_SKIP_SELECTOR] if skipped else [])
+    assert session._revisions[tab_id] == int(skipped)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("skipped", [True, False])
+async def test_observe_skips_ad_before_snapshot(monkeypatch, skipped):
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeSnapshotPage()
+    page.url = "https://www.youtube.com/watch?v=x"
+    tab_id = session._register_page(page)
+    calls = []
+    traces = []
+
+    async def skip_ad(tab):
+        calls.append(("skip", tab))
+        return skipped
+
+    original_snapshot = session.snapshot
+
+    async def snapshot(tab):
+        calls.append(("snapshot", tab))
+        return await original_snapshot(tab)
+
+    async def emit(trace):
+        traces.append(trace)
+
+    monkeypatch.setattr(session, "skip_ad", skip_ad)
+    monkeypatch.setattr(session, "snapshot", snapshot)
+    task = BrowseTask(
+        seed_urls=[page.url], subject="Watch video", allowed_domains=["youtube.com"]
+    )
+    toolset = BrowserToolset(session, task, tab_id, emit)
+    await toolset.observe()
+
+    assert calls == [("skip", tab_id), ("snapshot", tab_id)]
+    actions = [trace for trace in traces if trace.event == "action"]
+    assert [trace.metadata for trace in actions] == (
+        [{"automatic_ad_skip": True}] if skipped else []
+    )
+    assert toolset.action_count == int(skipped)
+    assert toolset.successful_action_count == 0
 
 
 @pytest.mark.asyncio

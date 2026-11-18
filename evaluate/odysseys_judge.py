@@ -33,6 +33,7 @@ successful action records to check actions.
   record the selection; branded option names satisfy a descriptive attribute when
   captured source text explicitly places them in that category. Return needs_review
   when an attribute depends on uncaptured visual appearance or ambiguous shade/style.
+- Do not count `media_state` with `ad_showing=true` as target playback.
 - Media playback is supported by captured `media_state` only when the relevant
   media element has `paused=false`, `current_time > 0`, and `ended=false`, or, for
   requirements that playback started, `ended=true` with `current_time > 0`;

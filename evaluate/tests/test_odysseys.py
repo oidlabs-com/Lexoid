@@ -51,7 +51,7 @@ KITCHEN_RUBRICS = {
         "verification": "Grader can confirm the open recipe page contains the recipe title and visible recipe details, and the ingredients or recipe text visibly includes Parmesan and balsamic vinegar.",
     },
     "R2": {
-        "requirement": "A light green (a shade of green works) Le Creuset Dutch oven product page was opened and the agent correctly confirmed whether the 5.5 qt size is available in that color, including product name and color.",
+        "requirement": "A light green (a shade of green works e.g. Sea Salt or something similar) Le Creuset Dutch oven product page was opened and the agent correctly confirmed whether the 5.5 qt size is available in that color, including product name and color.",
         "verification": "Grader can inspect the open Le Creuset product page and see the product name, the selected or referenced light green color, and visible size options or product details indicating whether 5.5 qt is available.",
     },
     "R3": {
@@ -359,9 +359,10 @@ def test_judge_view_keeps_evidence_and_excerpts_pages():
     assert view["actions"][0]["url"].endswith("…")
     assert view["pages"][0]["captured_chars"] == len(page)
     assert view["pages"][0]["media_state"][0]["paused"] is False
-    assert view["outcomes"][0]["open_tabs_at_end"][0]["media_state"][0][
-        "current_time"
-    ] == 1.5
+    assert (
+        view["outcomes"][0]["open_tabs_at_end"][0]["media_state"][0]["current_time"]
+        == 1.5
+    )
     assert excerpts[0].startswith("Recipe title")
     assert any("Parmesan and balsamic vinegar" in text for text in excerpts)
     assert any("425 F" in text for text in excerpts)
@@ -461,7 +462,7 @@ async def test_end_to_end(tmp_path):
         all_categories=False,
         level="easy",
         output=output,
-        model=os.getenv("ODYSSEYS_SMOKE_BROWSER_MODEL", "gpt-5.6-sol"),
+        model=os.getenv("ODYSSEYS_SMOKE_BROWSER_MODEL", "gpt-6.2-sol"),
         cdp_url=None,
         user_data_dir=Path(
             os.getenv(

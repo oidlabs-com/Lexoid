@@ -28,6 +28,9 @@ class _FinalTabsMixin:
     async def capture_open_tabs(self) -> list[OpenTab]:
         return []
 
+    async def skip_ad(self, tab_id: str) -> bool:
+        return False
+
 
 def test_site_profile_matches_host_and_task_type():
     profile = SiteProfile(
@@ -1785,11 +1788,18 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkeypatch):
+@pytest.mark.parametrize(
+    "revisit_outcome",
+    ["not_needed", "restored", "redirected", "playwright", "patchright"],
+)
+async def test_orchestrator_captures_and_paginates_on_switched_active_tab(
+    monkeypatch, revisit_outcome
+):
     from lexoid.core.browse import orchestrator
     from lexoid.core.browse.schemas import (
         BrowseUsage,
         EvidenceAssessment,
+        MediaState,
         OpenTab,
         PageArtifact,
     )
@@ -1798,8 +1808,18 @@ async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkey
     advanced_tab_ids: list[str] = []
     settled_tab_ids: list[str] = []
     retained_tab_ids: list[str] = []
+    revisits: list[tuple[str, str]] = []
+    listing_url = "https://example.com/tab-listing"
+    offsite_url = "https://outside.test/redirect"
+    playback = [
+        MediaState(
+            media_type="video", current_time=0, paused=True, ended=False, ready_state=4
+        )
+    ]
 
     class _MultiTabSession(_FinalTabsMixin):
+        current_listing_url = listing_url
+
         async def __aenter__(self):
             return self
 
@@ -1807,15 +1827,33 @@ async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkey
             return None
 
         async def capture_open_tabs(self):
+            if revisit_outcome != "not_needed":
+                self.current_listing_url = offsite_url
             return await self.list_tabs()
+
+        async def restore_page(self, tab_id, url):
+            revisits.append((tab_id, url))
+            if revisit_outcome in {"playwright", "patchright"}:
+                driver = pytest.importorskip(f"{revisit_outcome}.async_api")
+                raise driver.Error("navigation failed")
+            self.current_listing_url = url
+            return await self.tab(tab_id)
+
+        async def media_state(self, tab_id):
+            if revisit_outcome == "redirected":
+                self.current_listing_url = offsite_url
+            return playback
 
         async def open_page(self, url):
             return OpenTab(tab_id="tab-seed", target_id="t1", url=url)
 
         async def tab(self, tab_id):
-            return OpenTab(
-                tab_id=tab_id, target_id=tab_id, url=f"https://example.com/{tab_id}"
+            url = (
+                self.current_listing_url
+                if tab_id == "tab-listing"
+                else f"https://example.com/{tab_id}"
             )
+            return OpenTab(tab_id=tab_id, target_id=tab_id, url=url)
 
         async def list_tabs(self):
             return [
@@ -1825,8 +1863,9 @@ async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkey
                 OpenTab(
                     tab_id="tab-listing",
                     target_id="t2",
-                    url="https://example.com/listing/1",
+                    url=self.current_listing_url,
                 ),
+                OpenTab(tab_id="tab-popup", target_id="t3", url=offsite_url),
             ]
 
         async def settle(self, tab_id):
@@ -1897,8 +1936,24 @@ async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkey
     assert captured_tab_ids == ["tab-listing"]
     assert advanced_tab_ids == ["tab-listing"]
     assert settled_tab_ids == ["tab-listing"]
-    assert retained_tab_ids == ["tab-seed", "tab-listing"]
-    assert {
-        tab.tab_id for tab in result.task_results[0].open_tabs_at_end
-    } == {"tab-seed", "tab-listing"}
-    assert result.task_results[0].status is BrowseTerminalState.LIMIT_REACHED
+    task_result = result.task_results[0]
+    expected_tabs = ["tab-seed"]
+    if revisit_outcome in {"not_needed", "restored"}:
+        expected_tabs.append("tab-listing")
+    assert retained_tab_ids == expected_tabs
+    assert [tab.tab_id for tab in task_result.open_tabs_at_end] == expected_tabs
+    assert [tab.tab_id for tab in task_result.retained_tabs] == expected_tabs
+    assert revisits == (
+        [] if revisit_outcome == "not_needed" else [("tab-listing", listing_url)]
+    )
+    assert any(
+        "Excluded tab tab-popup on outside.test" in warning
+        for warning in result.warnings
+    )
+    if revisit_outcome == "restored":
+        assert task_result.open_tabs_at_end[-1].url == listing_url
+        assert task_result.open_tabs_at_end[-1].media_state == playback
+        assert any(
+            "Restored tab tab-listing" in warning for warning in result.warnings
+        )
+    assert task_result.status is BrowseTerminalState.LIMIT_REACHED
