@@ -1,4 +1,4 @@
-# Browser evaluation
+# Browser evaluation (WIP)
 
 Run browser tasks from Odysseys and grade saved results.
 Run commands from the Lexoid repository root with its Python environment.
@@ -31,19 +31,28 @@ Choose different tasks or a local dataset:
 
 ```bash
 python -m evaluate.odysseys_judge select --level medium --category "Law and Government"
+python -m evaluate.odysseys_judge select --level medium --category "Law and Government" --index 0
+python -m evaluate.odysseys_judge select --level medium --category "Law and Government" --index 1:3
 python -m evaluate.odysseys_judge select --level all --all-categories
 python -m evaluate.odysseys_judge select --input /path/to/odysseys.json
 ```
+
+`--index` applies after category and level filtering, in dataset order.
+`0` selects the first match, `1:3` selects the second and third matches, and
+`all` (the default) keeps every match. Out-of-range selections are rejected.
 
 ## Execute
 
 ```bash
 python -m evaluate.odysseys_judge run \
-  --model YOUR_BROWSER_MODEL --output evaluate/runs/baseline-01
+  --output evaluate/runs/baseline-01
 ```
 
-`run` accepts the same `--input`, `--level`, `--category` (repeatable), and
-`--all-categories` filters as `select`.
+Browsing defaults to `gpt-6.2-sol` with `medium` reasoning effort; use
+`run --model` to choose a different model.
+
+`run` accepts the same `--input`, `--level`, `--category` (repeatable),
+`--all-categories`, and `--index` options as `select`.
 
 Use `--headful` for an owned visible browser, or `--cdp-url` with a dedicated
 evaluation browser. Do not attach a personal browsing session. Defaults are

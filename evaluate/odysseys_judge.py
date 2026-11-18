@@ -131,6 +131,12 @@ def load_selection(args: argparse.Namespace) -> dict[str, Any]:
     tasks = select_tasks(source_tasks, categories, args.level)
     if not tasks:
         raise ValueError("No tasks match the requested selection")
+    index: tuple[int, int] | None = getattr(args, "index", None)
+    if index is not None:
+        start, stop = index
+        if stop > len(tasks):
+            raise ValueError(f"--index is out of range for {len(tasks)} matching tasks")
+        tasks = tasks[start:stop]
     return {
         "format_version": 1,
         "dataset": "Odysseys",
@@ -416,6 +422,21 @@ def positive_float(value: str) -> float:
     return result
 
 
+def parse_task_index(value: str) -> tuple[int, int] | None:
+    if value == "all":
+        return None
+    match = re.fullmatch(r"([0-9]+)(?::([0-9]+))?", value)
+    if match is None:
+        raise argparse.ArgumentTypeError(
+            "Expected 'all', a zero-based index, or START:STOP"
+        )
+    start = int(match[1])
+    stop = int(match[2]) if match[2] is not None else start + 1
+    if stop <= start:
+        raise argparse.ArgumentTypeError("STOP must be greater than START")
+    return start, stop
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -435,8 +456,18 @@ def main() -> None:
         command.add_argument(
             "--level", choices=("easy", "medium", "hard", "all"), default="easy"
         )
+        command.add_argument(
+            "--index",
+            type=parse_task_index,
+            metavar="all|N|START:STOP",
+            help="Select from filtered tasks in dataset order (default: all; zero-based, stop excluded)",
+        )
     runner.add_argument("--output", type=Path, required=True, help="New run directory")
-    runner.add_argument("--model", required=True, help="Lexoid browse model")
+    runner.add_argument(
+        "--model",
+        default="gpt-6.2-sol",
+        help="Lexoid browse model (default: %(default)s)",
+    )
     runner.add_argument("--cdp-url")
     runner.add_argument(
         "--user-data-dir",

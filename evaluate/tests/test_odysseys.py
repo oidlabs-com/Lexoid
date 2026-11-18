@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import json
 import os
+import sys
 import time
 import types
 from pathlib import Path
@@ -15,6 +16,7 @@ from evaluate.odysseys_judge import (
     execute_task,
     grade,
     load_selection,
+    parse_task_index,
     run,
     select_tasks,
     selection_digest,
@@ -138,9 +140,76 @@ def test_selects_category_union_once_and_preserves_whole_task():
     assert len(selected[0]["rubrics"]) == 2
 
 
+@pytest.mark.parametrize(
+    ("index", "expected"), [("all", [5, 3, 4]), ("0", [5]), ("1:3", [3, 4])]
+)
+def test_index_selects_after_category_and_level_filters(tmp_path, index, expected):
+    source = tmp_path / "odysseys.json"
+    write_json(
+        source,
+        [
+            task(1),
+            task(5, level="medium"),
+            task(2, categories=["Other"], level="medium"),
+            task(3, level="medium"),
+            task(4, level="medium"),
+        ],
+    )
+    args = argparse.Namespace(
+        input=source,
+        category=["Law and Government"],
+        all_categories=False,
+        level="medium",
+        index=parse_task_index(index),
+    )
+
+    assert load_selection(args)["tasks"] == [task(n, level="medium") for n in expected]
+
+
+@pytest.mark.parametrize("index", ["-1", "abc", "1:", "3:1", "2:2"])
+def test_invalid_index_syntax_is_rejected(index):
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_task_index(index)
+
+
+@pytest.mark.parametrize("index", ["1", "0:2"])
+def test_index_outside_filtered_selection_is_rejected(tmp_path, index):
+    source = tmp_path / "odysseys.json"
+    write_json(source, [task(), task(2, level="hard")])
+    args = argparse.Namespace(
+        input=source,
+        category=["Law and Government"],
+        all_categories=False,
+        level="easy",
+        index=parse_task_index(index),
+    )
+
+    with pytest.raises(
+        ValueError, match="--index is out of range for 1 matching tasks"
+    ):
+        load_selection(args)
+
+
 def test_category_prefix_has_boundary():
     tasks = [task(categories=["Law and Governmental"])]
     assert select_tasks(tasks, ["Law and Government"], "easy") == []
+
+
+@pytest.mark.parametrize(
+    ("model_args", "expected"), [([], "gpt-6.2-sol"), (["--model", "custom"], "custom")]
+)
+def test_run_cli_model_default_and_override(monkeypatch, model_args, expected):
+    async def fake_run(args):
+        assert args.model == expected
+        return False
+
+    monkeypatch.setattr(odysseys_judge, "run", fake_run)
+    monkeypatch.setattr(
+        sys, "argv", ["odysseys_judge", "run", "--output", "unused", *model_args]
+    )
+    with pytest.raises(SystemExit) as exc:
+        odysseys_judge.main()
+    assert exc.value.code == 0
 
 
 def test_upstream_untagged_tasks_are_not_category_matches():
