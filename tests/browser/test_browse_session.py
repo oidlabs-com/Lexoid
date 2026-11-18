@@ -413,6 +413,9 @@ class _FakeSnapshotLocator:
     def nth(self, index: int) -> _FakeSnapshotLocatorItem:
         return _FakeSnapshotLocatorItem(self.handles[index])
 
+    async def element_handles(self) -> list[_FakeSnapshotHandle]:
+        return list(self.handles)
+
     async def count(self) -> int:
         return 0
 
@@ -551,6 +554,60 @@ async def test_snapshot_excludes_hidden_controls_and_executes_captured_handle():
 
 
 @pytest.mark.asyncio
+async def test_snapshot_falls_back_to_indexed_handles_when_dom_changes(monkeypatch):
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeSnapshotPage()
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 0
+
+    async def changed_handles(locator):
+        return locator.handles[:1]
+
+    monkeypatch.setattr(_FakeSnapshotLocator, "element_handles", changed_handles)
+    snapshot = await session.snapshot("tab-1")
+    result = await session.execute(
+        BrowserAction(kind="click", snapshot_id=snapshot.snapshot_id, ref="e1")
+    )
+
+    assert [element.ref for element in snapshot.elements] == ["e1"]
+    assert result.success is True
+    assert page.handles[1].clicked is True
+
+
+@pytest.mark.asyncio
+async def test_element_actions_fail_fast_and_history_waits_for_dom(monkeypatch):
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeSnapshotPage()
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 0
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    async def click(**kwargs):
+        calls.append(("click", kwargs))
+
+    async def history(name, **kwargs):
+        calls.append((name, kwargs))
+
+    monkeypatch.setattr(page.handles[1], "click", click)
+    page.go_back = lambda **kwargs: history("back", **kwargs)
+    page.reload = lambda **kwargs: history("refresh", **kwargs)
+
+    for kind in ("click", "back", "refresh"):
+        snapshot = await session.snapshot("tab-1")
+        result = await session.execute(
+            BrowserAction(kind=kind, snapshot_id=snapshot.snapshot_id, ref="e1")
+        )
+        assert result.success is True
+
+    timeout = session._config.timeout_ms
+    assert calls == [
+        ("click", {"timeout": 10_000}),
+        ("back", {"wait_until": "domcontentloaded", "timeout": timeout}),
+        ("refresh", {"wait_until": "domcontentloaded", "timeout": timeout}),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_capture_open_tabs_records_media_state_before_cleanup():
     session = GhostBrowserSession(GhostConfig.from_kwargs(True))
     page = _FakeSnapshotPage()
@@ -680,6 +737,9 @@ class _FakeModalLocator:
 
     def nth(self, index: int) -> _FakeSnapshotLocatorItem:
         return _FakeSnapshotLocatorItem(self.handles[index])
+
+    async def element_handles(self) -> list[_FakeSnapshotHandle]:
+        return list(self.handles)
 
 
 class _FakeModalPage(_FakeSnapshotPage):
@@ -844,15 +904,60 @@ class _FakeClickTriggersPopupHandle(_FakeSnapshotHandle):
 @pytest.mark.parametrize(
     ("source", "href", "destination", "admitted"),
     [
-        ("https://www.google.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
-        ("https://www.bing.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
-        ("https://www.duckduckgo.com/", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
-        ("https://search.brave.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", True),
-        ("https://www.google.com/search", "https://www.google.com/goto?url=opaque", "https://www.allrecipes.com/recipe/1", True),
-        ("https://www.google.com/search", "https://www.allrecipes.com/recipe/1", "https://unrelated.com/", False),
-        ("https://www.google.com/search", "https://www.google.com/redirect?url=opaque", "https://unrelated.com/", False),
-        ("https://www.google.com/search", None, "https://www.allrecipes.com/recipe/1", False),
-        ("https://example.com/search", "https://www.allrecipes.com/recipe/1", "https://www.allrecipes.com/recipe/1", False),
+        (
+            "https://www.google.com/search",
+            "https://www.allrecipes.com/recipe/1",
+            "https://www.allrecipes.com/recipe/1",
+            True,
+        ),
+        (
+            "https://www.bing.com/search",
+            "https://www.allrecipes.com/recipe/1",
+            "https://www.allrecipes.com/recipe/1",
+            True,
+        ),
+        (
+            "https://www.duckduckgo.com/",
+            "https://www.allrecipes.com/recipe/1",
+            "https://www.allrecipes.com/recipe/1",
+            True,
+        ),
+        (
+            "https://search.brave.com/search",
+            "https://www.allrecipes.com/recipe/1",
+            "https://www.allrecipes.com/recipe/1",
+            True,
+        ),
+        (
+            "https://www.google.com/search",
+            "https://www.google.com/goto?url=opaque",
+            "https://www.allrecipes.com/recipe/1",
+            True,
+        ),
+        (
+            "https://www.google.com/search",
+            "https://www.allrecipes.com/recipe/1",
+            "https://unrelated.com/",
+            False,
+        ),
+        (
+            "https://www.google.com/search",
+            "https://www.google.com/redirect?url=opaque",
+            "https://unrelated.com/",
+            False,
+        ),
+        (
+            "https://www.google.com/search",
+            None,
+            "https://www.allrecipes.com/recipe/1",
+            False,
+        ),
+        (
+            "https://example.com/search",
+            "https://www.allrecipes.com/recipe/1",
+            "https://www.allrecipes.com/recipe/1",
+            False,
+        ),
     ],
 )
 async def test_toolset_search_discovery(
@@ -908,9 +1013,10 @@ async def test_toolset_search_discovery(
         assert action_trace.metadata["discovery_check"]["initial_domains"] == [
             "google.com"
         ]
-        assert "bing.com" in action_trace.metadata["discovery_check"][
-            "fallback_search_domains"
-        ]
+        assert (
+            "bing.com"
+            in action_trace.metadata["discovery_check"]["fallback_search_domains"]
+        )
         denied = json.loads(await toolset.navigate("https://unrelated.com/"))
         assert denied["result"]["success"] is False
         # A second outbound click from the discovered site cannot expand scope.

@@ -44,6 +44,7 @@ from lexoid.core.ghost import (
 
 _SNAPSHOT_ATTEMPTS = 3
 _SHORT_WAIT_MS = 5_500
+_ACTION_TIMEOUT_MS = 10_000
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
 _AD_SKIP_SELECTOR = (
     "#movie_player.ad-showing button:is(.ytp-skip-ad-button, "
@@ -382,6 +383,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         self._pending_popups: list[tuple[str, str]] = []
         self._settle_idle_ms = _SETTLE_IDLE_MS
         self._settle_timeout_ms = min(config.timeout_ms, 15_000)
+        self._action_timeout_ms = min(config.timeout_ms, _ACTION_TIMEOUT_MS)
         self._settle_max_wait_ms = min(config.timeout_ms, _SETTLE_MAX_WAIT_MS)
 
     async def __aenter__(self) -> Self:
@@ -734,6 +736,10 @@ class GhostBrowserSession(AbstractAsyncContextManager):
     async def _capture_snapshot(self, tab_id: str, page: Any) -> BrowserSnapshot:
         locator = page.locator("button, a, input, select, textarea, [role]")
         entries = await locator.evaluate_all(_SNAPSHOT_ELEMENTS_JS)
+        batch = await locator.element_handles()
+        # Batched handles are only trusted when the DOM did not change between calls.
+        if len(batch) != len(entries):
+            batch = None
         revision = self._revisions[tab_id]
         snapshot_id = f"snapshot-{uuid4().hex}"
         refs = []
@@ -746,7 +752,11 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             ):
                 continue
             ref = f"e{entry['index']}"
-            handle = await locator.nth(entry["index"]).element_handle()
+            handle = (
+                batch[entry["index"]]
+                if batch is not None
+                else await locator.nth(entry["index"]).element_handle()
+            )
             if handle is None:
                 continue
             refs.append(
@@ -868,7 +878,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                     await self._highlight(handle)
             if action.kind == "click":
                 assert handle is not None
-                await handle.click(timeout=self._config.timeout_ms)
+                await handle.click(timeout=self._action_timeout_ms)
             elif action.kind == "type":
                 assert handle is not None
                 input_type = (element.input_type or "").lower() if element else ""
@@ -880,20 +890,20 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                         snapshot.tab_id,
                         action.ref,
                     )
-                await handle.fill(action.text or "", timeout=self._config.timeout_ms)
+                await handle.fill(action.text or "", timeout=self._action_timeout_ms)
             elif action.kind == "select":
                 assert handle is not None
                 try:
                     await handle.select_option(label=action.text or "")
                 except Exception:
-                    await handle.click(timeout=self._config.timeout_ms)
+                    await handle.click(timeout=self._action_timeout_ms)
                     option = page.get_by_role("option", name=action.text or "").first
-                    await option.click(timeout=self._config.timeout_ms)
+                    await option.click(timeout=self._action_timeout_ms)
             elif action.kind == "keypress":
                 await page.keyboard.press(action.text or "Enter")
             elif action.kind == "hover":
                 assert handle is not None
-                await handle.hover(timeout=self._config.timeout_ms)
+                await handle.hover(timeout=self._action_timeout_ms)
             elif action.kind == "scroll":
                 direction = -1 if action.text == "up" else 1
                 if action.ref and handle is not None:
@@ -910,9 +920,13 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                     timeout=self._config.timeout_ms,
                 )
             elif action.kind == "back":
-                await page.go_back(timeout=self._config.timeout_ms)
+                await page.go_back(
+                    wait_until="domcontentloaded", timeout=self._config.timeout_ms
+                )
             elif action.kind == "refresh":
-                await page.reload(timeout=self._config.timeout_ms)
+                await page.reload(
+                    wait_until="domcontentloaded", timeout=self._config.timeout_ms
+                )
             elif action.kind == "wait":
                 if action.text:
                     await (
