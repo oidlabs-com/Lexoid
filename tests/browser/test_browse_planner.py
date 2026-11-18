@@ -1,11 +1,57 @@
 """Planner validation tests without a network model dependency."""
 
+import json
+from datetime import datetime, timezone
+
 import pytest
+from lexoid.core.browse import agents
 from lexoid.core.browse.agents import validate_planned_task
 from lexoid.core.browse.model_provider import LexoidChatClient, create_chat_client
 from lexoid.core.browse.schemas import BrowseLimits
 
 QUERY = "Go to https://tmsearch.uspto.gov/ and search records related to Arash Samadani"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invented_filter", [False, True])
+async def test_planner_receives_current_date_and_preserves_search_assumptions(
+    monkeypatch, invented_filter
+):
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            assert tz is timezone.utc
+            return cls(2030, 6, 1, tzinfo=tz)
+
+    query = "Plan a simple 2-day trip using https://www.google.com/travel/flights."
+    assumptions = ["Use sample travel dates 2030-06-10 to 2030-06-11 for one adult."]
+
+    async def fake_agent(client, name, instructions, prompt, **kwargs):
+        assert name == "planner"
+        assert prompt.endswith(f"current_date: 2030-06-01\n\n{query}")
+        return json.dumps(
+            {
+                "seed_urls": ["https://www.google.com/travel/flights"],
+                "subject": query,
+                "strategy": {"assumptions": assumptions},
+                "constraints": {
+                    "filters": [{"field": "departure date", "value": "2030-06-01"}]
+                    if invented_filter
+                    else []
+                },
+            }
+        ), agents.BrowseUsage()
+
+    monkeypatch.setattr(agents, "datetime", FrozenDatetime)
+    monkeypatch.setattr(agents, "_run_json_agent", fake_agent)
+    if invented_filter:
+        with pytest.raises(ValueError, match="invented a filter value"):
+            await agents.plan_task(query, object(), BrowseLimits())
+        return
+    task, _ = await agents.plan_task(query, object(), BrowseLimits())
+    assert task.strategy.assumptions == assumptions
+    assert task.constraints.filters == []
+    assert task.requested_facts == []
 
 
 def test_planner_accepts_user_supplied_url_and_host():
@@ -418,24 +464,22 @@ def test_planner_rejects_inferred_seed_not_in_query():
         validate_planned_task(weather_query, payload, BrowseLimits())
 
 
-def test_planner_rejects_inferred_seed_when_restricted():
-    restricted_query = "Only use https://www.google.com/ and search for weather."
+def test_planner_accepts_inferred_seed_with_non_source_restriction():
+    query = "Check National Weather Service records. Only use data from 2024."
     payload = {
-        "seed_urls": ["https://www.google.com/"],
         "inferred_seeds": [
             {
                 "url": "https://weather.gov/",
-                "source_text": "weather",
-                "rationale": "NWS",
+                "source_text": "National Weather Service",
+                "rationale": "Official domain for NWS",
             }
         ],
         "subject": "weather",
-        "allowed_domains": ["google.com", "weather.gov"],
+        "allowed_domains": ["weather.gov"],
     }
-    with pytest.raises(
-        ValueError, match="planner inferred seeds despite user restriction"
-    ):
-        validate_planned_task(restricted_query, payload, BrowseLimits())
+    task = validate_planned_task(query, payload, BrowseLimits())
+    assert [seed.url for seed in task.inferred_seeds] == ["https://weather.gov/"]
+    assert task.allowed_domains == ["weather.gov"]
 
 
 def test_render_task_plan_shows_inferred_seeds():

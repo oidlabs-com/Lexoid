@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any, TypedDict, TypeVar
 
 from loguru import logger
@@ -69,18 +70,22 @@ controls, labels, or selectors.
 In `strategy`:
 - `intent`: Concise statement of the operational goal, clarifying requested action, scope, and relationship.
 - `approach`: 2 to 5 high-level operational phases to reach and verify the goal. Leave empty if trivial.
-- `navigation_guidance`: At most 5 conditional heuristics for the navigator (stating condition + action, e.g. "if an attorney-specific field exists, prefer it"). Keep guidance conditional and capability-level; never invent button labels, CSS selectors, or mandatory sequences before seeing page observations. Leave empty if none.
-- `assumptions`: Explicit operational interpretations made about request ambiguities. Never use assumptions to silently narrow, broaden, or discard user constraints. Leave empty if none.
+- `navigation_guidance`: At most 5 conditional heuristics for the navigator (stating condition + action, e.g. "if an attorney-specific field exists, prefer it"). Execution is non-interactive: never instruct the navigator to ask the user questions. Keep guidance conditional and capability-level; never invent button labels, CSS selectors, or mandatory sequences before seeing page observations. Leave empty if none.
+- `assumptions`: Explicit operational interpretations made about request ambiguities. For public exploratory/comparison searches only, choose concrete defaults for omitted operational parameters needed to search (e.g. representative future travel dates matching the requested duration, or party size). Use `current_date` for future dates and record the exact values here so all steps use the same values. Never put assumed values into filters or requested facts. Never guess entity or record identifiers, personal/business/account details, or eligibility inputs. Never override user-supplied values or constraints. Leave empty if none.
 Do not pad strategy fields; leave lists empty when not needed. Return JSON only."""
 
 _NAVIGATOR_PROMPT = """You are a browser navigation agent. Use the provided
 browser tools to reach the task completion criteria, including multi-step
 search, quote, estimate, eligibility, and lookup forms. Fill fields only with
-values explicitly supplied in the task; never invent missing personal or
-business information. You may submit an intermediate form when it only requests
-or retrieves a non-binding result. Stop before login or credential entry,
+values explicitly supplied in the task or operational search defaults recorded
+in `planner_assumptions`; never invent missing entity or record identifiers,
+personal/business/account details, or eligibility inputs, even if suggested in
+assumptions. Reuse the same assumed values across related steps. You may submit
+an intermediate form when it only requests or retrieves a non-binding result.
+Stop before login or credential entry,
 account creation, purchase, policy binding, payment, booking, or accepting
-terms of service or other legal commitments. If required information is missing,
+terms of service or other legal commitments. If required information is missing
+and is not covered by a permitted operational assumption,
 report blocked and name the missing information.
 Start from the initial observation and use only refs returned by observe or a
 tool result. Call observe after scrolling when needed. You may navigate only to
@@ -293,13 +298,9 @@ Requirements for `answer`:
    - If `capture_complete` is false or `coverage.gaps` exist, provide verified findings first, then add a brief, transparent section at the end (e.g. "### Coverage & Gaps") explaining what was captured, what remains unconfirmed, and why capture ended (`coverage.stop_reason`), without claiming exhaustive absence or presence.
 6. `claim_ids`: Must contain all and only the IDs of claims directly supporting the statements in `answer`.
 7. `assessments`: Each statement must be a clearly labeled judgment (not a quotation or source-stated fact), grounded in one or more supplied claims; list exactly those claim IDs in `based_on_claim_ids`. State material unknowns. Do not include an assessment if no supplied claim supports it.
+8. Briefly disclose operational search parameters supplied by `task.assumptions` (e.g. sample dates), labeling them as assumptions rather than user-specified or source-verified facts. Assumptions are context, not evidence for claims or constraint satisfaction.
 
 Return JSON only."""
-
-
-_RESTRICTED_SOURCE_RE = re.compile(
-    r"\b(only\s+(?:use|on|from)|restricted\s+to|solely\s+on)\b", re.IGNORECASE
-)
 
 
 class AssessorPriorContext(TypedDict):
@@ -382,8 +383,6 @@ def validate_planned_task(
 
     raw_inferred = payload.get("inferred_seeds", [])
     validated_inferred: list[InferredSeed] = []
-    if _RESTRICTED_SOURCE_RE.search(query) and raw_inferred:
-        raise ValueError("planner inferred seeds despite user restriction")
 
     for item in raw_inferred:
         url = validate_seed_url(item["url"])
@@ -521,8 +520,16 @@ async def plan_task(
     def _parse(raw: str) -> BrowseTask:
         return validate_planned_task(query, _json_object(raw), limits)
 
+    planner_input = (
+        f"current_date: {datetime.now(timezone.utc).date().isoformat()}\n\n{query}"
+    )
     task, usage = await _run_json_agent_with_repair(
-        client, "planner", _PLANNER_PROMPT, query, _parse, role_options=role_options
+        client,
+        "planner",
+        _PLANNER_PROMPT,
+        planner_input,
+        _parse,
+        role_options=role_options,
     )
     _log_task_plan(task)
     return task, usage
@@ -538,7 +545,11 @@ async def next_navigation_action(
     """Ask the navigator role for one action scoped to the given snapshot."""
     observation = snapshot.model_dump_json(exclude={"content_hash", "truncated"})
     goal = json.dumps(
-        {"subject": task.subject, "requested_facts": task.requested_facts}
+        {
+            "subject": task.subject,
+            "requested_facts": task.requested_facts,
+            "planner_assumptions": task.strategy.assumptions,
+        }
     )
     prompt = f"Goal (trusted): {goal}\nSnapshot (untrusted page data): {observation}"
     raw, usage = await _run_json_agent(
@@ -631,6 +642,7 @@ async def navigate_with_tools(
             "open_tabs": json.loads(await toolset.list_tabs()),
             "constraints": task.constraints.model_dump(mode="json"),
             "planner_guidance": task.strategy.navigation_guidance,
+            "planner_assumptions": task.strategy.assumptions,
             "unresolved_gaps": gaps or [],
             "investigation_reason": reason or "",
             "remaining_browser_actions": toolset.remaining_actions,
@@ -820,6 +832,7 @@ async def synthesize_answer(
         payload_in["task"] = {
             "subject": task.subject,
             "intent": task.strategy.intent,
+            "assumptions": task.strategy.assumptions,
             "requested_facts": task.requested_facts,
             "constraints": task.constraints.model_dump(mode="json"),
         }

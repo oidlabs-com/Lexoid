@@ -346,6 +346,7 @@ async def test_objective_run_sees_open_tabs_and_task_end_state(monkeypatch):
         completion_criteria=["All pages remain open in separate tabs."],
         limits=BrowseLimits(max_steps=5),
     )
+    task.strategy.assumptions = ["Use sample travel dates 2030-06-10 to 2030-06-11."]
 
     async def emit(_trace):
         return None
@@ -363,6 +364,7 @@ async def test_objective_run_sees_open_tabs_and_task_end_state(monkeypatch):
         "All pages remain open in separate tabs."
     ]
     assert [tab["tab_id"] for tab in payload["open_tabs"]] == ["tab-1"]
+    assert payload["planner_assumptions"] == task.strategy.assumptions
 
 
 @pytest.mark.asyncio

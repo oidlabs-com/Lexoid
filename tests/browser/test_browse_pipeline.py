@@ -134,20 +134,6 @@ def test_browse_model_config_reasoning_effort():
     assert cfg2_str.for_role("planner") == "gpt-5.6-sol"
     assert cfg2_str.reasoning_effort_for_role("planner") == "medium"
 
-    # Case 3: default is non-reasoning, navigator role override has reasoning dict
-    cfg3 = BrowseModelConfig.from_value(
-        {
-            "default": "gpt-6-luna",
-            "navigator": {"model": "gpt-5.6-sol", "reasoning": {"effort": "low"}},
-        }
-    )
-    assert cfg3.for_role("planner") == "gpt-6-luna"
-    assert cfg3.reasoning_effort_for_role("planner") is None
-    assert cfg3.for_role("navigator") == "gpt-5.6-sol"
-    assert cfg3.reasoning_effort_for_role("navigator") == "low"
-    assert cfg3.for_role("extractor") == "gpt-6-luna"
-    assert cfg3.reasoning_effort_for_role("extractor") is None
-
     # Case 4: explicit reasoning dictionary and options
     cfg4 = BrowseModelConfig.from_value(
         {
@@ -190,6 +176,21 @@ def test_browse_model_config_reasoning_effort():
     )
     assert cfg6.for_role("assessor") == "gpt-5.6-sol"
     assert cfg6.reasoning_effort_for_role("assessor") == "high"
+
+
+def test_defaultbrowser_model_config():
+    config = BrowseModelConfig.from_value("gpt-6.2-sol")
+    assert config.options_for_role("assessor") == {"reasoning": {"effort": "medium"}}
+    assert config.options_for_role("navigator") == {"reasoning": {"effort": "medium"}}
+
+    override = BrowseModelConfig.from_value(
+        {
+            "default": "gpt-6.2-sol",
+            "assessor": {"model": "gpt-6.2-sol", "reasoning": {"effort": "low"}},
+        }
+    )
+    assert override.options_for_role("assessor") == {"reasoning": {"effort": "low"}}
+    assert override.options_for_role("navigator") == {"reasoning": {"effort": "medium"}}
 
 
 def test_browse_model_config_validation():
@@ -378,7 +379,8 @@ async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatc
             evaluation_criteria=["likely relevant to the request"]
         ),
         strategy=PlanStrategy(
-            intent="Find all trademark cases where Arash Samadani is listed as attorney."
+            intent="Find all trademark cases where Arash Samadani is listed as attorney.",
+            assumptions=["Treat unspecified record status as unrestricted."],
         ),
     )
     claims = [
@@ -429,6 +431,7 @@ async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatc
     assert payload["task"]["constraints"]["evaluation_criteria"] == [
         "likely relevant to the request"
     ]
+    assert payload["task"]["assumptions"] == task.strategy.assumptions
     assert payload["candidate_assessments"][0]["label"] == "Record 1"
     assert answer == "Found 1 matching case for Arash Samadani as attorney."
     assert cited_ids == ["claim-1"]

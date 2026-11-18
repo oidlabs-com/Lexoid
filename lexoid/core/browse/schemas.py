@@ -193,7 +193,7 @@ class CoverageReport(BaseModel):
 def is_reasoning_model(model: str) -> bool:
     """Return whether a model identifier represents an OpenAI reasoning model."""
     name = model.split("/")[-1].lower()
-    return name.startswith("gpt-5")
+    return name.startswith(("gpt-5", "gpt-6"))
 
 
 class RoleModelConfig(BaseModel):
