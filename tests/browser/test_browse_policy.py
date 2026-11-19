@@ -33,10 +33,24 @@ def test_fallback_search_domains_require_initial_search_seed(
     if enabled:
         assert is_allowed_url("https://www.bing.com/", initial_domains + fallbacks)
         assert not is_allowed_url("https://unrelated.com/", initial_domains + fallbacks)
-        assert not is_allowed_url("https://bing.com.evil.example/", initial_domains + fallbacks)
+        assert not is_allowed_url(
+            "https://bing.com.evil.example/", initial_domains + fallbacks
+        )
         assert not is_allowed_url("http://bing.com/", initial_domains + fallbacks)
         assert len(fallbacks) == len(set(fallbacks))
         assert not set(fallbacks).intersection(initial_domains)
+
+
+@pytest.mark.parametrize("source_scope", ["search_provider_only", "domain_only"])
+def test_restricted_source_scopes_disable_search_provider_fallbacks(source_scope):
+    assert (
+        fallback_search_domains(
+            ["https://www.google.com/"],
+            ["google.com"],
+            source_scope=source_scope,
+        )
+        == []
+    )
 
 
 def test_navigation_requires_allowlisted_domain():
@@ -96,20 +110,58 @@ def test_visual_target_requires_complete_artifact_bound_metadata():
     ["google.com", "www.google.com", "bing.com", "duckduckgo.com", "search.brave.com"],
 )
 def test_search_discovery_admits_observed_destination(host):
-    assert search_discovery_domain(
-        f"https://{host}/search?q=recipe",
-        "https://www.allrecipes.com/recipe/1",
-        "https://allrecipes.com/recipe/1",
-        [host],
-    ) == "allrecipes.com"
+    assert (
+        search_discovery_domain(
+            f"https://{host}/search?q=recipe",
+            "https://www.allrecipes.com/recipe/1",
+            "https://allrecipes.com/recipe/1",
+            [host],
+        )
+        == "allrecipes.com"
+    )
+
+
+def test_search_provider_only_scope_allows_observed_result_but_not_fallback_provider():
+    assert (
+        search_discovery_domain(
+            "https://www.google.com/search?q=recipe",
+            "https://www.allrecipes.com/recipe/1",
+            "https://allrecipes.com/recipe/1",
+            ["google.com"],
+            source_scope="search_provider_only",
+        )
+        == "allrecipes.com"
+    )
+
+
+def test_domain_only_scope_rejects_external_search_result_discovery():
+    assert (
+        search_discovery_domain(
+            "https://www.google.com/search?q=recipe",
+            "https://www.allrecipes.com/recipe/1",
+            "https://allrecipes.com/recipe/1",
+            ["google.com"],
+            source_scope="domain_only",
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
     ("source", "href"),
     [
-        ("https://www.google.com/search?q=recipe", "https://www.google.com/goto?url=opaque"),
-        ("https://www.google.com/search?q=recipe", "https://www.google.com/url?q=opaque"),
-        ("https://www.bing.com/search?q=recipe", "https://www.bing.com/ck/a?url=opaque"),
+        (
+            "https://www.google.com/search?q=recipe",
+            "https://www.google.com/goto?url=opaque",
+        ),
+        (
+            "https://www.google.com/search?q=recipe",
+            "https://www.google.com/url?q=opaque",
+        ),
+        (
+            "https://www.bing.com/search?q=recipe",
+            "https://www.bing.com/ck/a?url=opaque",
+        ),
         ("https://duckduckgo.com/?q=recipe", "https://duckduckgo.com/l/?uddg=opaque"),
     ],
 )
@@ -128,19 +180,79 @@ def test_search_discovery_admits_known_provider_redirects(source, href):
 @pytest.mark.parametrize(
     ("source", "href", "destination", "allowed"),
     [
-        ("https://allrecipes.com/", "https://other.com/", "https://other.com/", ["allrecipes.com"]),
-        ("https://www.google.com/", "https://other.com/", "https://other.com/", ["bing.com"]),
-        ("https://google.com.evil.com/", "https://other.com/", "https://other.com/", ["evil.com"]),
-        ("https://maps.google.com/", "https://other.com/", "https://other.com/", ["google.com"]),
+        (
+            "https://allrecipes.com/",
+            "https://other.com/",
+            "https://other.com/",
+            ["allrecipes.com"],
+        ),
+        (
+            "https://www.google.com/",
+            "https://other.com/",
+            "https://other.com/",
+            ["bing.com"],
+        ),
+        (
+            "https://google.com.evil.com/",
+            "https://other.com/",
+            "https://other.com/",
+            ["evil.com"],
+        ),
+        (
+            "https://maps.google.com/",
+            "https://other.com/",
+            "https://other.com/",
+            ["google.com"],
+        ),
         ("https://google.com/", None, "https://other.com/", ["google.com"]),
-        ("https://google.com/", "https://recipe.com/", "https://evil.com/", ["google.com"]),
-        ("https://google.com/", "https://google.com/redirect?url=https://evil.com/", "https://evil.com/", ["google.com"]),
-        ("https://google.com/", "http://other.com/", "http://other.com/", ["google.com"]),
-        ("https://google.com/", "https://127.0.0.1/", "https://127.0.0.1/", ["google.com"]),
-        ("https://google.com/", "https://localhost/", "https://localhost/", ["google.com"]),
-        ("https://google.com/", "https://user:pass@other.com/", "https://other.com/", ["google.com"]),
-        ("https://google.com/", "https://other.com:8443/", "https://other.com:8443/", ["google.com"]),
-        ("https://google.com/", "https://github.io/", "https://github.io/", ["google.com"]),
+        (
+            "https://google.com/",
+            "https://recipe.com/",
+            "https://evil.com/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://google.com/redirect?url=https://evil.com/",
+            "https://evil.com/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "http://other.com/",
+            "http://other.com/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://127.0.0.1/",
+            "https://127.0.0.1/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://localhost/",
+            "https://localhost/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://user:pass@other.com/",
+            "https://other.com/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://other.com:8443/",
+            "https://other.com:8443/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://github.io/",
+            "https://github.io/",
+            ["google.com"],
+        ),
     ],
 )
 def test_search_discovery_rejects_unproven_or_invalid_destinations(

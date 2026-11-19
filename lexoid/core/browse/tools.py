@@ -116,6 +116,7 @@ class BrowserToolset:
         self._fallback_search_domains = fallback_search_domains(
             task.seed_urls + [seed.url for seed in task.inferred_seeds],
             self._initial_domains,
+            task.source_scope.mode,
         )
         self._search_discovery_domains = (
             self._initial_domains + self._fallback_search_domains
@@ -644,6 +645,7 @@ class BrowserToolset:
                     "destination_url": destination_url,
                     "execution_success": result.success,
                     "initial_domains": list(self._initial_domains),
+                    "source_scope": self._task.source_scope.model_dump(),
                     "fallback_search_domains": self.fallback_search_domains,
                     "allowed_domains_before": list(self._task.allowed_domains),
                 }
@@ -665,6 +667,7 @@ class BrowserToolset:
                 element.href if element is not None else None,
                 destination_url,
                 self._search_discovery_domains,
+                self._task.source_scope.mode,
             )
             if domain:
                 self._task.allowed_domains.append(domain)

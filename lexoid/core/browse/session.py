@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import random
+import time
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Self
 from urllib.parse import urlparse
@@ -45,6 +47,8 @@ from lexoid.core.ghost import (
 _SNAPSHOT_ATTEMPTS = 3
 _SHORT_WAIT_MS = 5_500
 _ACTION_TIMEOUT_MS = 10_000
+# Minimum randomized gap between consecutive page actions to avoid burst patterns.
+_ACTION_GAP_S = (0.8, 1.5)
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
 _AD_SKIP_SELECTOR = (
     "#movie_player.ad-showing button:is(.ytp-skip-ad-button, "
@@ -384,6 +388,8 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         self._settle_idle_ms = _SETTLE_IDLE_MS
         self._settle_timeout_ms = min(config.timeout_ms, 15_000)
         self._action_timeout_ms = min(config.timeout_ms, _ACTION_TIMEOUT_MS)
+        self._action_gap_s = _ACTION_GAP_S
+        self._last_action_at: float | None = None
         self._settle_max_wait_ms = min(config.timeout_ms, _SETTLE_MAX_WAIT_MS)
 
     async def __aenter__(self) -> Self:
@@ -810,6 +816,15 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         self._snapshot_handles[snapshot_id] = handles
         return snapshot
 
+    async def _pace_action(self) -> None:
+        """Sleep only when the previous action ended less than the gap ago."""
+        if self._last_action_at is None:
+            return
+        gap = random.uniform(*self._action_gap_s)
+        remaining = gap - (time.monotonic() - self._last_action_at)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
     async def execute(self, action: BrowserAction) -> BrowserActionResult:
         """Execute one current-snapshot action against its exact owned tab."""
         if action.kind == "done":
@@ -876,6 +891,8 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                             error_code="stale_ref",
                         )
                     await self._highlight(handle)
+            if action.kind != "wait":
+                await self._pace_action()
             if action.kind == "click":
                 assert handle is not None
                 await handle.click(timeout=self._action_timeout_ms)
@@ -942,9 +959,11 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             else:
                 return BrowserActionResult(success=False, outcome="unsupported action")
         except Exception as error:
+            self._last_action_at = time.monotonic()
             return BrowserActionResult(success=False, outcome=str(error)[:1000])
         if action.kind != "wait":
             await self._settle_page(page)
+        self._last_action_at = time.monotonic()
         opened_tab_id: str | None = None
         opened_url: str | None = None
         reused_existing_tab = False

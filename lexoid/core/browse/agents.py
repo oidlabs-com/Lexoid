@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - exercised by a clean core install
 
 from lexoid.core.browse.model_provider import ChatClient, browse_usage_from_response
 from lexoid.core.browse.policy import (
+    SEARCH_PROVIDER_HOSTS,
     derive_allowed_domains,
     extract_query_sources,
     normalize_domain,
@@ -44,6 +45,7 @@ from lexoid.core.browse.schemas import (
     NavigationOutcome,
     PageArtifact,
     PlanStrategy,
+    SourceScope,
     SynthesisAssessment,
 )
 from lexoid.core.browse.tools import BrowserToolset, _contains_normalized
@@ -51,15 +53,20 @@ from lexoid.core.browse.tools import BrowserToolset, _contains_normalized
 _PLANNER_PROMPT = """Return one JSON object matching this shape exactly:
 {"seed_urls":["https://..."],"inferred_seeds":[{"url":"https://...","source_text":"...","rationale":"..."}],"subject":"...","requested_facts":["..."],
 "completion_criteria":["..."],"allowed_domains":["host"],
+"source_scope":{"mode":"unrestricted|search_provider_only|domain_only","evidence":"exact restrictive wording or null"},
 "constraints":{"filters":[{"field":"...","operator":"equals|contains|unspecified",
 "value":"..."}],"evaluation_criteria":["..."],"coverage":"all_matches|first_page|count"},
 "strategy":{"intent":"...","approach":["..."],"navigation_guidance":["..."],"assumptions":["..."]}}.
 `subject` is the target entity, concept, or topic from the request.
 For `seed_urls`: Only use URLs or literal domains explicitly supplied in the user request.
-For `inferred_seeds`: When the user explicitly names a specific organization or service (e.g. "National Weather Service" or "NWS") without providing a URL, propose a verified https root URL for that organization. Set `source_text` to the exact user naming wording from the request. Never invent organizations or sites the user did not mention. If the user explicitly restricts sources (e.g. "only use X"), leave `inferred_seeds` empty.
+For `inferred_seeds`: When the user explicitly names a specific organization or service (e.g. "National Weather Service", "NWS", or Google) without providing a URL, propose a verified https root URL for that organization or service. Set `source_text` to the exact user naming wording from the request. Never invent organizations or sites the user did not mention.
 Only use URLs, domains, and facts explicitly supplied by the user for `seed_urls`,
 `allowed_domains`, `requested_facts`, and `constraints`. Do not browse, invent unmentioned URLs/domains,
 or infer unstated constraints.
+`source_scope.mode`: Use `unrestricted` unless the user explicitly limits sources or search providers.
+Use `search_provider_only` when the user restricts which search engine/provider(s) may be used (including "only search using Google", "Google is my only search engine", "use only Google and Bing", or "only use google.com" in a search task); seed every permitted provider. This forbids switching to another search provider, but permits opening external pages linked directly from observed results on the permitted provider.
+Use `domain_only` when the restriction names any non-search site (e.g. "Only use sec.gov", or "only use Google and sec.gov" where Google is the search tool and sec.gov the only source); seed every named provider and site. Only those domains are permitted; result links to other domains are blocked.
+Set `source_scope.evidence` to the exact restrictive phrase from the query, or null when unrestricted. Do not treat "start with Google" or merely naming a site as a restriction. If a restrictive phrase is ambiguous, choose the narrower safe scope and explain that interpretation in `strategy.assumptions`.
 `completion_criteria`: Concrete, observable on-page conditions indicating success
 (e.g. matching records visible with verified relationship and requested coverage reached).
 Put only hard, checkable user constraints in `filters`; copy each value verbatim
@@ -91,16 +98,23 @@ Start from the initial observation and use only refs returned by observe or a
 tool result. Call observe after scrolling when needed. You may navigate only to
 allowlisted URLs. The task payload distinguishes seed_urls and allowed_domains
 from policy-authorized fallback_search_domains; fallbacks are not inferred seeds.
+source_scope.mode is an enforced policy: for search_provider_only, use only
+the requested search provider(s), never a fallback provider, but observed direct
+result links may lead to external source pages. For domain_only, stay within the
+initially allowed domains and do not open external links. If a permitted source
+is blocked by CAPTCHA or remains inaccessible, do not bypass it or change scope;
+report the blocker and any evidence already collected.
 When a target site is already in seed_urls or allowed_domains, navigate directly
 to its HTTPS root/seed URL and use its own navigation or on-site search rather
 than querying a general search engine for it, unless external search is
 explicitly required. On search providers, submit queries through the observed
 search input rather than navigating directly to constructed /search?q= URLs.
 Try the requested search provider first. If it is unavailable or blocks progress,
-you may navigate to an HTTPS homepage in fallback_search_domains and search there,
-unless the task explicitly restricts searching to the requested provider. Once a
-provider has shown a challenge in this task, keep using the alternative that
-worked instead of returning to it.
+you may navigate to an HTTPS homepage in fallback_search_domains and search there
+only when source_scope.mode is unrestricted. If it restricts providers, you may
+switch only among the requested providers in seed_urls or inferred seeds; when
+none remain usable, report the block. Once a provider has shown a
+challenge, use an alternative only when source_scope.mode permits it.
 Search-result cards, snippets, and previews are leads, not destination pages:
 open the linked source page before relying on its facts.
 Do not use fallbacks simply to broaden a user's search constraints.
@@ -122,13 +136,20 @@ Stop if proceeding requires missing information, authentication, or consequentia
 consent or commitment, whether in a popup or the page. If the effect is unclear,
 read the relevant visible text; if it remains unclear, report blocked and explain
 why. CAPTCHA solving is not implemented; do not attempt to solve or bypass a
-challenged page.
+challenged page. If the page itself offers an observed skip, "not now", or
+continue-without-verification control that leaves the challenge unanswered, you
+may use it once; never interact with the challenge widget (checkbox, image
+tiles, audio, puzzle). If the challenge returns, treat the page as blocked.
 An authorized alternative provider may be used without interacting with that
 challenge. If no permitted route remains, report blocked.
 If the browser action budget runs out, report budget_exhausted unless a separate
 site blocker is visible; do not report blocked solely because the budget ended.
-Apply every requested filter to the matching named field on the page. Never
-substitute a different field, and never silently broaden a filter.
+Apply every requested filter to the matching field on the page. A field matches
+when its label or context clearly denotes the same attribute, even if worded
+differently (e.g. nationality for country of origin, ZIP for postal code); use it
+and state the mapping in your outcome. Never use a field for a different
+attribute, and never silently broaden a filter. Report blocked for a filter only
+when no observed field plausibly denotes it.
 Use evaluation criteria to guide which records to inspect and what evidence to
 collect.
 At each step, decide from the current observation and tool results:
@@ -329,6 +350,12 @@ def task_from_query(query: str, limits: BrowseLimits) -> BrowseTask:
     allowed_domains = derive_allowed_domains(seeds)
     if not allowed_domains:
         raise ValueError("clarification_needed: supplied URL has no hostname")
+    providers_only = all(
+        normalize_domain(seed) in SEARCH_PROVIDER_HOSTS for seed in seeds
+    )
+    source_scope = SourceScope(
+        mode="search_provider_only" if providers_only else "domain_only"
+    )
     return BrowseTask(
         seed_urls=seeds,
         subject=query,
@@ -345,8 +372,13 @@ def task_from_query(query: str, limits: BrowseLimits) -> BrowseTask:
                 "Apply requested filters directly",
                 "Verify result relevance before reporting results_ready",
             ],
+            assumptions=[
+                "No planning model is available; stay within the supplied source "
+                "scope and do not switch search providers."
+            ],
         ),
         allowed_domains=allowed_domains,
+        source_scope=source_scope,
         limits=limits,
     )
 
@@ -408,6 +440,39 @@ def validate_planned_task(
     # Compute allowed domains from both explicit and inferred seeds
     all_seeds = list(validated_seed_urls) + [s.url for s in validated_inferred]
     computed_allowed_domains = derive_allowed_domains(all_seeds)
+    if not isinstance(payload.get("source_scope"), dict):
+        raise ValueError("planner omitted source scope policy")
+    source_scope = SourceScope.model_validate(payload["source_scope"])
+    if source_scope.restricted:
+        evidence = source_scope.evidence
+        if not evidence or not evidence.strip():
+            raise ValueError("restricted source scope requires evidence")
+        if not _contains_normalized(query, evidence):
+            raise ValueError("source scope evidence is not present in the user request")
+        if source_scope.mode == "search_provider_only" and not any(
+            normalize_domain(seed) in SEARCH_PROVIDER_HOSTS for seed in all_seeds
+        ):
+            raise ValueError(
+                "search-provider-only scope requires a search provider seed"
+            )
+        if source_scope.mode == "domain_only":
+            restricted_seeds = extract_query_sources(evidence)
+            restricted_seeds.extend(
+                seed.url
+                for seed in validated_inferred
+                if _contains_normalized(evidence, seed.source_text)
+            )
+            restricted_domains = derive_allowed_domains(restricted_seeds)
+            if not restricted_domains or any(
+                not any(
+                    domain == permitted or domain.endswith(f".{permitted}")
+                    for permitted in restricted_domains
+                )
+                for domain in computed_allowed_domains
+            ):
+                raise ValueError(
+                    "domain-only source scope includes a domain outside the restriction"
+                )
 
     if payload.get("allowed_domains"):
         for domain in payload["allowed_domains"]:
@@ -428,6 +493,7 @@ def validate_planned_task(
         strategy=strategy,
         collection=payload.get("collection", {}),
         allowed_domains=computed_allowed_domains,
+        source_scope=source_scope,
         limits=limits,
     )
 
@@ -495,6 +561,17 @@ def render_task_plan(task: BrowseTask) -> str:
         ]
         target_lines.append(f"  Inferred Seeds: {inferred_strs}")
     target_lines.append(f"  Allowed Domains: {task.allowed_domains}")
+    if task.source_scope.restricted:
+        scope_description = {
+            "search_provider_only": (
+                "Only the requested search provider(s); observed result links may "
+                "open external source pages"
+            ),
+            "domain_only": "Only the initially allowed domains; external links are blocked",
+        }[task.source_scope.mode]
+        target_lines.append(f"  Source Scope: {scope_description}")
+        if task.source_scope.evidence:
+            target_lines.append(f"  Restriction: {task.source_scope.evidence}")
     lines.append("Target:\n" + "\n".join(target_lines))
     return "\n".join(lines)
 
@@ -633,6 +710,7 @@ async def navigate_with_tools(
                 )
             ),
             "allowed_domains": task.allowed_domains,
+            "source_scope": task.source_scope.model_dump(),
             "fallback_search_domains": toolset.fallback_search_domains,
             "requested_facts": task.requested_facts,
             "completion_criteria": [objective]

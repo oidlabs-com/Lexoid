@@ -97,6 +97,9 @@ as zero for the lower bound and one for the upper bound. These are bounds on
 the provisional judgments, not statistical confidence intervals.
 Regrade without rebrowsing by choosing a new output file.
 
+The report includes each task's saved execution status and elapsed time under
+`task_execution`. Elapsed time covers task execution, not grading.
+
 These are **provisional text-only results**, not official Odysseys scores.
 Keep models, limits, browser setup, task selection, and judge configuration
 fixed when comparing runs.

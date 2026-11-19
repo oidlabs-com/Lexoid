@@ -11,6 +11,7 @@ from lexoid.core.browse.schemas import (
     ElementRef,
     InferredSeed,
     MediaState,
+    SourceScope,
 )
 from lexoid.core.browse.session import (
     _AD_SKIP_SELECTOR,
@@ -19,6 +20,11 @@ from lexoid.core.browse.session import (
 )
 from lexoid.core.browse.tools import BrowserToolset
 from lexoid.core.ghost import GhostConfig
+
+
+@pytest.fixture(autouse=True)
+def _no_action_pacing(monkeypatch):
+    monkeypatch.setattr(browse_session, "_ACTION_GAP_S", (0.0, 0.0))
 
 
 def test_session_starts_without_owned_tabs():
@@ -249,6 +255,27 @@ def test_settle_max_wait_is_independent_of_navigation_timeout():
     session = GhostBrowserSession(GhostConfig.from_kwargs({"timeout_ms": 60_000}))
 
     assert session._settle_max_wait_ms == browse_session._SETTLE_MAX_WAIT_MS
+
+
+@pytest.mark.asyncio
+async def test_action_pacing_waits_only_after_recent_action(monkeypatch):
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    session._action_gap_s = (1.0, 1.0)
+    sleeps = []
+
+    async def fake_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(browse_session.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(browse_session.time, "monotonic", lambda: 100.0)
+
+    await session._pace_action()
+    session._last_action_at = 99.8
+    await session._pace_action()
+    session._last_action_at = 98.0
+    await session._pace_action()
+
+    assert sleeps == [pytest.approx(0.8)]
 
 
 class _FakeNextControl:
@@ -1036,6 +1063,110 @@ async def test_toolset_search_discovery(
         denied = json.loads(await toolset.click("e1"))
         assert denied["result"]["success"] is False
         assert "unrelated.com" not in task.allowed_domains
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        "source_scope",
+        "source_url",
+        "source_domains",
+        "destination_url",
+        "evidence",
+        "allowed",
+    ),
+    [
+        (
+            "search_provider_only",
+            "https://www.google.com/search?q=filing",
+            ["google.com"],
+            "https://www.sec.gov/Archives/edgar/data/1",
+            "Only search using Google",
+            True,
+        ),
+        (
+            "domain_only",
+            "https://www.sec.gov/",
+            ["sec.gov"],
+            "https://www.google.com/search?q=filing",
+            "Only use sec.gov",
+            False,
+        ),
+        (
+            "domain_only",
+            "https://www.google.com/search?q=filing",
+            ["google.com", "sec.gov"],
+            "https://www.sec.gov/Archives/edgar/data/1",
+            "Only use Google and sec.gov",
+            True,
+        ),
+        (
+            "domain_only",
+            "https://www.google.com/search?q=filing",
+            ["google.com", "sec.gov"],
+            "https://www.reuters.com/markets/filing",
+            "Only use Google and sec.gov",
+            False,
+        ),
+    ],
+)
+async def test_restricted_scope_separates_provider_from_result_sources(
+    monkeypatch,
+    source_scope,
+    source_url,
+    source_domains,
+    destination_url,
+    evidence,
+    allowed,
+):
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakePageWithPopup()
+    page.url = source_url
+    tab_id = session._register_page(page, "tab-restricted")
+    original_entries = _FakeSnapshotLocator.evaluate_all
+
+    async def link_entries(locator, script):
+        entries = await original_entries(locator, script)
+        entries[1].update(
+            {
+                "tag": "a",
+                "role": "link",
+                "href": destination_url,
+            }
+        )
+        return entries
+
+    async def click(**kwargs):
+        page.url = destination_url
+
+    monkeypatch.setattr(_FakeSnapshotLocator, "evaluate_all", link_entries)
+    monkeypatch.setattr(page.handles[1], "click", click)
+    traces = []
+
+    async def emit(trace):
+        traces.append(trace)
+
+    task = BrowseTask(
+        seed_urls=[source_url],
+        subject="Find filing",
+        allowed_domains=list(source_domains),
+        source_scope=SourceScope(mode=source_scope, evidence=evidence),
+    )
+    toolset = BrowserToolset(session, task, tab_id, emit)
+    assert toolset.fallback_search_domains == []
+
+    response = json.loads(await toolset.click("e1"))
+
+    assert response["result"]["success"] is allowed
+    destination_domain = (
+        destination_url.split("//", 1)[1].split("/", 1)[0].removeprefix("www.")
+    )
+    assert (destination_domain in task.allowed_domains) is allowed
+    action_trace = next(trace for trace in traces if trace.event == "action")
+    assert action_trace.metadata["discovery_check"]["source_scope"] == {
+        "mode": source_scope,
+        "evidence": evidence,
+    }
 
 
 class _FakeAdPage:

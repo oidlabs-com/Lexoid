@@ -5,11 +5,24 @@ from datetime import datetime, timezone
 
 import pytest
 from lexoid.core.browse import agents
-from lexoid.core.browse.agents import validate_planned_task
+from lexoid.core.browse.agents import validate_planned_task as _validate_planned_task
 from lexoid.core.browse.model_provider import LexoidChatClient, create_chat_client
+from lexoid.core.browse.policy import fallback_search_domains
 from lexoid.core.browse.schemas import BrowseLimits
 
 QUERY = "Go to https://tmsearch.uspto.gov/ and search records related to Arash Samadani"
+
+
+def validate_planned_task(query, payload, limits):
+    """Keep legacy planner fixtures explicit about their unrestricted scope."""
+    return _validate_planned_task(
+        query,
+        {
+            "source_scope": {"mode": "unrestricted", "evidence": None},
+            **payload,
+        },
+        limits,
+    )
 
 
 @pytest.mark.asyncio
@@ -33,6 +46,7 @@ async def test_planner_receives_current_date_and_preserves_search_assumptions(
             {
                 "seed_urls": ["https://www.google.com/travel/flights"],
                 "subject": query,
+                "source_scope": {"mode": "unrestricted", "evidence": None},
                 "strategy": {"assumptions": assumptions},
                 "constraints": {
                     "filters": [{"field": "departure date", "value": "2030-06-01"}]
@@ -66,6 +80,255 @@ def test_planner_accepts_user_supplied_url_and_host():
         BrowseLimits(),
     )
     assert task.subject == "Arash Samadani"
+
+
+@pytest.mark.parametrize(
+    ("query", "seed", "scope", "evidence"),
+    [
+        (
+            "Only search using Google at https://www.google.com/ to find the SEC filing and open the result.",
+            "https://www.google.com/",
+            "search_provider_only",
+            "Only search using Google",
+        ),
+        (
+            "Only use google.com (https://www.google.com/) to search for the SEC filing and open its result.",
+            "https://google.com/",
+            "search_provider_only",
+            "Only use google.com",
+        ),
+        (
+            "Google is my only search engine; use https://www.google.com/ to find the SEC filing and open it.",
+            "https://www.google.com/",
+            "search_provider_only",
+            "Google is my only search engine",
+        ),
+        (
+            "Only use sec.gov (https://sec.gov/) to find the filing.",
+            "https://sec.gov/",
+            "domain_only",
+            "Only use sec.gov",
+        ),
+    ],
+)
+def test_planner_validates_and_preserves_restricted_source_scope(
+    query, seed, scope, evidence
+):
+    domain = seed.split("//", 1)[1].split("/", 1)[0].removeprefix("www.")
+    task = validate_planned_task(
+        query,
+        {
+            "seed_urls": [seed],
+            "subject": "Find filing",
+            "allowed_domains": [domain],
+            "source_scope": {"mode": scope, "evidence": evidence},
+        },
+        BrowseLimits(),
+    )
+
+    assert task.source_scope.mode == scope
+    assert task.source_scope.evidence == evidence
+
+
+def test_planner_keeps_starting_provider_unrestricted():
+    query = "Start with Google (https://www.google.com/) and find the SEC filing."
+    task = validate_planned_task(
+        query,
+        {
+            "seed_urls": ["https://www.google.com/"],
+            "subject": "Find filing",
+            "allowed_domains": ["google.com"],
+        },
+        BrowseLimits(),
+    )
+
+    assert task.source_scope.mode == "unrestricted"
+
+
+def test_planner_infers_restricted_search_provider_seed_without_url():
+    query = "Google is my only search engine; find the SEC filing and open it."
+    task = validate_planned_task(
+        query,
+        {
+            "seed_urls": [],
+            "inferred_seeds": [
+                {
+                    "url": "https://www.google.com/",
+                    "source_text": "Google",
+                    "rationale": "Named search provider",
+                }
+            ],
+            "subject": "Find filing",
+            "allowed_domains": ["google.com"],
+            "source_scope": {
+                "mode": "search_provider_only",
+                "evidence": "Google is my only search engine",
+            },
+        },
+        BrowseLimits(),
+    )
+
+    assert task.source_scope.mode == "search_provider_only"
+    assert task.allowed_domains == ["google.com"]
+
+
+def test_planner_allows_multiple_restricted_search_providers():
+    query = "Use only Google and Bing to find the SEC filing."
+    task = validate_planned_task(
+        query,
+        {
+            "inferred_seeds": [
+                {"url": "https://www.google.com/", "source_text": "Google"},
+                {"url": "https://www.bing.com/", "source_text": "Bing"},
+            ],
+            "subject": "Find filing",
+            "allowed_domains": ["google.com", "bing.com"],
+            "source_scope": {
+                "mode": "search_provider_only",
+                "evidence": "Use only Google and Bing",
+            },
+        },
+        BrowseLimits(),
+    )
+
+    assert task.source_scope.mode == "search_provider_only"
+    assert sorted(task.allowed_domains) == ["bing.com", "google.com"]
+    assert (
+        fallback_search_domains(
+            [seed.url for seed in task.inferred_seeds],
+            task.allowed_domains,
+            task.source_scope.mode,
+        )
+        == []
+    )
+
+
+def test_planner_rejects_provider_restriction_without_provider_seed():
+    query = "Only search using Google; use https://www.sec.gov/ for the filing."
+    with pytest.raises(ValueError, match="requires a search provider seed"):
+        validate_planned_task(
+            query,
+            {
+                "seed_urls": ["https://www.sec.gov/"],
+                "subject": "Find filing",
+                "allowed_domains": ["sec.gov"],
+                "source_scope": {
+                    "mode": "search_provider_only",
+                    "evidence": "Only search using Google",
+                },
+            },
+            BrowseLimits(),
+        )
+
+
+def test_planner_rejects_evidence_for_unrestricted_scope():
+    query = "Only use sec.gov (https://www.sec.gov/) for the filing."
+    with pytest.raises(ValueError, match="cannot cite restriction text"):
+        validate_planned_task(
+            query,
+            {
+                "seed_urls": ["https://www.sec.gov/"],
+                "subject": "Find filing",
+                "allowed_domains": ["sec.gov"],
+                "source_scope": {
+                    "mode": "unrestricted",
+                    "evidence": "Only use sec.gov",
+                },
+            },
+            BrowseLimits(),
+        )
+
+
+def test_planner_allows_search_provider_and_site_in_domain_restriction():
+    query = "Only use Google and sec.gov to find the filing."
+    task = validate_planned_task(
+        query,
+        {
+            "inferred_seeds": [
+                {"url": "https://www.google.com/", "source_text": "Google"},
+                {"url": "https://www.sec.gov/", "source_text": "sec.gov"},
+            ],
+            "subject": "Find filing",
+            "allowed_domains": ["google.com", "sec.gov"],
+            "source_scope": {
+                "mode": "domain_only",
+                "evidence": "Only use Google and sec.gov",
+            },
+        },
+        BrowseLimits(),
+    )
+
+    assert task.source_scope.mode == "domain_only"
+    assert sorted(task.allowed_domains) == ["google.com", "sec.gov"]
+
+
+def test_planner_rejects_domains_outside_domain_only_restriction():
+    query = "Only use sec.gov (https://sec.gov/) and Google (https://google.com/)."
+    with pytest.raises(ValueError, match="outside the restriction"):
+        validate_planned_task(
+            query,
+            {
+                "seed_urls": ["https://sec.gov/", "https://google.com/"],
+                "subject": "Find filing",
+                "allowed_domains": ["sec.gov", "google.com"],
+                "source_scope": {"mode": "domain_only", "evidence": "Only use sec.gov"},
+            },
+            BrowseLimits(),
+        )
+
+
+def test_planner_rejects_restriction_evidence_not_in_user_request():
+    query = "Search using Google (https://www.google.com/) for the SEC filing."
+    with pytest.raises(ValueError, match="source scope evidence"):
+        validate_planned_task(
+            query,
+            {
+                "seed_urls": ["https://www.google.com/"],
+                "subject": "Find filing",
+                "allowed_domains": ["google.com"],
+                "source_scope": {
+                    "mode": "search_provider_only",
+                    "evidence": "Only search using Google",
+                },
+            },
+            BrowseLimits(),
+        )
+
+
+def test_planner_rejects_missing_source_scope_policy():
+    with pytest.raises(ValueError, match="omitted source scope policy"):
+        _validate_planned_task(
+            QUERY,
+            {
+                "seed_urls": ["https://tmsearch.uspto.gov/"],
+                "subject": "Find records",
+                "allowed_domains": ["tmsearch.uspto.gov"],
+            },
+            BrowseLimits(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_scope"),
+    [
+        ("Use https://www.google.com/ to find the SEC filing.", "search_provider_only"),
+        ("Use https://www.sec.gov/ to find the filing.", "domain_only"),
+        (
+            "Use https://www.google.com/ and https://www.bing.com/ to find it.",
+            "search_provider_only",
+        ),
+        (
+            "Use https://www.google.com/ and https://www.sec.gov/ to find it.",
+            "domain_only",
+        ),
+    ],
+)
+def test_no_planner_defaults_to_conservative_source_scope(query, expected_scope):
+    task = agents.task_from_query(query, BrowseLimits())
+
+    assert task.source_scope.mode == expected_scope
+    assert task.source_scope.evidence is None
+    assert "No planning model is available" in task.strategy.assumptions[0]
 
 
 def test_planner_rejects_invented_url_and_domain():
@@ -341,6 +604,10 @@ async def test_run_task_emits_plan_trace_event_and_records_outcome(monkeypatch):
     assert events[0].metadata["intent"] == "Search USPTO for Arash Samadani"
     assert events[0].metadata["approach"] == ["Open page", "Verify records"]
     assert events[0].metadata["navigation_guidance"] == ["Check results table"]
+    assert events[0].metadata["source_scope"] == {
+        "mode": "unrestricted",
+        "evidence": None,
+    }
 
     # PlanOutcomeRecord is attached to task result
     task_res = result.task_results[0]

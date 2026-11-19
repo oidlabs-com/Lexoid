@@ -347,6 +347,77 @@ def test_saved_run_grading_and_missing_run_denominator(tmp_path, monkeypatch):
     assert json.loads(saved.read_text()) == sent
 
 
+def test_grading_reports_saved_execution_time_per_task(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        odysseys_judge,
+        "make_judge",
+        lambda model: (
+            lambda prompt: json.dumps(
+                {"verdict": "pass", "reason": "Supported", "evidence": ["artifact-1"]}
+            )
+        ),
+    )
+    tasks = [task(i, rubric_count=1) for i in range(1, 6)]
+    write_run(
+        tmp_path,
+        tasks,
+        [
+            {
+                "task_id": tasks[0]["task_id"],
+                "status": "returned",
+                "elapsed_seconds": 10,
+            },
+            {
+                "task_id": tasks[1]["task_id"],
+                "status": "returned",
+                "elapsed_seconds": 30,
+            },
+            {"task_id": tasks[2]["task_id"], "status": "error", "elapsed_seconds": 100},
+            {"task_id": tasks[3]["task_id"], "status": "returned"},
+        ],
+    )
+    args = make_grade_args(tmp_path, tmp_path / "grades.json")
+
+    assert not grade(args)
+
+    report = json.loads(args.output.read_text())
+    assert "execution_timing" not in report["summary"]
+    assert report["task_execution"][tasks[0]["task_id"]] == {
+        "status": "returned",
+        "elapsed_seconds": 10,
+    }
+    assert report["task_execution"][tasks[2]["task_id"]] == {
+        "status": "error",
+        "elapsed_seconds": 100,
+    }
+    assert report["task_execution"][tasks[4]["task_id"]] == {
+        "status": "missing",
+        "elapsed_seconds": None,
+    }
+
+
+@pytest.mark.parametrize("elapsed", [-1, "10", True, float("inf")])
+def test_grading_rejects_invalid_saved_timing(tmp_path, monkeypatch, elapsed):
+    value = task()
+    write_run(
+        tmp_path,
+        [value],
+        [
+            {
+                "task_id": value["task_id"],
+                "status": "returned",
+                "elapsed_seconds": elapsed,
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        odysseys_judge, "make_judge", lambda model: pytest.fail("unexpected judge")
+    )
+
+    with pytest.raises(ValueError, match="Invalid elapsed_seconds"):
+        grade(make_grade_args(tmp_path, tmp_path / "grades.json"))
+
+
 def test_judge_view_keeps_evidence_and_excerpts_pages():
     filler = "menu " * 5_000
     page = (

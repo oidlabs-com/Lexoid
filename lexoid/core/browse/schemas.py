@@ -518,6 +518,27 @@ class InferredSeed(BaseModel):
     rationale: str = Field(default="", max_length=1_000)
 
 
+class SourceScope(BaseModel):
+    """Enforced source restriction and the user wording that justifies it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["unrestricted", "search_provider_only", "domain_only"] = (
+        "unrestricted"
+    )
+    evidence: str | None = Field(default=None, max_length=500)
+
+    @property
+    def restricted(self) -> bool:
+        return self.mode != "unrestricted"
+
+    @model_validator(mode="after")
+    def _validate_evidence(self) -> Self:
+        if not self.restricted and self.evidence is not None:
+            raise ValueError("unrestricted source scope cannot cite restriction text")
+        return self
+
+
 class BrowseTask(BaseModel):
     """Validated single-task input and execution state."""
 
@@ -536,6 +557,7 @@ class BrowseTask(BaseModel):
     collection: CollectionPlan = Field(default_factory=CollectionPlan)
     stages: list[PlanStage] = Field(default_factory=list, max_length=20)
     allowed_domains: list[str] = Field(min_length=1, max_length=100)
+    source_scope: SourceScope = Field(default_factory=SourceScope)
     limits: BrowseLimits = Field(default_factory=BrowseLimits)
     retain_final_page: bool = True
     status: BrowseTerminalState | None = None

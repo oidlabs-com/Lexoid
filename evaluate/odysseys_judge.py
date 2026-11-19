@@ -349,6 +349,26 @@ def grade(args: argparse.Namespace) -> bool:
         raise ValueError("Run selection digest mismatch")
     if args.output.exists():
         raise ValueError("Grade output already exists; choose a new path for regrading")
+    task_execution: dict[str, dict[str, Any]] = {}
+    for task in tasks:
+        task_id = task["task_id"]
+        record_path = args.runs / "tasks" / f"{task_id}.json"
+        record = read_json(record_path) if record_path.exists() else None
+        if record is not None and record["task_id"] != task_id:
+            raise ValueError(f"Run task ID mismatch: {record_path}")
+        elapsed = record.get("elapsed_seconds") if record is not None else None
+        if elapsed is not None and (
+            isinstance(elapsed, bool)
+            or not isinstance(elapsed, (int, float))
+            or not math.isfinite(elapsed)
+            or elapsed < 0
+        ):
+            raise ValueError(f"Invalid elapsed_seconds in {record_path}: {elapsed!r}")
+        task_execution[task_id] = {
+            "status": record.get("status") if record is not None else "missing",
+            "elapsed_seconds": elapsed,
+        }
+
     judge = make_judge(args.model)
     report: dict[str, Any] = {
         "format_version": 1,
@@ -357,6 +377,7 @@ def grade(args: argparse.Namespace) -> bool:
         "judge_instructions": JUDGE_INSTRUCTIONS,
         "selection_sha256": selection_digest(selection),
         "run_metadata": run_metadata,
+        "task_execution": task_execution,
         "grades": {},
     }
     had_error = False

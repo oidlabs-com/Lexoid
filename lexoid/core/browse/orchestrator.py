@@ -309,6 +309,7 @@ async def run_task(
                 "seed_urls": task.seed_urls,
                 "inferred_seeds": [s.model_dump() for s in task.inferred_seeds],
                 "allowed_domains": task.allowed_domains,
+                "source_scope": task.source_scope.model_dump(),
                 "requested_facts": task.requested_facts,
                 "completion_criteria": task.completion_criteria,
                 "filters": [

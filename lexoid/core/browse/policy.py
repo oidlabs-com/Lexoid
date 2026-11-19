@@ -255,11 +255,17 @@ def is_allowed_url(url: str, allowed_domains: list[str]) -> bool:
     )
 
 
-def fallback_search_domains(seed_urls: list[str], initial_domains: list[str]) -> list[str]:
+def fallback_search_domains(
+    seed_urls: list[str],
+    initial_domains: list[str],
+    source_scope: str = "unrestricted",
+) -> list[str]:
     """Authorize configured search providers only for an initially seeded provider.
 
     These domains are policy fallbacks, not inferred or user-requested seeds.
     """
+    if source_scope != "unrestricted":
+        return []
     if not any(
         normalize_domain(seed) in SEARCH_PROVIDER_HOSTS
         and is_allowed_url(seed, initial_domains)
@@ -280,6 +286,7 @@ def search_discovery_domain(
     link_url: str | None,
     destination_url: str,
     initial_domains: list[str],
+    source_scope: str = "unrestricted",
 ) -> str | None:
     """Admit an observed link from an initial or policy-authorized search provider.
 
@@ -287,6 +294,8 @@ def search_discovery_domain(
     landing domain. The authorization domains must not include dynamically
     discovered sites.
     """
+    if source_scope == "domain_only":
+        return None
     if not link_url:
         logger.debug("Search discovery rejected: observed element has no href")
         return None
@@ -297,9 +306,8 @@ def search_discovery_domain(
     except ValueError as error:
         logger.debug("Search discovery rejected: URL validation failed: {}", error)
         return None
-    if (
-        normalize_domain(source) not in SEARCH_PROVIDER_HOSTS
-        or not is_allowed_url(source, initial_domains)
+    if normalize_domain(source) not in SEARCH_PROVIDER_HOSTS or not is_allowed_url(
+        source, initial_domains
     ):
         logger.debug(
             "Search discovery rejected: source_host={} provider={} source_allowed={}",
@@ -314,12 +322,9 @@ def search_discovery_domain(
     if source_domain.startswith("www."):
         source_domain = source_domain[4:]
     link_path = urlparse(link).path
-    known_provider_redirect = (
-        link_domain == source_domain
-        and any(
-            link_path == path or (path.endswith("/") and link_path.startswith(path))
-            for path in _SEARCH_REDIRECT_PATHS.get(source_domain, ())
-        )
+    known_provider_redirect = link_domain == source_domain and any(
+        link_path == path or (path.endswith("/") and link_path.startswith(path))
+        for path in _SEARCH_REDIRECT_PATHS.get(source_domain, ())
     )
     if link_domain != destination_domain and not known_provider_redirect:
         logger.debug(
