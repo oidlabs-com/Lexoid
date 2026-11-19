@@ -13,7 +13,7 @@
 
 ## Why Lexoid?
 
-Useful information is buried in documents and scattered across websites. Getting it out shouldn't require expensive a custom pipeline for every task.
+Useful information is buried in documents and scattered across websites. Getting it out shouldn't require an expensive custom pipeline for every task.
 
 - **Extract what matters:** Turn documents and web pages into usable text and structured data for downstream workflows.
 - **Automate the search, retain the evidence:** Automate browser tasks with evidence.
@@ -163,10 +163,7 @@ The navigator is instructed not to log in, create accounts, accept legal
 agreements, purchase, bind coverage, pay, or book, and to stop when required
 information, authentication, or consequential consent is needed. These are
 navigator instructions, not semantic enforcement for every site control;
-ambiguous actions should be reviewed. Popups are handled by purpose:
-promotional overlays can be dismissed, and cookie banners use reject or
-necessary-only options when available. CAPTCHA solving is planned; until it is
-implemented, a CAPTCHA that prevents progress is reported as a blocker.
+ambiguous actions should be reviewed.
 
 # Command Line Usage
 
