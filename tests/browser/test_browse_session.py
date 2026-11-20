@@ -25,6 +25,7 @@ from lexoid.core.ghost import GhostConfig
 @pytest.fixture(autouse=True)
 def _no_action_pacing(monkeypatch):
     monkeypatch.setattr(browse_session, "_ACTION_GAP_S", (0.0, 0.0))
+    monkeypatch.setattr(browse_session, "_KEY_GAP_S", (0.0, 0.0))
 
 
 def test_session_starts_without_owned_tabs():
@@ -237,10 +238,18 @@ class _FakeHighlightHandle:
     ("options", "expected"),
     [
         ({"headless": True}, []),
-        ({"headless": False}, ["scroll", (0,)]),
+        ({"headless": False}, []),
+        ({"cdp_url": "http://localhost:9222"}, []),
+        ({"headless": False, "highlight": True}, ["scroll", (0,)]),
+        ({"headless": True, "highlight": True}, []),
+        (
+            {"cdp_url": "http://localhost:9222", "highlight": True},
+            ["scroll", (0,)],
+        ),
     ],
 )
 async def test_highlight_only_when_browser_is_visible(monkeypatch, options, expected):
+    monkeypatch.delenv("LEXOID_DEBUG_HIGHLIGHT", raising=False)
     monkeypatch.setattr(browse_session, "_HIGHLIGHT_MS", 0)
     session = GhostBrowserSession(GhostConfig.from_kwargs(options))
     handle = _FakeHighlightHandle()
@@ -249,6 +258,12 @@ async def test_highlight_only_when_browser_is_visible(monkeypatch, options, expe
 
     assert handle.calls == expected
     await session._highlight(_FakeHighlightHandle(fail=True))
+
+
+def test_highlight_debug_environment_can_be_overridden(monkeypatch):
+    monkeypatch.setenv("LEXOID_DEBUG_HIGHLIGHT", "1")
+    assert GhostConfig.from_kwargs(True).highlight is True
+    assert GhostConfig.from_kwargs({"highlight": False}).highlight is False
 
 
 def test_settle_max_wait_is_independent_of_navigation_timeout():
@@ -365,12 +380,15 @@ async def test_pagination_skips_hidden_next_control():
 
 
 class _FakeSnapshotHandle:
-    def __init__(self) -> None:
+    def __init__(self, value: str = "") -> None:
         self.clicked = False
+        self.click_kwargs: dict[str, object] = {}
+        self.value = value
         self.evaluated: list[tuple[str, tuple[object, ...]]] = []
 
-    async def click(self, **kwargs: int) -> None:
+    async def click(self, **kwargs: object) -> None:
         self.clicked = True
+        self.click_kwargs = kwargs
 
     async def is_visible(self) -> bool:
         return True
@@ -378,22 +396,53 @@ class _FakeSnapshotHandle:
     async def is_enabled(self) -> bool:
         return True
 
+    async def bounding_box(self) -> dict[str, float]:
+        return {"x": 24, "y": 48, "width": 120, "height": 32}
+
+    async def scroll_into_view_if_needed(self, **kwargs: object) -> None:
+        return None
+
+    async def input_value(self, **kwargs: object) -> str:
+        return self.value
+
     async def evaluate(self, script: str, *args: object) -> object:
         self.evaluated.append((script, args))
+        if "innerHeight" in script:
+            return 400
         return True
 
 
-class _FakePasswordHandle(_FakeSnapshotHandle):
+class _FakeMouse:
     def __init__(self) -> None:
-        super().__init__()
-        self.filled_values: list[str] = []
+        self.moves: list[tuple[float, float, int]] = []
+        self.wheels: list[tuple[float, float]] = []
 
+    async def move(self, x: float, y: float, *, steps: int = 1) -> None:
+        self.moves.append((x, y, steps))
+
+    async def wheel(self, delta_x: float, delta_y: float) -> None:
+        self.wheels.append((delta_x, delta_y))
+
+
+class _FakeKeyboard:
+    def __init__(self) -> None:
+        self.events: list[tuple[str, str]] = []
+
+    async def type(self, text: str, **kwargs: object) -> None:
+        self.events.append(("type", text))
+
+    async def press(self, key: str, **kwargs: object) -> None:
+        self.events.append(("press", key))
+
+    @property
+    def typed(self) -> str:
+        return "".join(text for kind, text in self.events if kind == "type")
+
+
+class _FakePasswordHandle(_FakeSnapshotHandle):
     async def get_attribute(self, name: str) -> str | None:
         assert name == "type"
         return "password"
-
-    async def fill(self, value: str, **kwargs: int) -> None:
-        self.filled_values.append(value)
 
 
 class _FakeSnapshotLocatorItem:
@@ -469,11 +518,14 @@ class _FakePasswordLocator(_FakeSnapshotLocator):
 
 class _FakeSnapshotPage:
     url = "https://example.com/search"
+    frames: list[object] = []
 
     def __init__(self) -> None:
         self.handles = [_FakeSnapshotHandle(), _FakeSnapshotHandle()]
         self.evaluated: list[tuple[str, tuple[object, ...]]] = []
         self.front_count = 0
+        self.mouse = _FakeMouse()
+        self.keyboard = _FakeKeyboard()
 
     def is_closed(self) -> bool:
         return False
@@ -492,6 +544,8 @@ class _FakeSnapshotPage:
         self.evaluated.append((script, args))
         if "MutationObserver" in script:
             return True
+        if script == "() => window.innerHeight":
+            return 720
         if "innerWidth" in script:
             return {
                 "width": 1280,
@@ -627,11 +681,74 @@ async def test_element_actions_fail_fast_and_history_waits_for_dom(monkeypatch):
         assert result.success is True
 
     timeout = session._config.timeout_ms
-    assert calls == [
-        ("click", {"timeout": 10_000}),
+    assert calls[0][1]["timeout"] == 10_000
+    assert calls[1:] == [
         ("back", {"wait_until": "domcontentloaded", "timeout": timeout}),
         ("refresh", {"wait_until": "domcontentloaded", "timeout": timeout}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_click_travels_to_jittered_point_and_holds_button():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeSnapshotPage()
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 0
+    snapshot = await session.snapshot("tab-1")
+
+    await session.execute(
+        BrowserAction(kind="click", snapshot_id=snapshot.snapshot_id, ref="e1")
+    )
+
+    options = page.handles[1].click_kwargs
+    low_steps, high_steps = browse_session._POINTER_STEPS
+    low_press, high_press = browse_session._PRESS_MS
+    assert low_steps <= options["steps"] <= high_steps
+    assert low_press <= options["delay"] <= high_press
+    assert 0.3 * 120 <= options["position"]["x"] <= 0.7 * 120
+    assert 0.3 * 32 <= options["position"]["y"] <= 0.7 * 32
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("existing", "expected_events"),
+    [
+        ("", [("type", "4"), ("type", "2")]),
+        (
+            "old",
+            [
+                ("press", "ControlOrMeta+A"),
+                ("press", "Backspace"),
+                ("type", "4"),
+                ("type", "2"),
+            ],
+        ),
+    ],
+)
+async def test_type_clicks_clears_existing_value_and_types_per_key(
+    existing, expected_events
+):
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeSnapshotPage()
+    page.handles[1].value = existing
+    page.handles[1].get_attribute = lambda name: _async_value("text")
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 0
+    snapshot = await session.snapshot("tab-1")
+
+    result = await session.execute(
+        BrowserAction(
+            kind="type", snapshot_id=snapshot.snapshot_id, ref="e1", text="42"
+        )
+    )
+
+    assert result.success is True
+    assert page.handles[1].clicked is True
+    assert page.keyboard.events == expected_events
+
+
+async def _async_value(value):
+    return value
 
 
 @pytest.mark.asyncio
@@ -674,7 +791,7 @@ async def test_password_field_typing_warns_but_still_fills(monkeypatch):
     )
 
     assert result.success is True
-    assert page.handles[0].filled_values == ["secret-value"]
+    assert page.keyboard.typed == "secret-value"
     assert len(warnings) == 1
     assert "experimental and not yet validated" in warnings[0]
     assert "tab=tab-1" in warnings[0]
@@ -815,6 +932,97 @@ async def test_snapshot_prioritizes_modal_elements_and_captures_context_and_stat
     assert page.handles[4].clicked is True
 
 
+class _FakeFrameElement:
+    def __init__(self, visible: bool) -> None:
+        self.visible = visible
+
+    async def is_visible(self) -> bool:
+        return self.visible
+
+
+class _FakeFrame:
+    def __init__(self, url: str, visible: bool = True) -> None:
+        self.url = url
+        self.element = _FakeFrameElement(visible)
+
+    async def frame_element(self) -> _FakeFrameElement:
+        return self.element
+
+
+class _FakeVerificationPage(_FakeSnapshotPage):
+    def __init__(self, frames: list[_FakeFrame], solved: bool) -> None:
+        super().__init__()
+        self.frames = frames
+        self.solved = solved
+
+    async def evaluate(self, script: str, *args: object) -> object:
+        if "captcha-response" in script:
+            return self.solved
+        return await super().evaluate(script, *args)
+
+
+_HCAPTCHA = (
+    "https://newassets.hcaptcha.com/captcha/v1/x/static/hcaptcha.html#frame={}&id=0"
+)
+_RECAPTCHA = "https://www.google.com/recaptcha/api2/{}?k=key&size={}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("frames", "solved", "expected"),
+    [
+        ([_FakeFrame(_HCAPTCHA.format("challenge"))], True, "hcaptcha"),
+        ([_FakeFrame(_HCAPTCHA.format("challenge"), visible=False)], False, None),
+        ([_FakeFrame(_HCAPTCHA.format("checkbox"))], False, "hcaptcha"),
+        ([_FakeFrame(_HCAPTCHA.format("checkbox"))], True, None),
+        ([_FakeFrame(_RECAPTCHA.format("anchor", "invisible"))], False, None),
+        ([_FakeFrame(_RECAPTCHA.format("anchor", "normal"))], False, "recaptcha"),
+        ([_FakeFrame(_RECAPTCHA.format("bframe", "normal"))], True, "recaptcha"),
+        ([_FakeFrame("https://example.com/embed")], False, None),
+    ],
+)
+async def test_verification_challenge_reports_only_visible_unsolved_challenges(
+    frames, solved, expected
+):
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    session._owned_pages["tab-1"] = _FakeVerificationPage(frames, solved)
+
+    assert await session.verification_challenge("tab-1") == expected
+
+
+@pytest.mark.asyncio
+async def test_select_on_editable_combobox_types_to_filter_before_choosing():
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeModalPage()
+    option = _FakeSnapshotHandle()
+    roles: list[tuple[str, str]] = []
+
+    class _Options:
+        first = option
+
+    def get_by_role(role, name):
+        roles.append((role, name))
+        return _Options()
+
+    page.get_by_role = get_by_role
+    session._owned_pages["tab-1"] = page
+    session._revisions["tab-1"] = 0
+    snapshot = await session.snapshot("tab-1")
+
+    result = await session.execute(
+        BrowserAction(
+            kind="select", snapshot_id=snapshot.snapshot_id, ref="e1", text="MX"
+        )
+    )
+
+    assert result.success is True
+    assert page.handles[1].clicked is True
+    assert page.keyboard.typed == "MX"
+    assert roles == [("option", "MX")]
+    assert option.clicked is True
+    assert "steps" in option.click_kwargs
+
+
 @pytest.mark.asyncio
 async def test_scroll_with_ref_targets_container_handle():
     session = GhostBrowserSession(GhostConfig.from_kwargs(True))
@@ -833,10 +1041,8 @@ async def test_scroll_with_ref_targets_container_handle():
         )
     )
     assert result.success is True
-    assert len(page.handles[1].evaluated) == 1
-    script, args = page.handles[1].evaluated[0]
-    assert "curr.scrollBy" in script
-    assert args == (1,)
+    assert len(page.mouse.moves) == 1
+    assert page.mouse.wheels == [(0, 400 * 0.8)]
 
     snapshot2 = await session.snapshot("tab-1")
     result_window = await session.execute(
@@ -847,10 +1053,13 @@ async def test_scroll_with_ref_targets_container_handle():
         )
     )
     assert result_window.success is True
-    assert any("window.scrollBy" in call[0] for call in page.evaluated)
+    assert page.mouse.wheels[-1] == (0, -720 * 0.8)
+    assert not any("scrollBy" in call[0] for call in page.evaluated)
 
 
 class _FakePopupPage:
+    frames: list[object] = []
+
     def __init__(self, url: str) -> None:
         self.url = url
         self.closed = False

@@ -143,7 +143,7 @@ print(page_pdf["pdf_path"])
 
 ## Web Operator (Preview): for browser tasks
 
-Use `browse()` when the task requires goal-driven interaction with a website, including searching, applying filters, and completing multi-step non-binding quote, estimate, eligibility, or lookup forms with values supplied in the request. It returns an evidence-backed answer; it does not convert the source URL to PDF:
+Use `browse()` when the task requires goal-driven interaction with a website, including searching, applying filters, and completing multi-step non-binding quote, estimate, eligibility, or lookup forms with values supplied in the request. It returns an evidence-backed answer; it does not convert the source URL to PDF (\*\*for conversion needs use `parse()`):
 
 ```python
 import asyncio
@@ -159,11 +159,19 @@ asyncio.run(main())
 ```
 
 **Note:**
-The navigator is instructed not to log in, create accounts, accept legal
+The navigator is restricted not to log in, create accounts, accept legal
 agreements, purchase, bind coverage, pay, or book, and to stop when required
 information, authentication, or consequential consent is needed. These are
-navigator instructions, not semantic enforcement for every site control;
-ambiguous actions should be reviewed.
+navigator instructions (\*\*more guardrails in future iterations), not semantic enforcement for every site control;
+ambiguous actions should be reviewed. Popups are handled by purpose:
+promotional overlays can be dismissed, and cookie banners use reject or
+necessary-only options when available.
+
+**Human verification:**
+The browser agent does not solve CAPTCHAs. A blocking hCaptcha or reCAPTCHA stops the task
+with `coverage.stop_reason == "verification_required"`, or, with a visible
+browser and `on_verification_required`, waits for a person to complete it to honor the site verification policies. See
+[human verification](docs/api.rst#browse-human-verification).
 
 ## Browser evaluation
 

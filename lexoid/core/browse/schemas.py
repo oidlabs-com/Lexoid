@@ -30,6 +30,7 @@ class BrowseErrorCode(str, Enum):
     CONFIRMATION_REQUIRED = "confirmation_required"
     NAVIGATION_TIMEOUT = "navigation_timeout"
     MODEL_UNSUPPORTED = "model_unsupported"
+    VERIFICATION_REQUIRED = "human_verification_required"
 
 
 class NavigationOutcome(str, Enum):
@@ -180,6 +181,7 @@ class CoverageReport(BaseModel):
         "no_next_action",
         "budget_exhausted",
         "blocked",
+        "verification_required",
     ] = "budget_exhausted"
     answerability: Literal["sufficient", "partial", "insufficient"] = "insufficient"
     gaps: list[str] = Field(default_factory=list, max_length=20)
@@ -489,6 +491,17 @@ class BrowserActionResult(BaseModel):
     target_bbox_width: float | None = None
     target_bbox_height: float | None = None
     opened_tab_id: str | None = None
+
+
+class VerificationRequest(BaseModel):
+    """A site challenge that only a person in the visible browser can complete."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(min_length=1, max_length=128)
+    tab_id: str = Field(min_length=1, max_length=128)
+    url: str = Field(max_length=8_192)
+    provider: Literal["hcaptcha", "recaptcha"]
 
 
 class BrowserActionTrace(BaseModel):

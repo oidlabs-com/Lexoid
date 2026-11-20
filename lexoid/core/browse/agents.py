@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, TypedDict, TypeVar
+from typing import Any, NotRequired, TypedDict, TypeVar
 
 from loguru import logger
 from tenacity import (
@@ -71,6 +71,8 @@ Set `source_scope.evidence` to the exact restrictive phrase from the query, or n
 (e.g. matching records visible with verified relationship and requested coverage reached).
 Put only hard, checkable user constraints in `filters`; copy each value verbatim
 from the request and use "unspecified" unless the user stated the match rule.
+When the user explicitly requires an exact phrase, preserve that phrase as a
+hard filter, excluding only surrounding quotation marks used as delimiters.
 Put judgment, suitability, recommendation, and hypothetical criteria in
 `evaluation_criteria`, copied from the user's wording. Do not name website
 controls, labels, or selectors.
@@ -140,6 +142,11 @@ challenged page. If the page itself offers an observed skip, "not now", or
 continue-without-verification control that leaves the challenge unanswered, you
 may use it once; never interact with the challenge widget (checkbox, image
 tiles, audio, puzzle). If the challenge returns, treat the page as blocked.
+Tools detect hCaptcha and reCAPTCHA challenges after each action and return a
+`verification` field. When its status is required, follow the fallback rules
+above: switch only to a provider source_scope permits, else report blocked. When a
+person completed it, use the returned observation to check whether the
+requested results are already shown before repeating any submission.
 An authorized alternative provider may be used without interacting with that
 challenge. If no permitted route remains, report blocked.
 If the browser action budget runs out, report budget_exhausted unless a separate
@@ -150,6 +157,14 @@ differently (e.g. nationality for country of origin, ZIP for postal code); use i
 and state the mapping in your outcome. Never use a field for a different
 attribute, and never silently broaden a filter. Report blocked for a filter only
 when no observed field plausibly denotes it.
+For phrase searches, treat surrounding quotes as delimiters (keep apostrophes
+inside the phrase). Use the site's documented phrase syntax or double quotes
+first. If that errors or finds no relevant results, try single quotes once if
+the site supports them, then retry once unquoted—keeping the phrase, other
+filters, and source scope unchanged. Do not treat a syntax error or failed
+quoted query as zero matches. Finish on the results or candidate page so it is
+captured for assessment. If you used an unquoted or different query form, keep
+the submitted query visible and state it in report_outcome.
 Use evaluation criteria to guide which records to inspect and what evidence to
 collect.
 At each step, decide from the current observation and tool results:
@@ -251,6 +266,9 @@ incomplete; they do not invalidate enough qualifying candidates. List missing
 facts as concrete browsable evidence goals; never use
 "suitability unconfirmed" as a gap. Do not repeat URLs already captured or
 objectives already attempted.
+`navigator_report` is the navigator's account of how the current page was
+reached, such as the search query form used. Use it as context for judging
+result coverage and ordering, never as evidence for claims or hard filters.
 Make the sufficiency and follow-up decisions separately:
 - Candidate support: assess each candidate's hard filters, evaluation criteria,
     and requested facts from claims about that same candidate. Cite only claim IDs
@@ -329,6 +347,7 @@ class AssessorPriorContext(TypedDict):
 
     captured_urls: list[str]
     attempted_objectives: list[str]
+    navigator_report: NotRequired[str]
 
 
 def _next_claim_number(prior_claims: list[EvidenceClaim]) -> int:
@@ -829,6 +848,9 @@ async def assess_page(
     attempted_objectives = (
         prior_context["attempted_objectives"] if prior_context else []
     )
+    navigator_report = (
+        prior_context.get("navigator_report", "") if prior_context else ""
+    )
     payload_in = {
         "task": {
             "subject": task.subject,
@@ -846,6 +868,7 @@ async def assess_page(
         ],
         "captured_urls": captured_urls,
         "attempted_objectives": attempted_objectives,
+        "navigator_report": navigator_report,
         "next_claim_id": f"claim-{_next_claim_number(prior_claims)}",
         "prior_gaps": prior_gaps,
         "new_artifact": {

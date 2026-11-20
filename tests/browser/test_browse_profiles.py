@@ -351,9 +351,7 @@ async def test_objective_run_sees_open_tabs_and_task_end_state(monkeypatch):
     async def emit(_trace):
         return None
 
-    toolset = BrowserToolset(
-        cast(Any, _OutcomeSession("text")), task, "tab-1", emit
-    )
+    toolset = BrowserToolset(cast(Any, _OutcomeSession("text")), task, "tab-1", emit)
     await browse_agents.navigate_with_tools(
         object(), toolset, task, "{}", objective="inspect a product page"
     )
@@ -745,6 +743,165 @@ async def test_action_is_denied_when_destination_cannot_be_verified():
     assert result["result"]["success"] is False
     assert result["result"]["error_code"] == "policy_denied"
     assert toolset.successful_action_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_result", "challenges", "expected_status"),
+    [
+        (None, ["hcaptcha"], "required"),
+        (True, ["hcaptcha", None], "completed_by_user"),
+        (True, ["hcaptcha"], "required"),
+        (False, ["hcaptcha", None], "required"),
+    ],
+)
+async def test_action_hands_blocking_verification_to_person_or_blocks(
+    monkeypatch, handler_result, challenges, expected_status
+):
+    from lexoid.core.browse import tools as browse_tools
+    from lexoid.core.browse.schemas import VerificationRequest
+
+    monkeypatch.setattr(browse_tools, "_VERIFICATION_SETTLE_S", 0)
+    snapshot = BrowserSnapshot(
+        snapshot_id="snapshot-1",
+        tab_id="tab-1",
+        page_revision=0,
+        url="https://example.test/",
+        viewport_width=1280,
+        viewport_height=720,
+        scroll_x=0,
+        scroll_y=0,
+        elements=[
+            ElementRef(
+                ref="e1",
+                snapshot_id="snapshot-1",
+                tab_id="tab-1",
+                frame_id="main",
+                node_id="0:1",
+                role="button",
+                name="Submit",
+            )
+        ],
+        content_hash="snapshot-hash",
+    )
+
+    class _VerificationSession(_OutcomeSession):
+        def __init__(self) -> None:
+            super().__init__("Case details")
+            self.challenges = list(challenges)
+
+        async def execute(self, action: BrowserAction) -> BrowserActionResult:
+            return BrowserActionResult(success=True, outcome="clicked")
+
+        async def snapshot(self, _tab_id: str) -> BrowserSnapshot:
+            return snapshot
+
+        async def verification_challenge(self, _tab_id: str) -> str | None:
+            return (
+                self.challenges.pop(0)
+                if len(self.challenges) > 1
+                else self.challenges[0]
+            )
+
+    requests: list[VerificationRequest] = []
+
+    async def handler(request: VerificationRequest) -> bool:
+        requests.append(request)
+        return bool(handler_result)
+
+    async def emit(_trace) -> None:
+        return None
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+    )
+    toolset = BrowserToolset(
+        cast(Any, _VerificationSession()),
+        task,
+        "tab-1",
+        emit,
+        verification_handler=handler if handler_result is not None else None,
+    )
+    toolset._snapshot = snapshot
+
+    payload = json.loads(await toolset.click("e1"))
+
+    assert payload["verification"]["status"] == expected_status
+    assert payload["verification"]["provider"] == "hcaptcha"
+    assert len(requests) == (0 if handler_result is None else 1)
+    if expected_status == "completed_by_user":
+        assert "observation" in payload
+        assert toolset.verification_required is None
+        assert toolset.outcome is NavigationOutcome.UNKNOWN
+    else:
+        assert "observation" not in payload
+        assert toolset.verification_required == "hcaptcha"
+        assert toolset.outcome is NavigationOutcome.BLOCKED
+        assert toolset.last_error_code is BrowseErrorCode.VERIFICATION_REQUIRED
+        # A verified result reached another way, e.g. a fallback provider, clears it.
+        await toolset.report_outcome("results_ready", "Case details")
+        assert toolset.verification_required is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("headless", [True, False])
+async def test_uncompleted_verification_is_reported_as_its_own_stop_reason(
+    monkeypatch, headless
+):
+    from lexoid.core.browse import orchestrator
+
+    class _Session(_FinalTabsMixin):
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-1", target_id="t1", url=url)
+
+        async def tab(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
+
+    async def observation(self):
+        return "{}"
+
+    seen_handlers = []
+
+    async def navigate(_client, toolset, *_args, **_kwargs):
+        seen_handlers.append(toolset._verification_handler)
+        toolset.verification_required = "hcaptcha"
+        return NavigationOutcome.BLOCKED, BrowseUsage()
+
+    async def handler(_request) -> bool:
+        return True
+
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", observation)
+    monkeypatch.setattr(orchestrator, "navigate_with_tools", navigate)
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+        retain_final_page=False,
+    )
+
+    result = await orchestrator.run_task(
+        task,
+        headless=headless,
+        navigator_client=object(),
+        on_verification_required=handler,
+    )
+
+    task_result = result.task_results[0]
+    assert task_result.status is BrowseTerminalState.BLOCKED
+    assert task_result.coverage.stop_reason == "verification_required"
+    assert task_result.plan_outcome.stop_reason == "verification_required"
+    assert any("hcaptcha human verification" in w for w in result.warnings)
+    assert seen_handlers == [None if headless else handler]
+    assert any("needs a visible browser" in w for w in result.warnings) is headless
 
 
 @pytest.mark.asyncio
@@ -1560,9 +1717,7 @@ async def test_no_results_respects_assessment_and_actual_limits(
             return await self.tab("tab-1")
 
         async def tab(self, tab_id):
-            return OpenTab(
-                tab_id=tab_id, target_id="t1", url="https://example.test/"
-            )
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
 
         async def settle(self, tab_id):
             return None
@@ -1730,6 +1885,7 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
         **kwargs,
     ):
         navigate_calls.append((objective, gaps, reason))
+        toolset.outcome_evidence = f"report {len(navigate_calls)}"
         return NavigationOutcome.RESULTS_READY, BrowseUsage()
 
     monkeypatch.setattr(orchestrator, "navigate_with_tools", navigate)
@@ -1746,11 +1902,13 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
     monkeypatch.setattr(orchestrator, "capture_page", fake_capture_page)
 
     assess_calls: list[str] = []
+    assess_reports: list[str] = []
 
     async def fake_assess_page(
         client, task, artifact, prior_claims, prior_gaps, **kwargs
     ):
         assess_calls.append(artifact.artifact_id)
+        assess_reports.append(kwargs["prior_context"]["navigator_report"])
         if len(assess_calls) == 1:
             assessment = EvidenceAssessment(
                 answerability="partial",
@@ -1777,6 +1935,7 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
 
     task_result = result.task_results[0]
     assert assess_calls == ["artifact-1", "artifact-2"]
+    assert assess_reports == ["report 1", "report 2"]
     assert navigate_calls == [
         (None, None, None),
         (
@@ -1955,7 +2114,5 @@ async def test_orchestrator_captures_and_paginates_on_switched_active_tab(
     if revisit_outcome == "restored":
         assert task_result.open_tabs_at_end[-1].url == listing_url
         assert task_result.open_tabs_at_end[-1].media_state == playback
-        assert any(
-            "Restored tab tab-listing" in warning for warning in result.warnings
-        )
+        assert any("Restored tab tab-listing" in warning for warning in result.warnings)
     assert task_result.status is BrowseTerminalState.LIMIT_REACHED

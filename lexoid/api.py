@@ -11,7 +11,7 @@ from time import time
 from typing import Any, Dict, List, Optional, Type, Union
 
 from lexoid.core.browse.agents import plan_task
-from lexoid.core.browse.events import BrowseEventListener
+from lexoid.core.browse.events import BrowseEventListener, VerificationHandler
 from lexoid.core.browse.model_provider import create_chat_client
 from lexoid.core.browse.orchestrator import run_task
 from lexoid.core.browse.schemas import (
@@ -86,6 +86,7 @@ async def browse(
     mute_audio: bool = True,
     limits: BrowseLimits | None = None,
     event_listener: BrowseEventListener | None = None,
+    on_verification_required: VerificationHandler | None = None,
 ) -> BrowseResult:
     """Run an evidence-grounded browser task automation.
 
@@ -107,6 +108,12 @@ async def browse(
       Chromium sandboxing; CDP-attached browsers retain their own settings.
     Audio is muted by default for browsers Lexoid launches; set ``mute_audio``
     to ``False`` to keep audio enabled. This option does not change CDP sessions.
+    When a hCaptcha or reCAPTCHA challenge blocks the task in a visible browser,
+      ``on_verification_required`` is awaited with a ``VerificationRequest`` so a
+      person can complete it in that tab; return ``True`` when done and Lexoid
+      re-checks the page before continuing. Without it, or when headless, the
+      task stops with ``coverage.stop_reason == "verification_required"``. Use a
+      persistent ``user_data_dir`` or ``cdp_url`` to keep the site's session.
     """
     cfg = BrowseModelConfig.from_value(model_config)
     resolved_models = {
@@ -152,6 +159,7 @@ async def browse(
         headless=headless,
         mute_audio=mute_audio,
         event_listener=event_listener,
+        on_verification_required=on_verification_required,
         navigator_client=(
             create_chat_client(resolved_models["navigator"])
             if resolved_models["navigator"]

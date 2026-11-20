@@ -193,6 +193,7 @@ class GhostConfig:
     no_viewport: Optional[bool] = None
     stealth: bool = True
     mute_audio: bool = True
+    highlight: bool = False  # browse action debugging; LEXOID_DEBUG_HIGHLIGHT=1
     timeout_ms: int = 30000
     wait_until: str = "networkidle"  # domcontentloaded | load | networkidle
     wait_for_selector: Optional[str] = None
@@ -257,6 +258,13 @@ class GhostConfig:
             no_viewport=no_viewport,
             stealth=pick("stealth", True),
             mute_audio=bool(pick("mute_audio", True)),
+            highlight=bool(
+                pick(
+                    "highlight",
+                    os.getenv("LEXOID_DEBUG_HIGHLIGHT", "").lower()
+                    in ("1", "true", "yes"),
+                )
+            ),
             timeout_ms=int(pick("timeout_ms", 30000)),
             wait_until=pick("wait_until", "networkidle"),
             wait_for_selector=pick("wait_for_selector", None),

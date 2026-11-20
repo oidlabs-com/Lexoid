@@ -9,6 +9,7 @@ from lexoid.core.browse.schemas import (
     PlanStrategy,
     RoleModelConfig,
     SourceScope,
+    VerificationRequest,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "PlanStrategy",
     "RoleModelConfig",
     "SourceScope",
+    "VerificationRequest",
 ]

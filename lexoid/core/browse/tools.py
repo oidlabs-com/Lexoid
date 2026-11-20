@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
+import time
 from collections.abc import Awaitable, Callable
+from typing import Any
 
+from lexoid.core.browse.events import VerificationHandler
 from lexoid.core.browse.policy import (
     PolicyDecision,
     authorize,
@@ -21,12 +25,16 @@ from lexoid.core.browse.schemas import (
     BrowserSnapshot,
     BrowseTask,
     NavigationOutcome,
+    VerificationRequest,
 )
 from lexoid.core.browse.session import GhostBrowserSession, TabGoneError
 from loguru import logger
 
 TraceEmitter = Callable[[BrowserActionTrace], Awaitable[None]]
 _MAX_OPEN_TABS = 10
+# Passive checks may clear on their own; give them one short chance first.
+_VERIFICATION_SETTLE_S = 3.0
+_VERIFICATION_POLL_S = 0.5
 
 
 def _contains_normalized(haystack: str, needle: str) -> bool:
@@ -109,8 +117,10 @@ class BrowserToolset:
         task: BrowseTask,
         tab_id: str,
         emit: TraceEmitter,
+        verification_handler: VerificationHandler | None = None,
     ) -> None:
         self._session = session
+        self._verification_handler = verification_handler
         self._task = task
         self._initial_domains = list(task.allowed_domains)
         self._fallback_search_domains = fallback_search_domains(
@@ -136,6 +146,8 @@ class BrowserToolset:
         # a reported outcome; never derived from model text.
         self.step_limit_reached = False
         self.last_error_code: BrowseErrorCode | None = None
+        # Provider of an uncompleted challenge; persists across navigator runs.
+        self.verification_required: str | None = None
 
     @property
     def fallback_search_domains(self) -> list[str]:
@@ -504,6 +516,9 @@ class BrowserToolset:
                         "page and quote it exactly",
                     }
                 )
+        if reported in {NavigationOutcome.RESULTS_READY, NavigationOutcome.NO_RESULTS}:
+            # A verified outcome, e.g. via a fallback provider, supersedes the block.
+            self.verification_required = None
         self.outcome = reported
         self.outcome_evidence = evidence[:1000]
         await self._emit(
@@ -807,9 +822,83 @@ class BrowserToolset:
             )
         )
         payload = {"action": safe_action.model_dump(), "result": result.model_dump()}
-        if result.success or restored_after_denial:
-            if result.opened_tab_id:
-                self._openers[result.opened_tab_id] = self._tab_id
-                await self._activate(result.opened_tab_id)
+        if (result.success or restored_after_denial) and result.opened_tab_id:
+            self._openers[result.opened_tab_id] = self._tab_id
+            await self._activate(result.opened_tab_id)
+        verification = await self._resolve_verification()
+        if verification is not None:
+            payload["verification"] = verification
+        if verification is not None and verification["status"] == "required":
+            return json.dumps(payload)
+        if result.success or restored_after_denial or verification is not None:
             payload["observation"] = json.loads(await self.observe())
         return json.dumps(payload)
+
+    async def _resolve_verification(self) -> dict[str, Any] | None:
+        """Hand a blocking site challenge to a person, or block the task."""
+        detect = getattr(self._session, "verification_challenge", None)
+        if detect is None:
+            return None
+        try:
+            provider = await detect(self._tab_id)
+            deadline = time.monotonic() + _VERIFICATION_SETTLE_S
+            while provider and time.monotonic() < deadline:
+                await asyncio.sleep(_VERIFICATION_POLL_S)
+                provider = await detect(self._tab_id)
+            if provider is None:
+                return None
+            url = await self._get_tab_url(self._tab_id)
+        except TabGoneError:
+            return None
+        request = VerificationRequest(
+            task_id=self._task.task_id, tab_id=self._tab_id, url=url, provider=provider
+        )
+        logger.warning("Human verification ({}) required on {}", provider, url)
+        await self._emit(
+            BrowserActionTrace(
+                event="warning",
+                task_id=self._task.task_id,
+                tab_id=self._tab_id,
+                metadata={"verification_required": request.model_dump()},
+            )
+        )
+        if self._verification_handler is not None:
+            await self._activate(self._tab_id)
+            try:
+                completed = await self._verification_handler(request)
+                cleared = completed and await detect(self._tab_id) is None
+            except TabGoneError:
+                return None
+            except Exception as error:
+                logger.warning("Verification handler failed: {}", error)
+                cleared = False
+            if cleared:
+                self.verification_required = None
+                self._snapshot = None
+                await self._emit(
+                    BrowserActionTrace(
+                        event="observation",
+                        task_id=self._task.task_id,
+                        tab_id=self._tab_id,
+                        metadata={"verification_completed": provider},
+                    )
+                )
+                return {
+                    "status": "completed_by_user",
+                    "provider": provider,
+                    "outcome": "a person completed the site verification; the page "
+                    "may already show results, so check the observation before "
+                    "repeating any submission",
+                }
+        self.verification_required = provider
+        self.outcome = NavigationOutcome.BLOCKED
+        self.last_error_code = BrowseErrorCode.VERIFICATION_REQUIRED
+        return {
+            "status": "required",
+            "provider": provider,
+            "error_code": BrowseErrorCode.VERIFICATION_REQUIRED.value,
+            "outcome": "the site requires human verification that was not "
+            "completed; do not interact with the challenge. Use a permitted "
+            "alternative only if source_scope allows it; otherwise call "
+            "report_outcome('blocked', ...)",
+        }

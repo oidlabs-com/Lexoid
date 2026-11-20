@@ -8,7 +8,7 @@ import random
 import time
 from contextlib import AbstractAsyncContextManager
 from typing import Any, Self
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
 
 from loguru import logger
@@ -49,6 +49,11 @@ _SHORT_WAIT_MS = 5_500
 _ACTION_TIMEOUT_MS = 10_000
 # Minimum randomized gap between consecutive page actions to avoid burst patterns.
 _ACTION_GAP_S = (0.8, 1.5)
+# Human-like input: pointer travel in interpolated steps, a short button hold,
+# and per-key gaps instead of instant value injection.
+_POINTER_STEPS = (8, 20)
+_PRESS_MS = (40.0, 110.0)
+_KEY_GAP_S = (0.04, 0.12)
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
 _AD_SKIP_SELECTOR = (
     "#movie_player.ad-showing button:is(.ytp-skip-ad-button, "
@@ -336,22 +341,57 @@ _HIGHLIGHT_JS = """
 }
 """
 
-_CONTAINER_SCROLL_JS = """
-(element, dir) => {
+# Read-only: height of the nearest scrollable ancestor, else the viewport.
+_SCROLL_EXTENT_JS = """
+element => {
     let curr = element;
     while (curr && curr !== document.body && curr !== document.documentElement) {
         const style = window.getComputedStyle(curr);
         const overflowY = style.overflowY || style.overflow;
-        const isScrollable = (overflowY === 'auto' || overflowY === 'scroll') && curr.scrollHeight > curr.clientHeight;
-        if (isScrollable) {
-            curr.scrollBy({ top: dir * Math.max(curr.clientHeight * 0.8, 100), behavior: 'instant' });
-            return;
+        if ((overflowY === 'auto' || overflowY === 'scroll') && curr.scrollHeight > curr.clientHeight) {
+            return curr.clientHeight;
         }
         curr = curr.parentElement;
     }
-    element.scrollIntoView({ block: dir > 0 ? 'end' : 'start', behavior: 'instant' });
+    return window.innerHeight;
 }
 """
+
+
+_RECAPTCHA_HOSTS = {
+    "google.com",
+    "www.google.com",
+    "recaptcha.net",
+    "www.recaptcha.net",
+}
+# A solved hCaptcha/reCAPTCHA widget writes its token into this page-level field.
+_VERIFICATION_SOLVED_JS = """
+() => Array.from(document.querySelectorAll(
+    'textarea[name="h-captcha-response"], textarea[name="g-recaptcha-response"]'
+)).some(field => field.value.trim().length > 0)
+"""
+
+
+def _verification_frame(url: str) -> tuple[str, str] | None:
+    """Classify a provider frame as a ``checkbox`` widget or ``challenge`` puzzle."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host == "hcaptcha.com" or host.endswith(".hcaptcha.com"):
+        kind = parse_qs(parsed.fragment).get("frame", [""])[0]
+        return ("hcaptcha", kind) if kind in {"checkbox", "challenge"} else None
+    if host in _RECAPTCHA_HOSTS and "/recaptcha/" in parsed.path:
+        leaf = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+        if leaf == "bframe":
+            return "recaptcha", "challenge"
+        # The invisible-mode badge is an anchor frame that never asks for input.
+        if leaf == "anchor" and parse_qs(parsed.query).get("size") != ["invisible"]:
+            return "recaptcha", "checkbox"
+    return None
+
+
+def _jitter_point(width: float, height: float) -> tuple[float, float]:
+    """Pick a point near, but not exactly at, the center of a box."""
+    return width * random.uniform(0.3, 0.7), height * random.uniform(0.3, 0.7)
 
 
 def _normalize_tab_url(url: str) -> str:
@@ -548,8 +588,10 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             logger.debug("Could not bring tab {} to front: {}", tab_id, error)
 
     async def _highlight(self, handle) -> None:
-        """Briefly outline an action target when a person can see the browser."""
-        if self._config.headless and not self._config.cdp_url:
+        """Outline an action target only when visual debugging is enabled."""
+        if not self._config.highlight or (
+            self._config.headless and not self._config.cdp_url
+        ):
             return
         try:
             await handle.scroll_into_view_if_needed(timeout=1_000)
@@ -557,6 +599,33 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             await asyncio.sleep(_HIGHLIGHT_MS / 1000)
         except Exception as error:
             logger.debug("Could not highlight action target: {}", error)
+
+    async def verification_challenge(self, tab_id: str) -> str | None:
+        """Return the provider of a visible, unsolved human-verification challenge."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            raise TabGoneError(tab_id)
+        unsolved_checkbox: str | None = None
+        for frame in page.frames:
+            match = _verification_frame(frame.url)
+            if match is None:
+                continue
+            try:
+                if not await (await frame.frame_element()).is_visible():
+                    continue
+            except BrowserDriverError:
+                continue
+            provider, kind = match
+            if kind == "challenge":
+                return provider
+            unsolved_checkbox = provider
+        if unsolved_checkbox is None:
+            return None
+        try:
+            solved = await page.evaluate(_VERIFICATION_SOLVED_JS)
+        except BrowserDriverError:
+            solved = False
+        return None if solved else unsolved_checkbox
 
     async def tab(self, tab_id: str) -> OpenTab:
         """Return metadata for an active owned tab or raise ``TabGoneError``."""
@@ -825,6 +894,49 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         if remaining > 0:
             await asyncio.sleep(remaining)
 
+    async def _click(self, handle) -> None:
+        """Travel to a jittered point inside the target and press briefly."""
+        box = await handle.bounding_box()
+        position = None
+        if box and box["width"] > 4 and box["height"] > 4:
+            x, y = _jitter_point(box["width"], box["height"])
+            position = {"x": x, "y": y}
+        await handle.click(
+            timeout=self._action_timeout_ms,
+            position=position,
+            steps=random.randint(*_POINTER_STEPS),
+            delay=random.uniform(*_PRESS_MS),
+        )
+
+    async def _move_pointer(self, page, handle) -> None:
+        """Bring the target into view and move the pointer over it in steps."""
+        await handle.scroll_into_view_if_needed(timeout=self._action_timeout_ms)
+        box = await handle.bounding_box()
+        if box is None:
+            raise RuntimeError("target has no visible bounding box")
+        x, y = _jitter_point(box["width"], box["height"])
+        await page.mouse.move(
+            box["x"] + x, box["y"] + y, steps=random.randint(*_POINTER_STEPS)
+        )
+
+    async def _type_keys(self, page, text: str) -> None:
+        """Type into the focused element one key at a time."""
+        for char in text:
+            await page.keyboard.type(char)
+            await asyncio.sleep(random.uniform(*_KEY_GAP_S))
+
+    async def _replace_text(self, page, handle, text: str) -> None:
+        """Focus by clicking, clear any existing value, then type the new value."""
+        await self._click(handle)
+        try:
+            current = await handle.input_value(timeout=self._action_timeout_ms)
+        except BrowserDriverError:
+            current = await handle.text_content() or ""
+        if current:
+            await page.keyboard.press("ControlOrMeta+A")
+            await page.keyboard.press("Backspace")
+        await self._type_keys(page, text)
+
     async def execute(self, action: BrowserAction) -> BrowserActionResult:
         """Execute one current-snapshot action against its exact owned tab."""
         if action.kind == "done":
@@ -895,7 +1007,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 await self._pace_action()
             if action.kind == "click":
                 assert handle is not None
-                await handle.click(timeout=self._action_timeout_ms)
+                await self._click(handle)
             elif action.kind == "type":
                 assert handle is not None
                 input_type = (element.input_type or "").lower() if element else ""
@@ -907,29 +1019,36 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                         snapshot.tab_id,
                         action.ref,
                     )
-                await handle.fill(action.text or "", timeout=self._action_timeout_ms)
+                await self._replace_text(page, handle, action.text or "")
             elif action.kind == "select":
                 assert handle is not None
                 try:
                     await handle.select_option(label=action.text or "")
                 except Exception:
-                    await handle.click(timeout=self._action_timeout_ms)
+                    await self._click(handle)
+                    if element is not None and element.tag in {"input", "textarea"}:
+                        # Editable comboboxes filter their options as the user types.
+                        await self._type_keys(page, action.text or "")
                     option = page.get_by_role("option", name=action.text or "").first
-                    await option.click(timeout=self._action_timeout_ms)
+                    await option.click(
+                        timeout=self._action_timeout_ms,
+                        steps=random.randint(*_POINTER_STEPS),
+                        delay=random.uniform(*_PRESS_MS),
+                    )
             elif action.kind == "keypress":
                 await page.keyboard.press(action.text or "Enter")
             elif action.kind == "hover":
                 assert handle is not None
-                await handle.hover(timeout=self._action_timeout_ms)
+                await self._move_pointer(page, handle)
             elif action.kind == "scroll":
                 direction = -1 if action.text == "up" else 1
                 if action.ref and handle is not None:
-                    await handle.evaluate(_CONTAINER_SCROLL_JS, direction)
+                    # The wheel scrolls whatever scrollable area is under the pointer.
+                    await self._move_pointer(page, handle)
+                    extent = await handle.evaluate(_SCROLL_EXTENT_JS)
                 else:
-                    await page.evaluate(
-                        "direction => window.scrollBy(0, direction * window.innerHeight)",
-                        direction,
-                    )
+                    extent = await page.evaluate("() => window.innerHeight")
+                await page.mouse.wheel(0, direction * max(extent * 0.8, 100))
             elif action.kind == "navigate":
                 await page.goto(
                     action.url or "",

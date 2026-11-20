@@ -168,7 +168,7 @@ parse_chunk
 browse (Preview)
 ^^^^^^^^^^^^^^^^^
 
-.. py:function:: lexoid.api.browse(query: Union[str, BrowseTask], *, model_config: Union[str, BrowseModelConfig, dict, None] = None, cdp_url: Optional[str] = None, headless: bool = True, limits: Optional[BrowseLimits] = None, event_listener: Optional[BrowseEventListener] = None) -> BrowseResult
+.. py:function:: lexoid.api.browse(query: Union[str, BrowseTask], *, model_config: Union[str, BrowseModelConfig, dict, None] = None, cdp_url: Optional[str] = None, user_data_dir: Optional[str] = None, headless: bool = True, limits: Optional[BrowseLimits] = None, event_listener: Optional[BrowseEventListener] = None, on_verification_required: Optional[VerificationHandler] = None) -> BrowseResult
 
    Execute a goal-driven browser research or non-binding form task.
 
@@ -190,17 +190,24 @@ browse (Preview)
    information, authentication, or consequential consent is needed. These are
    navigator instructions, not semantic enforcement for every site control;
    ambiguous actions should be reviewed. Popups are handled according to their
-   purpose and are not blockers by themselves. CAPTCHA solving is planned; until
-   implemented, a CAPTCHA that prevents progress is reported as a blocker.
+   purpose and are not blockers by themselves. Lexoid does not solve CAPTCHAs;
+   see :ref:`browse-human-verification`.
 
    :param query: Natural language prompt specifying goal, seed URL/service, and constraints, or a pre-planned :class:`~lexoid.core.browse.schemas.BrowseTask`.
    :param model_config: Model mapping or model name. Can be a single model string (applied to all roles), a dictionary, or a :class:`~lexoid.core.browse.schemas.BrowseModelConfig` overriding individual roles (``planner``, ``navigator``, ``assessor``, ``extractor``, ``synthesizer``) and their reasoning parameters.
    :param cdp_url: Chrome DevTools Protocol endpoint (e.g. ``"http://localhost:9222"``) to connect to an existing browser session.
+   :param user_data_dir: Dedicated persistent browser profile directory, so site
+      cookies and sessions carry over between runs. Not your everyday Chrome
+      profile.
    :param headless: Run the browser in headless mode (default ``True``).
    :param limits: Resource constraints. ``max_steps`` caps browser actions across
       the task (default 50); ``max_steps_per_run`` caps actions in each navigator
       run (default 20), and ``max_pages`` caps captured pages.
    :param event_listener: Optional async callback receiving real-time :class:`~lexoid.core.browse.schemas.BrowserActionTrace` events.
+   :param on_verification_required: Optional async callback awaited with a
+      :class:`~lexoid.core.browse.schemas.VerificationRequest` when a hCaptcha or
+      reCAPTCHA challenge blocks the task in a visible browser. Return ``True``
+      once a person has completed it; Lexoid re-checks the page before continuing.
    :return: :class:`~lexoid.core.browse.schemas.BrowseResult` containing synthesized answer, cited claim IDs, assessments, artifacts, coverage report, and token usage.
 
 
@@ -469,5 +476,56 @@ Use ``browse()`` to perform autonomous, verifiable web research across allowlist
 
         res = await browse(complex_task, model_config=mc)
         print("Shortlist:\n", res.answer)
+
+    asyncio.run(main())
+
+.. _browse-human-verification:
+
+Browse: human verification (Human-in-the-Loop)
+^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If the browser agent hits a wall with CAPTCHA, human intervention may be required,
+especially for hCaptcha or reCAPTCHA challenges.
+
+If the challenge remains:
+
+* **Search engines:** when the task's source scope is unrestricted, the
+  navigator may switch to a permitted fallback search provider.
+* **With a person available:** if the browser is visible (``headless=False`` or
+  ``cdp_url``) and ``on_verification_required`` is set, Lexoid brings the tab to
+  the front and awaits the callback. A person completes the challenge in that
+  tab. Returning ``True`` is treated as a request to re-check, not as proof; the
+  task continues only if the challenge is gone, and the navigator checks for
+  results before repeating a submission.
+* **Otherwise:** the task stops. ``coverage.stop_reason`` is
+  ``"verification_required"``, and a warning states that the lookup was not
+  verified.
+
+Reuse a dedicated ``user_data_dir`` (or ``cdp_url``) so the site can keep its
+session between runs. Later runs may not need verification, but this is not
+guaranteed.
+
+.. code-block:: python
+
+    import asyncio
+    from lexoid.api import browse
+
+    async def ask_user(request):
+        prompt = f"Complete the {request.provider} check at {request.url}, then press Enter"
+        await asyncio.to_thread(input, prompt)
+        return True
+
+    async def main():
+        result = await browse(
+            "Go to https://example.gov and look up case 123",
+            headless=False,
+            user_data_dir="~/.lexoid/browse-profile",
+            on_verification_required=ask_user,
+        )
+        task = result.task_results[0]
+        if task.coverage.stop_reason == "verification_required":
+            print("The site required verification; the lookup was not completed.")
+        else:
+            print(result.answer)
 
     asyncio.run(main())

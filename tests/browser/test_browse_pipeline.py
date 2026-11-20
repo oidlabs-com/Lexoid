@@ -1,6 +1,8 @@
 """Tests for the initial typed single-task browse executor."""
 
+import asyncio
 import os
+from pathlib import Path
 
 import pytest
 from lexoid.api import BrowseModelConfig, browse
@@ -12,6 +14,10 @@ from lexoid.core.browse.schemas import (
     PageArtifact,
 )
 from pydantic import ValidationError
+
+_LIVE_PROFILE_DIR = (
+    Path(__file__).resolve().parents[2] / ".cache" / "lexoid-live-profile"
+)
 
 
 @pytest.mark.asyncio
@@ -279,6 +285,29 @@ async def test_run_task_passes_headless_setting_to_browser_config():
     assert seen_configs[0].channel == "chrome"
 
 
+@pytest.mark.asyncio
+async def test_run_task_uses_cdp_url_from_environment(monkeypatch):
+    from lexoid.core.browse import orchestrator
+
+    monkeypatch.setenv("LEXOID_CDP_URL", "http://localhost:9222")
+    seen_configs = []
+
+    def fetcher(url, config):
+        seen_configs.append(config)
+        return "<html>captured evidence</html>", {"input": 0, "output": 0, "total": 0}
+
+    task = BrowseTask(
+        seed_urls=["https://tmsearch.uspto.gov/"],
+        subject="Arash Samadani",
+        allowed_domains=["tmsearch.uspto.gov"],
+    )
+
+    result = await orchestrator.run_task(task, html_fetcher=fetcher)
+
+    assert seen_configs[0].cdp_url == "http://localhost:9222"
+    assert not any("Page retention requires" in w for w in result.warnings)
+
+
 def test_evidence_claim_requires_exact_artifact_quote():
     artifact = PageArtifact(
         artifact_id="artifact-1",
@@ -519,6 +548,7 @@ async def test_assessor_receives_existing_claim_and_attempt_context(monkeypatch)
         prior_context={
             "captured_urls": [prior.source_url, artifact.url],
             "attempted_objectives": ["Inspect Listing A -> results_ready"],
+            "navigator_report": "Searched unquoted: NVIDIA H200",
         },
     )
 
@@ -527,6 +557,7 @@ async def test_assessor_receives_existing_claim_and_attempt_context(monkeypatch)
     assert payload["prior_claims"][0]["source_url"] == prior.source_url
     assert payload["captured_urls"] == [prior.source_url, artifact.url]
     assert payload["attempted_objectives"] == ["Inspect Listing A -> results_ready"]
+    assert payload["navigator_report"] == "Searched unquoted: NVIDIA H200"
     assert payload["next_claim_id"] == "claim-4"
     assert claims[0].claim_id == "claim-4"
     assert assessment.candidates[0].criteria_support[0].claim_ids == ["claim-4"]
@@ -555,6 +586,13 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
     assert task_result.retained_tabs[0].url.startswith("https://tmsearch.uspto.gov/")
 
 
+async def _ask_person_to_verify(request) -> bool:
+    """Wait for a person to complete the challenge; requires ``pytest -s``."""
+    prompt = f"Complete the {request.provider} check at {request.url}, then press Enter"
+    await asyncio.to_thread(input, prompt)
+    return True
+
+
 # End-to-end evaluation needs further refinement
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -568,11 +606,18 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
             """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
             "39 results",
         ),
-        # ( # Recent changes needs better handling (currently broken)
-        #     """Got to EOIR, https://acis.eoir.justice.gov, and get the last updated case
-        #     information for alien number: 123-456-789, country of origin - Mexico""",
-        #     "No case found",
-        # ),
+        (  # Resolved with HITL (be mindful of the site verification policies)
+            """Got to EOIR, https://acis.eoir.justice.gov, and get the last updated case
+            information for alien number: 205-188-441, country of origin - Mexico""",
+            "No case found",
+        ),
+        (
+            """Go to sec.gov, run a full-text search for the exact phrase 'NVIDIA H200' in Form 10-Q filings submitted between 2026-07-01 and 2026-11-19,
+            sort or pick the most recent 2nd non-NVIDIA filer in the results,
+            open its filing document, and extract the exact paragraph and dollar commitment mentioning NVIDIA H200 clusters.
+            """,
+            "Bit Digital, Inc (BTBT)",
+        ),
         (
             """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
             Additional criteria:
@@ -604,7 +649,10 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
     ],
 )
 async def test_end_to_end(query, expected_text):
-    """Full planner->navigator->extractor->synthesizer pipeline against a live browser."""
+    """Run the live pipeline with a persistent profile.
+
+    Set LEXOID_GHOST_PROFILE_DIR to override the default .cache profile.
+    """
     if not os.getenv("RUN_BROWSE_LIVE_TESTS"):
         pytest.skip("RUN_BROWSE_LIVE_TESTS is not enabled")
 
@@ -629,6 +677,8 @@ async def test_end_to_end(query, expected_text):
         query,
         model_config=_mc,
         headless=False,
+        user_data_dir=os.getenv("LEXOID_GHOST_PROFILE_DIR") or _LIVE_PROFILE_DIR,
+        on_verification_required=_ask_person_to_verify,
     )
 
     task_result = result.task_results[0]
