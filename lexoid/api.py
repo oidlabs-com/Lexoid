@@ -14,6 +14,7 @@ from lexoid.core.browse.agents import plan_task
 from lexoid.core.browse.events import BrowseEventListener, VerificationHandler
 from lexoid.core.browse.model_provider import create_chat_client
 from lexoid.core.browse.orchestrator import run_task
+from lexoid.core.browse.policy import DEFAULT_SEARCH_URL
 from lexoid.core.browse.schemas import (
     BrowseErrorCode,
     BrowseLimits,
@@ -87,6 +88,7 @@ async def browse(
     limits: BrowseLimits | None = None,
     event_listener: BrowseEventListener | None = None,
     on_verification_required: VerificationHandler | None = None,
+    default_search_url: str = DEFAULT_SEARCH_URL,
 ) -> BrowseResult:
     """Run an evidence-grounded browser task automation.
 
@@ -114,6 +116,12 @@ async def browse(
       re-checks the page before continuing. Without it, or when headless, the
       task stops with ``coverage.stop_reason == "verification_required"``. Use a
       persistent ``user_data_dir`` or ``cdp_url`` to keep the site's session.
+    For planner-based open-ended queries without a supplied source, set
+    ``default_search_url`` to choose the starting search provider. It defaults
+    to Google and must be a supported search provider URL. This setting does
+    not change the conservative no-planner path or explicit source requests.
+    For unrestricted tasks starting with a search provider, the permitted
+    fallbacks are Bing, Brave, and DuckDuckGo; Google is not a fallback.
     """
     cfg = BrowseModelConfig.from_value(model_config)
     resolved_models = {
@@ -150,6 +158,7 @@ async def browse(
             client,
             effective_limits,
             role_options=cfg.options_for_role("planner"),
+            default_search_url=default_search_url,
         )
     return await run_task(
         task,

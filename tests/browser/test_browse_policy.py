@@ -41,6 +41,43 @@ def test_fallback_search_domains_require_initial_search_seed(
         assert not set(fallbacks).intersection(initial_domains)
 
 
+@pytest.mark.parametrize(
+    ("seed", "initial_domains", "expected"),
+    [
+        (
+            "https://www.google.com/",
+            ["google.com"],
+            ["bing.com", "search.brave.com", "duckduckgo.com"],
+        ),
+        (
+            "https://www.bing.com/",
+            ["bing.com"],
+            ["search.brave.com", "duckduckgo.com"],
+        ),
+        (
+            "https://search.brave.com/",
+            ["search.brave.com"],
+            ["bing.com", "duckduckgo.com"],
+        ),
+        (
+            "https://duckduckgo.com/",
+            ["duckduckgo.com"],
+            ["bing.com", "search.brave.com"],
+        ),
+    ],
+)
+def test_fallback_search_domains_keep_provider_order_without_default(
+    seed, initial_domains, expected
+):
+    assert fallback_search_domains([seed], initial_domains) == expected
+
+
+def test_fallback_search_domains_do_not_authorize_brave_aliases():
+    fallbacks = fallback_search_domains(["https://www.google.com/"], ["google.com"])
+    assert is_allowed_url("https://search.brave.com/", fallbacks)
+    assert not is_allowed_url("https://www.brave.com/", fallbacks)
+
+
 @pytest.mark.parametrize("source_scope", ["search_provider_only", "domain_only"])
 def test_restricted_source_scopes_disable_search_provider_fallbacks(source_scope):
     assert (
@@ -107,7 +144,17 @@ def test_visual_target_requires_complete_artifact_bound_metadata():
 
 @pytest.mark.parametrize(
     "host",
-    ["google.com", "www.google.com", "bing.com", "duckduckgo.com", "search.brave.com"],
+    [
+        "google.com",
+        "www.google.com",
+        "bing.com",
+        "www.bing.com",
+        "brave.com",
+        "www.brave.com",
+        "search.brave.com",
+        "duckduckgo.com",
+        "www.duckduckgo.com",
+    ],
 )
 def test_search_discovery_admits_observed_destination(host):
     assert (

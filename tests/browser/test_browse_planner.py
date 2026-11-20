@@ -41,7 +41,10 @@ async def test_planner_receives_current_date_and_preserves_search_assumptions(
 
     async def fake_agent(client, name, instructions, prompt, **kwargs):
         assert name == "planner"
-        assert prompt.endswith(f"current_date: 2030-06-01\n\n{query}")
+        assert prompt.endswith(
+            f"current_date: 2030-06-01\ndefault_search_url: "
+            f"{agents.DEFAULT_SEARCH_URL}\n\n{query}"
+        )
         return json.dumps(
             {
                 "seed_urls": ["https://www.google.com/travel/flights"],
@@ -80,6 +83,83 @@ def test_planner_accepts_user_supplied_url_and_host():
         BrowseLimits(),
     )
     assert task.subject == "Arash Samadani"
+
+
+@pytest.mark.parametrize(
+    ("default_search_url", "expected_domain"),
+    [
+        ("https://www.google.com/", "google.com"),
+        ("https://www.bing.com/", "bing.com"),
+        ("https://search.brave.com/", "search.brave.com"),
+    ],
+)
+def test_planner_defaults_open_ended_query_to_configured_search_provider(
+    default_search_url, expected_domain
+):
+    task = _validate_planned_task(
+        "Lisbon in March for two, foodies, no layovers",
+        {
+            "seed_urls": [],
+            "inferred_seeds": [],
+            "subject": "Find Lisbon travel options",
+            "source_scope": {"mode": "unrestricted", "evidence": None},
+        },
+        BrowseLimits(),
+        default_search_url=default_search_url,
+    )
+
+    assert task.seed_urls == [default_search_url]
+    assert task.allowed_domains == [expected_domain]
+    assert any(
+        "configured default provider" in item for item in task.strategy.assumptions
+    )
+    assert any("No starting source was provided" in item for item in task.warnings)
+
+
+def test_planner_does_not_default_a_restricted_source_scope():
+    with pytest.raises(ValueError, match="restricted source scope"):
+        _validate_planned_task(
+            "Only search using Google for the SEC filing",
+            {
+                "seed_urls": [],
+                "inferred_seeds": [],
+                "subject": "Find SEC filing",
+                "source_scope": {
+                    "mode": "search_provider_only",
+                    "evidence": "Only search using Google",
+                },
+            },
+            BrowseLimits(),
+        )
+
+
+def test_planner_does_not_replace_an_omitted_user_source_with_default():
+    with pytest.raises(ValueError, match="omitted a user-supplied source"):
+        _validate_planned_task(
+            "Search https://www.google.com/ for the SEC filing",
+            {
+                "seed_urls": [],
+                "inferred_seeds": [],
+                "subject": "Find SEC filing",
+                "source_scope": {"mode": "unrestricted", "evidence": None},
+            },
+            BrowseLimits(),
+        )
+
+
+def test_planner_rejects_unsupported_default_search_provider():
+    with pytest.raises(ValueError, match="supported search provider"):
+        _validate_planned_task(
+            "Lisbon in March for two",
+            {
+                "seed_urls": [],
+                "inferred_seeds": [],
+                "subject": "Find Lisbon travel options",
+                "source_scope": {"mode": "unrestricted", "evidence": None},
+            },
+            BrowseLimits(),
+            default_search_url="https://example.com/",
+        )
 
 
 @pytest.mark.parametrize(
@@ -201,6 +281,14 @@ def test_planner_allows_multiple_restricted_search_providers():
         )
         == []
     )
+
+
+def test_fallback_search_provider_order():
+    assert fallback_search_domains(["https://www.google.com/"], ["google.com"]) == [
+        "bing.com",
+        "search.brave.com",
+        "duckduckgo.com",
+    ]
 
 
 def test_planner_rejects_provider_restriction_without_provider_seed():

@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover - exercised by a clean core install
 
 from lexoid.core.browse.model_provider import ChatClient, browse_usage_from_response
 from lexoid.core.browse.policy import (
+    DEFAULT_SEARCH_URL,
     SEARCH_PROVIDER_HOSTS,
     derive_allowed_domains,
     extract_query_sources,
@@ -60,6 +61,7 @@ _PLANNER_PROMPT = """Return one JSON object matching this shape exactly:
 `subject` is the target entity, concept, or topic from the request.
 For `seed_urls`: Only use URLs or literal domains explicitly supplied in the user request.
 For `inferred_seeds`: When the user explicitly names a specific organization or service (e.g. "National Weather Service", "NWS", or Google) without providing a URL, propose a verified https root URL for that organization or service. Set `source_text` to the exact user naming wording from the request. Never invent organizations or sites the user did not mention.
+When the request names no URL, domain, organization, or service, leave both seed lists empty and plan to start with a web search; runtime supplies the configured default search provider. The configured URL is runtime metadata, not a user-supplied source; do not copy it into either seed list.
 Only use URLs, domains, and facts explicitly supplied by the user for `seed_urls`,
 `allowed_domains`, `requested_facts`, and `constraints`. Do not browse, invent unmentioned URLs/domains,
 or infer unstated constraints.
@@ -419,7 +421,11 @@ def _json_object(raw: str) -> dict:
 
 
 def validate_planned_task(
-    query: str, payload: dict, limits: BrowseLimits
+    query: str,
+    payload: dict,
+    limits: BrowseLimits,
+    *,
+    default_search_url: str = DEFAULT_SEARCH_URL,
 ) -> BrowseTask:
     """Validate a planner task without permitting new URLs or allowlist hosts."""
     raw_strategy = payload.get("strategy") or {}
@@ -456,12 +462,28 @@ def validate_planned_task(
     if not set(validated_seed_urls).issubset(extracted_normalized):
         raise ValueError("planner invented a seed URL")
 
-    # Compute allowed domains from both explicit and inferred seeds
-    all_seeds = list(validated_seed_urls) + [s.url for s in validated_inferred]
-    computed_allowed_domains = derive_allowed_domains(all_seeds)
     if not isinstance(payload.get("source_scope"), dict):
         raise ValueError("planner omitted source scope policy")
     source_scope = SourceScope.model_validate(payload["source_scope"])
+    if not validated_seed_urls and not validated_inferred:
+        if extracted_sources:
+            raise ValueError("planner omitted a user-supplied source")
+        if source_scope.restricted:
+            raise ValueError(
+                "clarification_needed: restricted source scope requires a named source"
+            )
+        default_seed = validate_seed_url(default_search_url)
+        if normalize_domain(default_seed) not in SEARCH_PROVIDER_HOSTS:
+            raise ValueError("default_search_url must use a supported search provider")
+        validated_seed_urls.append(default_seed)
+        strategy.assumptions.append(
+            f"Start open-ended search at the configured default provider "
+            f"({default_seed}); this is an operational starting point, not a "
+            "user-specified source."
+        )
+    # Compute allowed domains from both explicit and inferred seeds
+    all_seeds = list(validated_seed_urls) + [s.url for s in validated_inferred]
+    computed_allowed_domains = derive_allowed_domains(all_seeds)
     if source_scope.restricted:
         evidence = source_scope.evidence
         if not evidence or not evidence.strip():
@@ -515,6 +537,11 @@ def validate_planned_task(
         source_scope=source_scope,
         limits=limits,
     )
+    if not extracted_sources and not validated_inferred:
+        task.warnings.append(
+            "No starting source was provided; using the configured default "
+            f"search provider {validated_seed_urls[0]}."
+        )
 
     normalized_query = " ".join(query.split()).lower()
     for item in task.constraints.filters:
@@ -606,6 +633,7 @@ async def plan_task(
     limits: BrowseLimits,
     *,
     role_options: dict[str, Any] | None = None,
+    default_search_url: str = DEFAULT_SEARCH_URL,
 ) -> tuple[BrowseTask, BrowseUsage]:
     """Produce one validated task, using a model when one is explicitly supplied."""
     if client is None:
@@ -614,10 +642,16 @@ async def plan_task(
         return task, BrowseUsage()
 
     def _parse(raw: str) -> BrowseTask:
-        return validate_planned_task(query, _json_object(raw), limits)
+        return validate_planned_task(
+            query,
+            _json_object(raw),
+            limits,
+            default_search_url=default_search_url,
+        )
 
     planner_input = (
-        f"current_date: {datetime.now(timezone.utc).date().isoformat()}\n\n{query}"
+        f"current_date: {datetime.now(timezone.utc).date().isoformat()}\n"
+        f"default_search_url: {default_search_url}\n\n{query}"
     )
     task, usage = await _run_json_agent_with_repair(
         client,

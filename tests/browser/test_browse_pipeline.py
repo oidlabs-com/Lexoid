@@ -60,6 +60,41 @@ async def test_browse_passes_mute_audio_setting(monkeypatch, mute_audio, expecte
     assert captured["mute_audio"] is expected
 
 
+@pytest.mark.asyncio
+async def test_browse_passes_configured_default_search_url_to_planner(monkeypatch):
+    from lexoid import api
+    from lexoid.core.browse.schemas import BrowseUsage
+
+    task = BrowseTask(
+        seed_urls=["https://www.bing.com/"],
+        subject="Lisbon travel",
+        allowed_domains=["bing.com"],
+    )
+    captured = {}
+
+    monkeypatch.setattr(api, "get_api_provider_for_model", lambda _: "openai")
+    monkeypatch.setattr(api, "create_chat_client", lambda _: object())
+
+    async def fake_plan_task(query, client, limits, **kwargs):
+        captured.update(kwargs)
+        return task, BrowseUsage()
+
+    async def fake_run_task(task, **kwargs):
+        return "result"
+
+    monkeypatch.setattr(api, "plan_task", fake_plan_task)
+    monkeypatch.setattr(api, "run_task", fake_run_task)
+
+    result = await api.browse(
+        "Lisbon in March for two",
+        model_config={"planner": "test-model"},
+        default_search_url="https://www.bing.com/",
+    )
+
+    assert result == "result"
+    assert captured["default_search_url"] == "https://www.bing.com/"
+
+
 def test_browse_model_config_resolution():
     # String shorthand sets default for all roles
     cfg_str = BrowseModelConfig.from_value("gpt-5.6-sol")
@@ -593,6 +628,17 @@ async def _ask_person_to_verify(request) -> bool:
     return True
 
 
+def _assert_expected_text(answer: str, expected_text: str | list[str]) -> None:
+    expected_texts = (
+        [expected_text] if isinstance(expected_text, str) else expected_text
+    )
+    normalized_answer = answer.replace("–", "-")
+    for text in expected_texts:
+        assert text.replace("–", "-") in normalized_answer, (
+            f"Expected {text!r} in response"
+        )
+
+
 # End-to-end evaluation needs further refinement
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -608,7 +654,7 @@ async def _ask_person_to_verify(request) -> bool:
         ),
         (  # Resolved with HITL (be mindful of the site verification policies)
             """Got to EOIR, https://acis.eoir.justice.gov, and get the last updated case
-            information for alien number: 205-188-441, country of origin - Mexico""",
+            information for alien number: 123-456-789, country of origin - Mexico""",
             "No case found",
         ),
         (
@@ -646,12 +692,17 @@ async def _ask_person_to_verify(request) -> bool:
             """,
             "Morgan & Morgan",
         ),
+        (
+            """LAX to Lisbon in March for two, foodies, no layovers""",
+            ["LAX–LIS", "Lisbon Airport"],
+        ),
     ],
 )
-async def test_end_to_end(query, expected_text):
+async def test_end_to_end(query: str, expected_text: str | list[str]):
     """Run the live pipeline with a persistent profile.
 
     Set LEXOID_GHOST_PROFILE_DIR to override the default .cache profile.
+    All strings in ``expected_text`` must appear in the answer.
     """
     if not os.getenv("RUN_BROWSE_LIVE_TESTS"):
         pytest.skip("RUN_BROWSE_LIVE_TESTS is not enabled")
@@ -683,8 +734,5 @@ async def test_end_to_end(query, expected_text):
 
     task_result = result.task_results[0]
     assert task_result.artifacts
-    norm_expected = expected_text.replace("–", "-")
     print("Response:\n", result.answer)
-    assert expected_text in result.answer or norm_expected in result.answer.replace(
-        "–", "-"
-    )
+    _assert_expected_text(result.answer, expected_text)

@@ -48,19 +48,17 @@ _ALLOWED_ACTIONS = {
 }
 _DENIED_TEXT_MARKERS = ("password", "passcode", "credential", "credit card")
 _DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
-SEARCH_PROVIDER_HOSTS = frozenset(
-    {
-        "google.com",
-        "www.google.com",
-        "bing.com",
-        "www.bing.com",
-        "duckduckgo.com",
-        "www.duckduckgo.com",
-        "brave.com",
-        "www.brave.com",
-        "search.brave.com",
-    }
+# The first provider is the default; the rest are fallbacks in priority order.
+_SEARCH_PROVIDERS = (
+    ("www.google.com", ("google.com",)),
+    ("www.bing.com", ("bing.com",)),
+    ("search.brave.com", ("brave.com", "www.brave.com")),
+    ("www.duckduckgo.com", ("duckduckgo.com",)),
 )
+SEARCH_PROVIDER_HOSTS = frozenset(
+    host for canonical, aliases in _SEARCH_PROVIDERS for host in (canonical, *aliases)
+)
+DEFAULT_SEARCH_URL = f"https://{_SEARCH_PROVIDERS[0][0]}/"
 _SEARCH_REDIRECT_PATHS = {
     "google.com": ("/url", "/goto"),
     "bing.com": ("/ck/a",),
@@ -260,9 +258,10 @@ def fallback_search_domains(
     initial_domains: list[str],
     source_scope: str = "unrestricted",
 ) -> list[str]:
-    """Authorize configured search providers only for an initially seeded provider.
+    """Authorize fallback search providers only for an initially seeded provider.
 
-    These domains are policy fallbacks, not inferred or user-requested seeds.
+    Domains are returned in priority order; the default provider is not a fallback.
+    These are policy fallbacks, not inferred or user-requested seeds.
     """
     if source_scope != "unrestricted":
         return []
@@ -272,11 +271,12 @@ def fallback_search_domains(
         for seed in seed_urls
     ):
         return []
+    fallback_domains = derive_allowed_domains(
+        [canonical for canonical, _ in _SEARCH_PROVIDERS[1:]]
+    )
     return [
         domain
-        for domain in derive_allowed_domains(
-            [f"https://{host}/" for host in sorted(SEARCH_PROVIDER_HOSTS)]
-        )
+        for domain in fallback_domains
         if not is_allowed_url(f"https://{domain}/", initial_domains)
     ]
 
