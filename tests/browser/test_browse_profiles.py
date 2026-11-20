@@ -24,6 +24,14 @@ from lexoid.core.browse.schemas import (
 from lexoid.core.browse.tools import BrowserToolset
 
 
+class _FinalTabsMixin:
+    async def capture_open_tabs(self) -> list[OpenTab]:
+        return []
+
+    async def skip_ad(self, tab_id: str) -> bool:
+        return False
+
+
 def test_site_profile_matches_host_and_task_type():
     profile = SiteProfile(
         profile_id="example-search",
@@ -46,7 +54,7 @@ def test_no_site_is_special_cased_by_default():
     assert find_profile("https://example.test/search", "search") is None
 
 
-class _OutcomeSession:
+class _OutcomeSession(_FinalTabsMixin):
     """Session fake exposing only the text used to verify a reported outcome."""
 
     def __init__(self, text: str) -> None:
@@ -198,7 +206,7 @@ async def test_action_execution_logs_step_info_and_success(monkeypatch):
         allowed_domains=["example.test"],
     )
 
-    class _MockSession:
+    class _MockSession(_FinalTabsMixin):
         async def snapshot(self, tab_id: str):
             return BrowserSnapshot(
                 snapshot_id="s1",
@@ -316,6 +324,48 @@ async def test_navigator_run_does_not_reuse_prior_outcome(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_objective_run_sees_open_tabs_and_task_end_state(monkeypatch):
+    prompts: list[str] = []
+
+    class _Agent:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def run(self, prompt):
+            prompts.append(prompt)
+            return SimpleNamespace(text="")
+
+    monkeypatch.setattr(browse_agents, "Agent", _Agent)
+    monkeypatch.setattr(
+        browse_agents, "browse_usage_from_response", lambda _response: BrowseUsage()
+    )
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+        completion_criteria=["All pages remain open in separate tabs."],
+        limits=BrowseLimits(max_steps=5),
+    )
+    task.strategy.assumptions = ["Use sample travel dates 2030-06-10 to 2030-06-11."]
+
+    async def emit(_trace):
+        return None
+
+    toolset = BrowserToolset(cast(Any, _OutcomeSession("text")), task, "tab-1", emit)
+    await browse_agents.navigate_with_tools(
+        object(), toolset, task, "{}", objective="inspect a product page"
+    )
+
+    payload = json.loads(prompts[0])
+    assert payload["completion_criteria"] == ["inspect a product page"]
+    assert payload["task_completion_criteria"] == [
+        "All pages remain open in separate tabs."
+    ]
+    assert [tab["tab_id"] for tab in payload["open_tabs"]] == ["tab-1"]
+    assert payload["planner_assumptions"] == task.strategy.assumptions
+
+
+@pytest.mark.asyncio
 async def test_begin_run_preserves_quarantine_state():
     toolset = _toolset("some text")
     toolset._quarantined = True
@@ -336,7 +386,7 @@ async def test_begin_run_preserves_quarantine_state():
 
 @pytest.mark.asyncio
 async def test_browser_action_budget_resets_per_run_but_caps_the_whole_task():
-    class _BudgetSession:
+    class _BudgetSession(_FinalTabsMixin):
         async def snapshot(self, tab_id: str):
             from lexoid.core.browse.schemas import BrowserSnapshot
 
@@ -394,7 +444,7 @@ async def test_budget_exhaustion_still_paginates(monkeypatch, exhaustion_phase):
     from lexoid.core.browse import orchestrator
     from lexoid.core.browse.schemas import EvidenceAssessment, PageArtifact
 
-    class _PaginatingSession:
+    class _PaginatingSession(_FinalTabsMixin):
         def __init__(self):
             self.advance_count = 0
 
@@ -608,7 +658,7 @@ async def test_scroll_tool_supports_optional_ref():
         allowed_domains=["example.test"],
     )
 
-    class _ScrollSession:
+    class _ScrollSession(_FinalTabsMixin):
         async def snapshot(self, tab_id: str):
             from lexoid.core.browse.schemas import BrowserSnapshot
 
@@ -659,7 +709,7 @@ async def test_action_is_denied_when_destination_cannot_be_verified():
         allowed_domains=["example.test"],
     )
 
-    class _UninspectableSession:
+    class _UninspectableSession(_FinalTabsMixin):
         async def snapshot(self, tab_id: str):
             from lexoid.core.browse.schemas import BrowserSnapshot
 
@@ -696,6 +746,165 @@ async def test_action_is_denied_when_destination_cannot_be_verified():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_result", "challenges", "expected_status"),
+    [
+        (None, ["hcaptcha"], "required"),
+        (True, ["hcaptcha", None], "completed_by_user"),
+        (True, ["hcaptcha"], "required"),
+        (False, ["hcaptcha", None], "required"),
+    ],
+)
+async def test_action_hands_blocking_verification_to_person_or_blocks(
+    monkeypatch, handler_result, challenges, expected_status
+):
+    from lexoid.core.browse import tools as browse_tools
+    from lexoid.core.browse.schemas import VerificationRequest
+
+    monkeypatch.setattr(browse_tools, "_VERIFICATION_SETTLE_S", 0)
+    snapshot = BrowserSnapshot(
+        snapshot_id="snapshot-1",
+        tab_id="tab-1",
+        page_revision=0,
+        url="https://example.test/",
+        viewport_width=1280,
+        viewport_height=720,
+        scroll_x=0,
+        scroll_y=0,
+        elements=[
+            ElementRef(
+                ref="e1",
+                snapshot_id="snapshot-1",
+                tab_id="tab-1",
+                frame_id="main",
+                node_id="0:1",
+                role="button",
+                name="Submit",
+            )
+        ],
+        content_hash="snapshot-hash",
+    )
+
+    class _VerificationSession(_OutcomeSession):
+        def __init__(self) -> None:
+            super().__init__("Case details")
+            self.challenges = list(challenges)
+
+        async def execute(self, action: BrowserAction) -> BrowserActionResult:
+            return BrowserActionResult(success=True, outcome="clicked")
+
+        async def snapshot(self, _tab_id: str) -> BrowserSnapshot:
+            return snapshot
+
+        async def verification_challenge(self, _tab_id: str) -> str | None:
+            return (
+                self.challenges.pop(0)
+                if len(self.challenges) > 1
+                else self.challenges[0]
+            )
+
+    requests: list[VerificationRequest] = []
+
+    async def handler(request: VerificationRequest) -> bool:
+        requests.append(request)
+        return bool(handler_result)
+
+    async def emit(_trace) -> None:
+        return None
+
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+    )
+    toolset = BrowserToolset(
+        cast(Any, _VerificationSession()),
+        task,
+        "tab-1",
+        emit,
+        verification_handler=handler if handler_result is not None else None,
+    )
+    toolset._snapshot = snapshot
+
+    payload = json.loads(await toolset.click("e1"))
+
+    assert payload["verification"]["status"] == expected_status
+    assert payload["verification"]["provider"] == "hcaptcha"
+    assert len(requests) == (0 if handler_result is None else 1)
+    if expected_status == "completed_by_user":
+        assert "observation" in payload
+        assert toolset.verification_required is None
+        assert toolset.outcome is NavigationOutcome.UNKNOWN
+    else:
+        assert "observation" not in payload
+        assert toolset.verification_required == "hcaptcha"
+        assert toolset.outcome is NavigationOutcome.BLOCKED
+        assert toolset.last_error_code is BrowseErrorCode.VERIFICATION_REQUIRED
+        # A verified result reached another way, e.g. a fallback provider, clears it.
+        await toolset.report_outcome("results_ready", "Case details")
+        assert toolset.verification_required is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("headless", [True, False])
+async def test_uncompleted_verification_is_reported_as_its_own_stop_reason(
+    monkeypatch, headless
+):
+    from lexoid.core.browse import orchestrator
+
+    class _Session(_FinalTabsMixin):
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return OpenTab(tab_id="tab-1", target_id="t1", url=url)
+
+        async def tab(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
+
+    async def observation(self):
+        return "{}"
+
+    seen_handlers = []
+
+    async def navigate(_client, toolset, *_args, **_kwargs):
+        seen_handlers.append(toolset._verification_handler)
+        toolset.verification_required = "hcaptcha"
+        return NavigationOutcome.BLOCKED, BrowseUsage()
+
+    async def handler(_request) -> bool:
+        return True
+
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", observation)
+    monkeypatch.setattr(orchestrator, "navigate_with_tools", navigate)
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="subject",
+        allowed_domains=["example.test"],
+        retain_final_page=False,
+    )
+
+    result = await orchestrator.run_task(
+        task,
+        headless=headless,
+        navigator_client=object(),
+        on_verification_required=handler,
+    )
+
+    task_result = result.task_results[0]
+    assert task_result.status is BrowseTerminalState.BLOCKED
+    assert task_result.coverage.stop_reason == "verification_required"
+    assert task_result.plan_outcome.stop_reason == "verification_required"
+    assert any("hcaptcha human verification" in w for w in result.warnings)
+    assert seen_handlers == [None if headless else handler]
+    assert any("needs a visible browser" in w for w in result.warnings) is headless
+
+
+@pytest.mark.asyncio
 async def test_blocked_navigation_skips_collection(monkeypatch):
     from lexoid.core.browse import orchestrator
 
@@ -704,7 +913,7 @@ async def test_blocked_navigation_skips_collection(monkeypatch):
 
     monkeypatch.setattr(orchestrator, "capture_page", fail_if_called)
 
-    class _Session:
+    class _Session(_FinalTabsMixin):
         async def __aenter__(self):
             return self
 
@@ -765,7 +974,7 @@ async def test_initial_redirect_outside_https_allowlist_is_blocked(
 ):
     from lexoid.core.browse import orchestrator
 
-    class _Session:
+    class _Session(_FinalTabsMixin):
         def __init__(self):
             self.closed_tabs = []
 
@@ -806,7 +1015,7 @@ async def test_initial_redirect_preserves_inferred_seed_warning(monkeypatch):
     from lexoid.core.browse import orchestrator
     from lexoid.core.browse.schemas import InferredSeed
 
-    class _Session:
+    class _Session(_FinalTabsMixin):
         async def __aenter__(self):
             return self
 
@@ -844,7 +1053,7 @@ async def test_capture_is_skipped_if_active_tab_navigated_off_domain(monkeypatch
     from lexoid.core.browse import orchestrator
     from lexoid.core.browse.schemas import BrowseUsage
 
-    class _Session:
+    class _Session(_FinalTabsMixin):
         def __init__(self):
             self._tab_url = "https://tmsearch.uspto.gov/"
 
@@ -1140,7 +1349,7 @@ async def test_orchestrator_keeps_only_valid_synthesis_assessments(monkeypatch):
         SynthesisAssessment,
     )
 
-    class _Session:
+    class _Session(_FinalTabsMixin):
         async def __aenter__(self):
             return self
 
@@ -1237,7 +1446,7 @@ async def test_orchestrator_routes_explicit_assessor_client_and_options(monkeypa
         PageArtifact,
     )
 
-    class _Session:
+    class _Session(_FinalTabsMixin):
         async def __aenter__(self):
             return self
 
@@ -1335,7 +1544,7 @@ async def test_orchestrator_assessor_falls_back_to_extractor(monkeypatch):
         PageArtifact,
     )
 
-    class _Session:
+    class _Session(_FinalTabsMixin):
         async def __aenter__(self):
             return self
 
@@ -1424,7 +1633,7 @@ async def test_allowed_subdomain_landing_is_observed(monkeypatch):
     from lexoid.core.browse import orchestrator
     from lexoid.core.browse.schemas import PageArtifact
 
-    class _Session:
+    class _Session(_FinalTabsMixin):
         async def __aenter__(self):
             return self
 
@@ -1477,11 +1686,145 @@ async def test_allowed_subdomain_landing_is_observed(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenario,expected_stop,expected_captures,expected_runs",
+    [
+        ("recover", "sufficient", 2, 2),
+        ("stop", "no_next_action", 1, 1),
+        ("no_assessor", "no_next_action", 1, 1),
+        ("task_limit", "budget_exhausted", 1, 1),
+        ("page_limit", "budget_exhausted", 1, 1),
+        ("blocked", "blocked", 1, 2),
+        ("no_progress", "no_progress", 1, 2),
+        ("no_next_page", "no_next_action", 1, 1),
+        ("missing_objective", "no_next_action", 1, 1),
+    ],
+)
+async def test_no_results_respects_assessment_and_actual_limits(
+    monkeypatch, scenario, expected_stop, expected_captures, expected_runs
+):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import EvidenceAssessment, PageArtifact
+
+    class _Session(_FinalTabsMixin):
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return await self.tab("tab-1")
+
+        async def tab(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url="https://example.test/")
+
+        async def settle(self, tab_id):
+            return None
+
+        async def advance_to_next_result_page(self, tab_id):
+            if scenario == "no_next_page":
+                return False
+            pytest.fail(
+                "A no-results investigation must not fall through to pagination"
+            )
+
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: _Session())
+
+    async def observe(self):
+        return "{}"
+
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", observe)
+    objectives = []
+
+    async def navigate(_client, toolset, *_args, objective=None, **_kwargs):
+        objectives.append(objective)
+        toolset.begin_run()
+        toolset.action_count += 1
+        toolset.successful_action_count += 1
+        if objective and scenario == "blocked":
+            return NavigationOutcome.BLOCKED, BrowseUsage()
+        return NavigationOutcome.NO_RESULTS, BrowseUsage()
+
+    monkeypatch.setattr(orchestrator, "navigate_with_tools", navigate)
+
+    async def capture(_session, tab_id, index, _max_chars):
+        return PageArtifact(
+            artifact_id=f"artifact-{index}",
+            url="https://example.test/",
+            tab_id=tab_id,
+            content_hash="unchanged" if scenario == "no_progress" else f"hash-{index}",
+            text=f"Page {index}",
+        )
+
+    monkeypatch.setattr(orchestrator, "capture_page", capture)
+    assessed = []
+
+    async def assess(_client, _task, artifact, *_args, **_kwargs):
+        assessed.append(artifact.artifact_id)
+        if len(assessed) == 2:
+            return EvidenceAssessment(answerability="sufficient"), [], BrowseUsage()
+        return (
+            EvidenceAssessment(
+                answerability="partial",
+                next_action=(
+                    "stop"
+                    if scenario == "stop"
+                    else "paginate"
+                    if scenario == "no_next_page"
+                    else "investigate"
+                ),
+                objective=(
+                    "" if scenario == "missing_objective" else "Reveal the transcript"
+                ),
+            ),
+            [],
+            BrowseUsage(),
+        )
+
+    monkeypatch.setattr(orchestrator, "assess_page", assess)
+    task = BrowseTask(
+        seed_urls=["https://example.test/"],
+        subject="Read the transcript",
+        allowed_domains=["example.test"],
+        limits=BrowseLimits(
+            max_steps=1 if scenario == "task_limit" else 4,
+            max_pages=1 if scenario == "page_limit" else 3,
+        ),
+        retain_final_page=False,
+    )
+
+    result = await orchestrator.run_task(
+        task,
+        navigator_client=object(),
+        assessor_client=None if scenario == "no_assessor" else object(),
+    )
+
+    task_result = result.task_results[0]
+    assert task_result.coverage.stop_reason == expected_stop
+    assert task_result.coverage.pages_captured == expected_captures
+    assert len(objectives) == expected_runs
+    assert assessed == (
+        []
+        if scenario == "no_assessor"
+        else [f"artifact-{i + 1}" for i in range(expected_captures)]
+    )
+    if expected_runs == 2:
+        assert objectives == [None, "Reveal the transcript"]
+    assert task_result.status is (
+        BrowseTerminalState.COMPLETED
+        if scenario == "recover"
+        else BrowseTerminalState.LIMIT_REACHED
+    )
+    assert task_result.plan_outcome.stop_reason == expected_stop
+
+
+@pytest.mark.asyncio
 async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch):
     from lexoid.core.browse import orchestrator
     from lexoid.core.browse.schemas import BrowseUsage, EvidenceAssessment, PageArtifact
 
-    class _Session:
+    class _Session(_FinalTabsMixin):
         async def __aenter__(self):
             return self
 
@@ -1542,6 +1885,7 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
         **kwargs,
     ):
         navigate_calls.append((objective, gaps, reason))
+        toolset.outcome_evidence = f"report {len(navigate_calls)}"
         return NavigationOutcome.RESULTS_READY, BrowseUsage()
 
     monkeypatch.setattr(orchestrator, "navigate_with_tools", navigate)
@@ -1558,11 +1902,13 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
     monkeypatch.setattr(orchestrator, "capture_page", fake_capture_page)
 
     assess_calls: list[str] = []
+    assess_reports: list[str] = []
 
     async def fake_assess_page(
         client, task, artifact, prior_claims, prior_gaps, **kwargs
     ):
         assess_calls.append(artifact.artifact_id)
+        assess_reports.append(kwargs["prior_context"]["navigator_report"])
         if len(assess_calls) == 1:
             assessment = EvidenceAssessment(
                 answerability="partial",
@@ -1589,6 +1935,7 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
 
     task_result = result.task_results[0]
     assert assess_calls == ["artifact-1", "artifact-2"]
+    assert assess_reports == ["report 1", "report 2"]
     assert navigate_calls == [
         (None, None, None),
         (
@@ -1602,11 +1949,18 @@ async def test_investigate_objective_reruns_navigator_and_continues(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkeypatch):
+@pytest.mark.parametrize(
+    "revisit_outcome",
+    ["not_needed", "restored", "redirected", "playwright", "patchright"],
+)
+async def test_orchestrator_captures_and_paginates_on_switched_active_tab(
+    monkeypatch, revisit_outcome
+):
     from lexoid.core.browse import orchestrator
     from lexoid.core.browse.schemas import (
         BrowseUsage,
         EvidenceAssessment,
+        MediaState,
         OpenTab,
         PageArtifact,
     )
@@ -1615,21 +1969,52 @@ async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkey
     advanced_tab_ids: list[str] = []
     settled_tab_ids: list[str] = []
     retained_tab_ids: list[str] = []
+    revisits: list[tuple[str, str]] = []
+    listing_url = "https://example.com/tab-listing"
+    offsite_url = "https://outside.test/redirect"
+    playback = [
+        MediaState(
+            media_type="video", current_time=0, paused=True, ended=False, ready_state=4
+        )
+    ]
 
-    class _MultiTabSession:
+    class _MultiTabSession(_FinalTabsMixin):
+        current_listing_url = listing_url
+
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, *_):
             return None
 
+        async def capture_open_tabs(self):
+            if revisit_outcome != "not_needed":
+                self.current_listing_url = offsite_url
+            return await self.list_tabs()
+
+        async def restore_page(self, tab_id, url):
+            revisits.append((tab_id, url))
+            if revisit_outcome in {"playwright", "patchright"}:
+                driver = pytest.importorskip(f"{revisit_outcome}.async_api")
+                raise driver.Error("navigation failed")
+            self.current_listing_url = url
+            return await self.tab(tab_id)
+
+        async def media_state(self, tab_id):
+            if revisit_outcome == "redirected":
+                self.current_listing_url = offsite_url
+            return playback
+
         async def open_page(self, url):
             return OpenTab(tab_id="tab-seed", target_id="t1", url=url)
 
         async def tab(self, tab_id):
-            return OpenTab(
-                tab_id=tab_id, target_id=tab_id, url=f"https://example.com/{tab_id}"
+            url = (
+                self.current_listing_url
+                if tab_id == "tab-listing"
+                else f"https://example.com/{tab_id}"
             )
+            return OpenTab(tab_id=tab_id, target_id=tab_id, url=url)
 
         async def list_tabs(self):
             return [
@@ -1639,8 +2024,9 @@ async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkey
                 OpenTab(
                     tab_id="tab-listing",
                     target_id="t2",
-                    url="https://example.com/listing/1",
+                    url=self.current_listing_url,
                 ),
+                OpenTab(tab_id="tab-popup", target_id="t3", url=offsite_url),
             ]
 
         async def settle(self, tab_id):
@@ -1711,5 +2097,22 @@ async def test_orchestrator_captures_and_paginates_on_switched_active_tab(monkey
     assert captured_tab_ids == ["tab-listing"]
     assert advanced_tab_ids == ["tab-listing"]
     assert settled_tab_ids == ["tab-listing"]
-    assert retained_tab_ids == ["tab-listing"]
-    assert result.task_results[0].status is BrowseTerminalState.LIMIT_REACHED
+    task_result = result.task_results[0]
+    expected_tabs = ["tab-seed"]
+    if revisit_outcome in {"not_needed", "restored"}:
+        expected_tabs.append("tab-listing")
+    assert retained_tab_ids == expected_tabs
+    assert [tab.tab_id for tab in task_result.open_tabs_at_end] == expected_tabs
+    assert [tab.tab_id for tab in task_result.retained_tabs] == expected_tabs
+    assert revisits == (
+        [] if revisit_outcome == "not_needed" else [("tab-listing", listing_url)]
+    )
+    assert any(
+        "Excluded tab tab-popup on outside.test" in warning
+        for warning in result.warnings
+    )
+    if revisit_outcome == "restored":
+        assert task_result.open_tabs_at_end[-1].url == listing_url
+        assert task_result.open_tabs_at_end[-1].media_state == playback
+        assert any("Restored tab tab-listing" in warning for warning in result.warnings)
+    assert task_result.status is BrowseTerminalState.LIMIT_REACHED

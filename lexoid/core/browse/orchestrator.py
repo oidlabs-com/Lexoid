@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import urlparse
 
 from lexoid.core.browse.agents import (
     assess_page,
@@ -14,7 +16,11 @@ from lexoid.core.browse.agents import (
     synthesize_answer,
 )
 from lexoid.core.browse.collector import capture_page
-from lexoid.core.browse.events import BrowseEventListener, BrowseEventPublisher
+from lexoid.core.browse.events import (
+    BrowseEventListener,
+    BrowseEventPublisher,
+    VerificationHandler,
+)
 from lexoid.core.browse.evidence import validated_claims, verify_constraints
 from lexoid.core.browse.model_provider import ChatClient
 from lexoid.core.browse.policy import is_allowed_url
@@ -31,11 +37,16 @@ from lexoid.core.browse.schemas import (
     EvidenceAssessment,
     EvidenceClaim,
     NavigationOutcome,
+    OpenTab,
     PageArtifact,
     PlanOutcomeRecord,
     SynthesisAssessment,
 )
-from lexoid.core.browse.session import GhostBrowserSession
+from lexoid.core.browse.session import (
+    BrowserDriverError,
+    GhostBrowserSession,
+    TabGoneError,
+)
 from lexoid.core.browse.tools import BrowserToolset
 from lexoid.core.ghost import GhostConfig, ghost_get_html
 from loguru import logger
@@ -265,8 +276,12 @@ async def run_task(
     task: BrowseTask,
     *,
     cdp_url: str | None = None,
+    user_data_dir: str | os.PathLike[str] | None = None,
+    channel: str | None = None,
     headless: bool = True,
+    mute_audio: bool = True,
     event_listener: BrowseEventListener | None = None,
+    on_verification_required: VerificationHandler | None = None,
     html_fetcher: HtmlFetcher | None = None,
     navigator_client: ChatClient | None = None,
     navigator_options: dict[str, Any] | None = None,
@@ -284,6 +299,9 @@ async def run_task(
     ``assessor_client`` (falling back to ``extractor_client``) drives
     ``assess_page`` once per captured page inside a capture/assess/act loop that
     judges cumulative answerability and proposes the next action.
+
+    ``on_verification_required`` is awaited when a hCaptcha or reCAPTCHA challenge
+    blocks a visible browser; without it, or when headless, the task is blocked.
     """
     publisher = BrowseEventPublisher(event_listener)
     await publisher.emit(
@@ -299,6 +317,7 @@ async def run_task(
                 "seed_urls": task.seed_urls,
                 "inferred_seeds": [s.model_dump() for s in task.inferred_seeds],
                 "allowed_domains": task.allowed_domains,
+                "source_scope": task.source_scope.model_dump(),
                 "requested_facts": task.requested_facts,
                 "completion_criteria": task.completion_criteria,
                 "filters": [
@@ -323,7 +342,10 @@ async def run_task(
     attempted_objectives: list[str] = []
     candidate_assessments: list[CandidateAssessment] = []
     accepted_assessments: list[SynthesisAssessment] = []
+    open_tabs_at_end: list[OpenTab] = []
+    retained_tabs: list[OpenTab] = []
     assessment: EvidenceAssessment | None = None
+    verification_provider: str | None = None
     url = task.seed_urls[0] if task.seed_urls else task.inferred_seeds[0].url
     if not task.seed_urls and task.inferred_seeds:
         warnings.append(
@@ -349,14 +371,19 @@ async def run_task(
             warnings=warnings,
         )
 
-    cfg = GhostConfig.from_kwargs(
-        {
-            "cdp_url": cdp_url,
-            "headless": headless,
-            "auto_scroll": False,
-            "timeout_ms": task.limits.timeout_ms,
-        }
-    )
+    ghost_kwargs: dict[str, Any] = {
+        "headless": headless,
+        "mute_audio": mute_audio,
+        "auto_scroll": False,
+        "timeout_ms": task.limits.timeout_ms,
+    }
+    if cdp_url is not None:
+        ghost_kwargs["cdp_url"] = cdp_url
+    if user_data_dir is not None:
+        ghost_kwargs["user_data_dir"] = str(user_data_dir)
+    if channel is not None:
+        ghost_kwargs["channel"] = channel
+    cfg = GhostConfig.from_kwargs(ghost_kwargs)
     if not cfg.enabled:
         cfg.enabled = True
     if task.collection.preferred_method == "export" and not (
@@ -365,7 +392,16 @@ async def run_task(
         warnings.append(
             "Export collection is not supported for this site; using page collection."
         )
-    if task.retain_final_page and not cdp_url:
+    # A person can only complete a challenge in a browser they can see.
+    verification_handler = (
+        on_verification_required if not cfg.headless or cfg.cdp_url else None
+    )
+    if on_verification_required is not None and verification_handler is None:
+        warnings.append(
+            "on_verification_required needs a visible browser (headless=False or "
+            "cdp_url); verification challenges will be reported as blocked."
+        )
+    if task.retain_final_page and not cfg.cdp_url:
         warnings.append(
             "Page retention requires an attached browser via cdp_url; the locally "
             "launched browser is closed when the task ends."
@@ -376,7 +412,6 @@ async def run_task(
                 "Browse task {} fetching seed URL without navigation", task.task_id
             )
             html, usage = await asyncio.to_thread(fetcher, url, cfg)
-            retained_tabs = []
             artifacts = []
             # A single non-interactive fetch has no further pages to reach.
             stop_reason = "sufficient"
@@ -397,7 +432,13 @@ async def run_task(
                         "Initial navigation landed outside the HTTPS task allowlist.",
                         warnings=warnings,
                     )
-                toolset = BrowserToolset(session, task, tab.tab_id, publisher.emit)
+                toolset = BrowserToolset(
+                    session,
+                    task,
+                    tab.tab_id,
+                    publisher.emit,
+                    verification_handler=verification_handler,
+                )
                 snapshot = await toolset.observe()
                 logger.debug(
                     "Browse task {} captured initial observation on tab {}",
@@ -465,14 +506,11 @@ async def run_task(
                             f"Navigation reported {navigation_outcome.value}, but reached "
                             "page was captured for evidence assessment."
                         )
-                    elif navigation_outcome is NavigationOutcome.NO_RESULTS:
-                        # A verified empty result set needs one page, never pagination.
-                        max_iterations = 1
-                        stop_reason = "budget_exhausted"
                     else:
                         max_iterations = task.limits.max_pages
                         stop_reason = "budget_exhausted"
 
+                    capture_outcome = navigation_outcome
                     seen_hashes: set[str] = set()
                     for index in range(max_iterations):
                         current_tab = await session.tab(toolset.tab_id)
@@ -517,6 +555,7 @@ async def run_task(
                                 prior_context={
                                     "captured_urls": [item.url for item in artifacts],
                                     "attempted_objectives": list(attempted_objectives),
+                                    "navigator_report": toolset.outcome_evidence,
                                 },
                                 role_options=effective_assessor_options,
                             )
@@ -574,6 +613,12 @@ async def run_task(
                             if assessment.next_action == "stop":
                                 stop_reason = "no_next_action"
                                 break
+                        if (
+                            assessment is None
+                            and capture_outcome is NavigationOutcome.NO_RESULTS
+                        ):
+                            stop_reason = "no_next_action"
+                            break
                         if index == max_iterations - 1:
                             if stop_reason != "blocked":
                                 stop_reason = "budget_exhausted"
@@ -581,9 +626,17 @@ async def run_task(
                         if (
                             assessment is not None
                             and assessment.next_action == "investigate"
-                            and assessment.objective
-                            and toolset.remaining_task_actions > 0
                         ):
+                            if not assessment.objective:
+                                warnings.append(
+                                    "Assessor requested investigation without an "
+                                    "objective; stopping."
+                                )
+                                stop_reason = "no_next_action"
+                                break
+                            if toolset.remaining_task_actions == 0:
+                                stop_reason = "budget_exhausted"
+                                break
                             if navigator_client is None:
                                 warnings.append(
                                     "Assessor proposed an investigation objective, but "
@@ -608,6 +661,7 @@ async def run_task(
                                 role_options=navigator_options,
                             )
                             agent_usage = _add_usage(agent_usage, investigate_usage)
+                            capture_outcome = investigate_outcome
                             attempted_objectives.append(
                                 f"{assessment.objective} -> {investigate_outcome.value}"
                             )
@@ -657,11 +711,62 @@ async def run_task(
                             stop_reason = "no_next_action"
                             break
                 html = artifacts[0].text if artifacts else None
-                retained_tabs = (
-                    [await session.retain_page(toolset.tab_id)]
-                    if task.retain_final_page and cdp_url and not toolset.is_quarantined
-                    else []
-                )
+                captured_urls = {
+                    artifact.tab_id: artifact.url for artifact in artifacts
+                }
+                for tab in await session.capture_open_tabs():
+                    if is_allowed_url(tab.url, task.allowed_domains):
+                        open_tabs_at_end.append(tab)
+                        continue
+
+                    host = urlparse(tab.url).hostname or "unknown host"
+                    revisit_url = captured_urls.get(tab.tab_id)
+                    if (
+                        not toolset.is_quarantined
+                        and revisit_url
+                        and is_allowed_url(revisit_url, task.allowed_domains)
+                    ):
+                        try:
+                            restored = await session.restore_page(
+                                tab.tab_id, revisit_url
+                            )
+                            if is_allowed_url(restored.url, task.allowed_domains):
+                                media = await session.media_state(tab.tab_id)
+                                restored = await session.tab(tab.tab_id)
+                                if is_allowed_url(restored.url, task.allowed_domains):
+                                    open_tabs_at_end.append(
+                                        restored.model_copy(
+                                            update={"media_state": media}
+                                        )
+                                    )
+                                    warnings.append(
+                                        f"Restored tab {tab.tab_id} from {host} "
+                                        "to its last captured page."
+                                    )
+                                    continue
+                        except (TabGoneError, *BrowserDriverError) as error:
+                            logger.debug(
+                                "Could not revisit tab {}: {}",
+                                tab.tab_id,
+                                type(error).__name__,
+                            )
+                    warning = (
+                        f"Excluded tab {tab.tab_id} on {host}: "
+                        "outside the HTTPS task allowlist at final capture."
+                    )
+                    logger.warning(warning)
+                    warnings.append(warning)
+                if (
+                    task.retain_final_page
+                    and cfg.cdp_url
+                    and not toolset.is_quarantined
+                ):
+                    for tab in open_tabs_at_end:
+                        await session.retain_page(tab.tab_id)
+                    retained_tabs = open_tabs_at_end
+                else:
+                    retained_tabs = []
+                verification_provider = toolset.verification_required
                 usage = {"input": 0, "output": 0, "total": 0}
     except asyncio.CancelledError:
         logger.debug("Browse task {} cancelled", task.task_id)
@@ -692,6 +797,13 @@ async def run_task(
             f"Navigation reported {navigation_outcome.value}; no results were "
             "collected and no completeness conclusion is supported."
         )
+        early_stop = "blocked"
+        if verification_provider is not None:
+            early_stop = "verification_required"
+            warnings.append(
+                f"The site required {verification_provider} human verification that "
+                "was not completed; the requested lookup was not verified."
+            )
         blocked_usage = _add_usage(normalized_usage, agent_usage)
         plan_outcome = PlanOutcomeRecord(
             task_id=task.task_id,
@@ -699,7 +811,7 @@ async def run_task(
             assumptions=task.strategy.assumptions,
             navigation_guidance=task.strategy.navigation_guidance,
             coverage_requested=task.constraints.coverage,
-            stop_reason="blocked",
+            stop_reason=early_stop,
             answerability="insufficient",
             unresolved_gaps=[f"Navigation reported {navigation_outcome.value}"],
             validated_claims_count=0,
@@ -719,6 +831,7 @@ async def run_task(
                     status=task.status,
                     navigation_outcome=navigation_outcome,
                     site_profile_id=profile.profile_id if profile else None,
+                    coverage=CoverageReport(stop_reason=early_stop),
                     trace=publisher.events,
                     usage=blocked_usage,
                     plan_outcome=plan_outcome,
@@ -790,6 +903,12 @@ async def run_task(
         claims = validated_claims(claims, artifacts)
         logger.debug(
             "Browse task {} validated {} evidence claims", task.task_id, len(claims)
+        )
+    if verification_provider is not None:
+        stop_reason = "verification_required"
+        warnings.append(
+            f"The site required {verification_provider} human verification that was "
+            "not completed; the requested lookup was not verified."
         )
     # Completeness must follow the executor's stop reason, never model narration.
     capture_complete = stop_reason == "sufficient" and not any(
@@ -904,6 +1023,7 @@ async def run_task(
         assessments=accepted_assessments,
         trace=publisher.events,
         retained_tabs=retained_tabs,
+        open_tabs_at_end=open_tabs_at_end,
         usage=normalized_usage,
         plan_outcome=plan_outcome,
     )

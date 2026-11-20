@@ -892,6 +892,8 @@ def _create_client_response(
             "messages": [{"role": "user", "content": content}],
             "max_tokens": max_tokens,
         }
+        if system_prompt:
+            request_params["system"] = system_prompt
         thinking_on = thinking_level in ("low", "medium", "high")
         if thinking_on and _ANTHROPIC_EXTENDED_THINKING_RE.match(model):
             budget = {"low": 4096, "medium": 8192, "high": 32000}[thinking_level]

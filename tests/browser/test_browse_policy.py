@@ -1,7 +1,93 @@
 """Deterministic safety tests for Slice 1 browse policy."""
 
-from lexoid.core.browse.policy import PolicyDecision, authorize, is_allowed_url
-from lexoid.core.browse.schemas import BrowserAction, BrowseErrorCode
+import pytest
+from lexoid.core.browse.policy import (
+    PolicyDecision,
+    authorize,
+    fallback_search_domains,
+    is_allowed_url,
+    search_discovery_domain,
+)
+from lexoid.core.browse.schemas import BrowseErrorCode, BrowserAction
+
+
+@pytest.mark.parametrize(
+    ("seed", "initial_domains", "enabled"),
+    [
+        ("https://www.google.com/", ["google.com"], True),
+        ("https://bing.com/", ["bing.com"], True),
+        ("https://search.brave.com/", ["brave.com"], True),
+        ("https://example.com/", ["example.com"], False),
+        ("https://example.com/", ["example.com", "google.com"], False),
+        ("https://maps.google.com/", ["google.com"], False),
+        ("https://google.com.evil.example/", ["evil.example"], False),
+        ("https://google.com/", ["example.com"], False),
+        ("http://google.com/", ["google.com"], False),
+    ],
+)
+def test_fallback_search_domains_require_initial_search_seed(
+    seed, initial_domains, enabled
+):
+    fallbacks = fallback_search_domains([seed], initial_domains)
+    assert bool(fallbacks) is enabled
+    if enabled:
+        assert is_allowed_url("https://www.bing.com/", initial_domains + fallbacks)
+        assert not is_allowed_url("https://unrelated.com/", initial_domains + fallbacks)
+        assert not is_allowed_url(
+            "https://bing.com.evil.example/", initial_domains + fallbacks
+        )
+        assert not is_allowed_url("http://bing.com/", initial_domains + fallbacks)
+        assert len(fallbacks) == len(set(fallbacks))
+        assert not set(fallbacks).intersection(initial_domains)
+
+
+@pytest.mark.parametrize(
+    ("seed", "initial_domains", "expected"),
+    [
+        (
+            "https://www.google.com/",
+            ["google.com"],
+            ["bing.com", "search.brave.com", "duckduckgo.com"],
+        ),
+        (
+            "https://www.bing.com/",
+            ["bing.com"],
+            ["search.brave.com", "duckduckgo.com"],
+        ),
+        (
+            "https://search.brave.com/",
+            ["search.brave.com"],
+            ["bing.com", "duckduckgo.com"],
+        ),
+        (
+            "https://duckduckgo.com/",
+            ["duckduckgo.com"],
+            ["bing.com", "search.brave.com"],
+        ),
+    ],
+)
+def test_fallback_search_domains_keep_provider_order_without_default(
+    seed, initial_domains, expected
+):
+    assert fallback_search_domains([seed], initial_domains) == expected
+
+
+def test_fallback_search_domains_do_not_authorize_brave_aliases():
+    fallbacks = fallback_search_domains(["https://www.google.com/"], ["google.com"])
+    assert is_allowed_url("https://search.brave.com/", fallbacks)
+    assert not is_allowed_url("https://www.brave.com/", fallbacks)
+
+
+@pytest.mark.parametrize("source_scope", ["search_provider_only", "domain_only"])
+def test_restricted_source_scopes_disable_search_provider_fallbacks(source_scope):
+    assert (
+        fallback_search_domains(
+            ["https://www.google.com/"],
+            ["google.com"],
+            source_scope=source_scope,
+        )
+        == []
+    )
 
 
 def test_navigation_requires_allowlisted_domain():
@@ -54,3 +140,169 @@ def test_visual_target_requires_complete_artifact_bound_metadata():
         uncertainty=0.1,
     )
     assert authorize(complete, ["tmsearch.uspto.gov"]).decision is PolicyDecision.ALLOW
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "google.com",
+        "www.google.com",
+        "bing.com",
+        "www.bing.com",
+        "brave.com",
+        "www.brave.com",
+        "search.brave.com",
+        "duckduckgo.com",
+        "www.duckduckgo.com",
+    ],
+)
+def test_search_discovery_admits_observed_destination(host):
+    assert (
+        search_discovery_domain(
+            f"https://{host}/search?q=recipe",
+            "https://www.allrecipes.com/recipe/1",
+            "https://allrecipes.com/recipe/1",
+            [host],
+        )
+        == "allrecipes.com"
+    )
+
+
+def test_search_provider_only_scope_allows_observed_result_but_not_fallback_provider():
+    assert (
+        search_discovery_domain(
+            "https://www.google.com/search?q=recipe",
+            "https://www.allrecipes.com/recipe/1",
+            "https://allrecipes.com/recipe/1",
+            ["google.com"],
+            source_scope="search_provider_only",
+        )
+        == "allrecipes.com"
+    )
+
+
+def test_domain_only_scope_rejects_external_search_result_discovery():
+    assert (
+        search_discovery_domain(
+            "https://www.google.com/search?q=recipe",
+            "https://www.allrecipes.com/recipe/1",
+            "https://allrecipes.com/recipe/1",
+            ["google.com"],
+            source_scope="domain_only",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "href"),
+    [
+        (
+            "https://www.google.com/search?q=recipe",
+            "https://www.google.com/goto?url=opaque",
+        ),
+        (
+            "https://www.google.com/search?q=recipe",
+            "https://www.google.com/url?q=opaque",
+        ),
+        (
+            "https://www.bing.com/search?q=recipe",
+            "https://www.bing.com/ck/a?url=opaque",
+        ),
+        ("https://duckduckgo.com/?q=recipe", "https://duckduckgo.com/l/?uddg=opaque"),
+    ],
+)
+def test_search_discovery_admits_known_provider_redirects(source, href):
+    assert (
+        search_discovery_domain(
+            source,
+            href,
+            "https://www.eatingwell.com/recipe/260844/example/",
+            ["google.com", "bing.com", "duckduckgo.com"],
+        )
+        == "eatingwell.com"
+    )
+
+
+@pytest.mark.parametrize(
+    ("source", "href", "destination", "allowed"),
+    [
+        (
+            "https://allrecipes.com/",
+            "https://other.com/",
+            "https://other.com/",
+            ["allrecipes.com"],
+        ),
+        (
+            "https://www.google.com/",
+            "https://other.com/",
+            "https://other.com/",
+            ["bing.com"],
+        ),
+        (
+            "https://google.com.evil.com/",
+            "https://other.com/",
+            "https://other.com/",
+            ["evil.com"],
+        ),
+        (
+            "https://maps.google.com/",
+            "https://other.com/",
+            "https://other.com/",
+            ["google.com"],
+        ),
+        ("https://google.com/", None, "https://other.com/", ["google.com"]),
+        (
+            "https://google.com/",
+            "https://recipe.com/",
+            "https://evil.com/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://google.com/redirect?url=https://evil.com/",
+            "https://evil.com/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "http://other.com/",
+            "http://other.com/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://127.0.0.1/",
+            "https://127.0.0.1/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://localhost/",
+            "https://localhost/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://user:pass@other.com/",
+            "https://other.com/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://other.com:8443/",
+            "https://other.com:8443/",
+            ["google.com"],
+        ),
+        (
+            "https://google.com/",
+            "https://github.io/",
+            "https://github.io/",
+            ["google.com"],
+        ),
+    ],
+)
+def test_search_discovery_rejects_unproven_or_invalid_destinations(
+    source, href, destination, allowed
+):
+    assert search_discovery_domain(source, href, destination, allowed) is None

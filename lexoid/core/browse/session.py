@@ -4,22 +4,97 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import random
+import time
 from contextlib import AbstractAsyncContextManager
-from typing import Any
-from urllib.parse import urlparse
+from typing import Any, Self
+from urllib.parse import parse_qs, urlparse
 from uuid import uuid4
+
+from loguru import logger
+from playwright.async_api import Error as _PlaywrightError
+
+try:
+    from patchright.async_api import Error as _PatchrightError
+
+    # Patchright's Error is a separate class, not a playwright Error subclass.
+    BrowserDriverError: tuple[type[Exception], ...] = (
+        _PlaywrightError,
+        _PatchrightError,
+    )
+except ImportError:
+    BrowserDriverError = (_PlaywrightError,)
 
 from lexoid.core.browse.schemas import (
     BrowserAction,
     BrowserActionResult,
     BrowserSnapshot,
     ElementRef,
+    MediaState,
     OpenTab,
 )
-from lexoid.core.ghost import GhostConfig, _get_async_playwright
-from loguru import logger
+from lexoid.core.ghost import (
+    _STEALTH_INIT_SCRIPT,
+    GhostConfig,
+    ProfileDirectoryLock,
+    _get_async_playwright,
+    acquire_profile_lock,
+    launch_browser_with_config,
+    launch_persistent_context_with_config,
+    resolve_no_viewport,
+)
 
 _SNAPSHOT_ATTEMPTS = 3
+_SHORT_WAIT_MS = 5_500
+_ACTION_TIMEOUT_MS = 10_000
+# Minimum randomized gap between consecutive page actions to avoid burst patterns.
+_ACTION_GAP_S = (0.8, 1.5)
+# Human-like input: pointer travel in interpolated steps, a short button hold,
+# and per-key gaps instead of instant value injection.
+_POINTER_STEPS = (8, 20)
+_PRESS_MS = (40.0, 110.0)
+_KEY_GAP_S = (0.04, 0.12)
+_YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
+_AD_SKIP_SELECTOR = (
+    "#movie_player.ad-showing button:is(.ytp-skip-ad-button, "
+    ".ytp-ad-skip-button-modern, .ytp-ad-skip-button):visible"
+)
+_YOUTUBE_PAGE_JS = r"/^(?:www\.|m\.)?youtube\.com$/.test(location.hostname)"
+
+_MEDIA_STATE_JS = """
+() => Array.from(document.querySelectorAll("video, audio"))
+    .slice(0, 5)
+    .map(element => ({
+        media_type: element.tagName.toLowerCase(),
+        paused: Boolean(element.paused),
+        current_time: Number.isFinite(element.currentTime)
+            ? Math.max(0, element.currentTime) : 0,
+        duration: Number.isFinite(element.duration) && element.duration >= 0
+            ? element.duration : null,
+        ended: Boolean(element.ended),
+        ready_state: element.readyState,
+        ad_showing: YOUTUBE_PAGE && element.closest('#movie_player')
+            ? Boolean(element.closest('#movie_player.ad-showing')) : null
+    }))
+""".replace("YOUTUBE_PAGE", _YOUTUBE_PAGE_JS)
+_SNAPSHOT_STATE_JS = f"""
+() => {{
+    const mediaState = ({_MEDIA_STATE_JS.strip()})();
+    return {{
+        width: window.innerWidth,
+        height: window.innerHeight,
+        scrollX: window.scrollX,
+        scrollY: window.scrollY,
+        media_state: mediaState
+    }};
+}}
+"""
+
+
+def _parse_media_state(values: Any) -> list[MediaState]:
+    if not isinstance(values, list):
+        raise TypeError("Media-state evaluation did not return a list")
+    return [MediaState.model_validate(value) for value in values[:5]]
 
 
 def _is_navigation_context_error(error: Exception) -> bool:
@@ -33,19 +108,41 @@ class TabGoneError(RuntimeError):
     """Raised when an action targets a closed  tab."""
 
 
+# Attribute churn (animations, carousels, ad slots) is ignored so dynamic pages can
+# report quiet; the in-page max wait guarantees the observer always disconnects.
 _DOM_QUIET_JS = """
-(idleMs) => new Promise((resolve) => {
-    let timer;
-    const observer = new MutationObserver(() => {
-        clearTimeout(timer);
-        timer = setTimeout(() => { observer.disconnect(); resolve(true); }, idleMs);
-    });
-    observer.observe(document.documentElement, {
-        childList: true, subtree: true, characterData: true, attributes: true
-    });
-    timer = setTimeout(() => { observer.disconnect(); resolve(true); }, idleMs);
+({idleMs, maxMs}) => new Promise((resolve) => {
+    let idleTimer;
+    let done = false;
+    const root = document.documentElement;
+    const finish = (status) => {
+        if (done) return;
+        done = true;
+        clearTimeout(idleTimer);
+        clearTimeout(maxTimer);
+        if (observer) observer.disconnect();
+        resolve(status);
+    };
+    const observer = root ? new MutationObserver(() => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => finish("quiet"), idleMs);
+    }) : null;
+    if (observer) {
+        observer.observe(root, { childList: true, subtree: true, characterData: true });
+    }
+    idleTimer = setTimeout(() => finish("quiet"), idleMs);
+    const maxTimer = setTimeout(() => finish("max_wait"), maxMs);
 });
 """
+
+_SETTLE_IDLE_MS = 500
+_SETTLE_MAX_WAIT_MS = 4_000
+_SETTLE_GRACE_S = 2.0
+_READ_ATTEMPTS = 3
+_NAVIGATING_ERRORS = (
+    "page is navigating",
+    "Execution context was destroyed",
+)
 
 _FORM_STATE_JS = """
 () => Array.from(document.querySelectorAll('input, textarea, select'))
@@ -208,6 +305,7 @@ elements => {
             role: element.getAttribute('role') || element.tagName.toLowerCase(),
             name,
             tag: element.tagName.toLowerCase(),
+            href: element.closest('a[href]')?.href || null,
             bbox_x: rect.x,
             bbox_y: rect.y,
             bbox_width: rect.width,
@@ -225,22 +323,75 @@ elements => {
 }
 """
 
-_CONTAINER_SCROLL_JS = """
-(element, dir) => {
+_HIGHLIGHT_MS = 450
+# Draws a temporary box over the action target on a separate non-interactive
+# layer so the element's own styles and the page's controls stay untouched.
+_HIGHLIGHT_JS = """
+(el, ms) => {
+  const r = el.getBoundingClientRect();
+  const box = document.createElement('div');
+  box.setAttribute('aria-hidden', 'true');
+  box.style.cssText =
+    'position:fixed;pointer-events:none;z-index:2147483647;box-sizing:border-box;' +
+    'border:3px solid #FF007F;border-radius:4px;background:rgba(255,0,127,0.12);' +
+    'left:' + (r.left - 3) + 'px;top:' + (r.top - 3) + 'px;' +
+    'width:' + (r.width + 6) + 'px;height:' + (r.height + 6) + 'px;';
+  document.documentElement.appendChild(box);
+  setTimeout(() => box.remove(), ms + 150);
+}
+"""
+
+# Read-only: height of the nearest scrollable ancestor, else the viewport.
+_SCROLL_EXTENT_JS = """
+element => {
     let curr = element;
     while (curr && curr !== document.body && curr !== document.documentElement) {
         const style = window.getComputedStyle(curr);
         const overflowY = style.overflowY || style.overflow;
-        const isScrollable = (overflowY === 'auto' || overflowY === 'scroll') && curr.scrollHeight > curr.clientHeight;
-        if (isScrollable) {
-            curr.scrollBy({ top: dir * Math.max(curr.clientHeight * 0.8, 100), behavior: 'instant' });
-            return;
+        if ((overflowY === 'auto' || overflowY === 'scroll') && curr.scrollHeight > curr.clientHeight) {
+            return curr.clientHeight;
         }
         curr = curr.parentElement;
     }
-    element.scrollIntoView({ block: dir > 0 ? 'end' : 'start', behavior: 'instant' });
+    return window.innerHeight;
 }
 """
+
+
+_RECAPTCHA_HOSTS = {
+    "google.com",
+    "www.google.com",
+    "recaptcha.net",
+    "www.recaptcha.net",
+}
+# A solved hCaptcha/reCAPTCHA widget writes its token into this page-level field.
+_VERIFICATION_SOLVED_JS = """
+() => Array.from(document.querySelectorAll(
+    'textarea[name="h-captcha-response"], textarea[name="g-recaptcha-response"]'
+)).some(field => field.value.trim().length > 0)
+"""
+
+
+def _verification_frame(url: str) -> tuple[str, str] | None:
+    """Classify a provider frame as a ``checkbox`` widget or ``challenge`` puzzle."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    if host == "hcaptcha.com" or host.endswith(".hcaptcha.com"):
+        kind = parse_qs(parsed.fragment).get("frame", [""])[0]
+        return ("hcaptcha", kind) if kind in {"checkbox", "challenge"} else None
+    if host in _RECAPTCHA_HOSTS and "/recaptcha/" in parsed.path:
+        leaf = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+        if leaf == "bframe":
+            return "recaptcha", "challenge"
+        # The invisible-mode badge is an anchor frame that never asks for input.
+        if leaf == "anchor" and parse_qs(parsed.query).get("size") != ["invisible"]:
+            return "recaptcha", "checkbox"
+    return None
+
+
+def _jitter_point(width: float, height: float) -> tuple[float, float]:
+    """Pick a point near, but not exactly at, the center of a box."""
+    return width * random.uniform(0.3, 0.7), height * random.uniform(0.3, 0.7)
 
 
 def _normalize_tab_url(url: str) -> str:
@@ -263,36 +414,105 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         self._playwright = None
         self._browser = None
         self._context = None
+        self._profile_lock: ProfileDirectoryLock | None = None
+        self._unclaimed_initial_page: Any = None
+        self._effective_driver: str = "playwright"
+        self._effective_mode: str = "fresh"
+        self._effective_channel: str | None = None
         self._owned_pages: dict[str, object] = {}
         self._retained_tabs: set[str] = set()
         self._revisions: dict[str, int] = {}
         self._snapshots: dict[str, BrowserSnapshot] = {}
         self._snapshot_handles: dict[str, dict[str, Any]] = {}
         self._pending_popups: list[tuple[str, str]] = []
-        self._settle_idle_ms = 500
+        self._settle_idle_ms = _SETTLE_IDLE_MS
         self._settle_timeout_ms = min(config.timeout_ms, 15_000)
+        self._action_timeout_ms = min(config.timeout_ms, _ACTION_TIMEOUT_MS)
+        self._action_gap_s = _ACTION_GAP_S
+        self._last_action_at: float | None = None
+        self._settle_max_wait_ms = min(config.timeout_ms, _SETTLE_MAX_WAIT_MS)
 
-    async def __aenter__(self) -> "GhostBrowserSession":
-        factory, _ = _get_async_playwright(self._config)
-        self._playwright = await factory().start()
-        if self._config.cdp_url:
-            self._browser = await self._playwright.chromium.connect_over_cdp(
-                self._config.cdp_url
+    async def __aenter__(self) -> Self:
+        factory, patchright_active = _get_async_playwright(self._config)
+        self._effective_driver = "patchright" if patchright_active else "playwright"
+        no_viewport = resolve_no_viewport(self._config)
+        if self._config.user_data_dir and not self._config.cdp_url:
+            self._profile_lock = acquire_profile_lock(self._config.user_data_dir)
+        try:
+            self._playwright = await factory().start()
+            if self._config.cdp_url:
+                self._effective_mode = "cdp"
+                self._effective_channel = "attached"
+                self._browser = await self._playwright.chromium.connect_over_cdp(
+                    self._config.cdp_url
+                )
+                self._context = (
+                    self._browser.contexts[0]
+                    if self._browser.contexts
+                    else await self._browser.new_context()
+                )
+            elif self._profile_lock is not None:
+                self._effective_mode = "persistent"
+                (
+                    self._context,
+                    self._effective_channel,
+                ) = await launch_persistent_context_with_config(
+                    self._playwright.chromium,
+                    self._profile_lock.profile_dir,
+                    self._config,
+                    patchright_active,
+                )
+                if self._config.stealth and not patchright_active:
+                    await self._context.add_init_script(_STEALTH_INIT_SCRIPT)
+                if self._context.pages:
+                    self._unclaimed_initial_page = self._context.pages[0]
+            else:
+                self._effective_mode = "fresh"
+                (
+                    self._browser,
+                    self._effective_channel,
+                ) = await launch_browser_with_config(
+                    self._playwright.chromium,
+                    self._config,
+                    patchright_active,
+                )
+                context_kwargs: dict[str, Any] = {}
+                if no_viewport:
+                    context_kwargs["no_viewport"] = True
+                if self._config.user_agent:
+                    context_kwargs["user_agent"] = self._config.user_agent
+                self._context = await self._browser.new_context(**context_kwargs)
+                if self._config.stealth and not patchright_active:
+                    await self._context.add_init_script(_STEALTH_INIT_SCRIPT)
+            logger.debug(
+                "Browse session started: driver={}, mode={}, channel={}, headless={}, no_viewport={}",
+                self._effective_driver,
+                self._effective_mode,
+                self._effective_channel,
+                None if self._config.cdp_url else self._config.headless,
+                None if self._config.cdp_url else no_viewport,
             )
-            self._context = self._browser.contexts[0]
-        else:
-            self._browser = await self._playwright.chromium.launch(
-                headless=self._config.headless
-            )
-            self._context = await self._browser.new_context()
-        return self
+            return self
+        except Exception:
+            await self.__aexit__(None, None, None)
+            raise
 
     async def __aexit__(self, exc_type, exc_value, traceback) -> None:
-        await self.cleanup()
-        if self._browser is not None and not self._config.cdp_url:
-            await self._browser.close()
-        if self._playwright is not None:
-            await self._playwright.stop()
+        try:
+            await self.cleanup()
+            if not self._config.cdp_url:
+                if self._browser is not None:
+                    await self._browser.close()
+                elif self._context is not None:
+                    await self._context.close()
+        finally:
+            try:
+                if self._playwright is not None:
+                    await self._playwright.stop()
+            finally:
+                if self._profile_lock is not None:
+                    self._profile_lock.release()
+                    self._profile_lock = None
 
     def _on_popup(self, opener_tab_id: str, popup_page: object) -> None:
         popup_tab_id = self._register_page(popup_page)
@@ -307,7 +527,14 @@ class GhostBrowserSession(AbstractAsyncContextManager):
 
     async def open_page(self, url: str) -> OpenTab:
         """Open and navigate a page without adopting user tabs."""
-        page = await self._context.new_page()
+        if (
+            self._unclaimed_initial_page is not None
+            and not self._unclaimed_initial_page.is_closed()
+        ):
+            page = self._unclaimed_initial_page
+            self._unclaimed_initial_page = None
+        else:
+            page = await self._context.new_page()
         tab_id = self._register_page(page)
         await page.goto(
             url, wait_until="domcontentloaded", timeout=self._config.timeout_ms
@@ -315,14 +542,90 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         return await self.tab(tab_id)
 
     async def list_tabs(self) -> list[OpenTab]:
-        """Return metadata for all active  tabs."""
+        """Return metadata for all active tabs."""
         tabs: list[OpenTab] = []
         for tab_id in list(self._owned_pages.keys()):
             try:
                 tabs.append(await self.tab(tab_id))
-            except (TabGoneError, Exception):
+            except (TabGoneError, Exception) as exc:
+                logger.debug("Could not retrieve tab {}: {}", tab_id, exc)
                 continue
         return tabs
+
+    async def capture_open_tabs(self) -> list[OpenTab]:
+        """Capture final owned-tab and HTML media state before session cleanup."""
+        captured: list[OpenTab] = []
+        for tab in await self.list_tabs():
+            try:
+                media_state = await self.media_state(tab.tab_id)
+                tab = await self.tab(tab.tab_id)
+            except TabGoneError:
+                continue
+            captured.append(tab.model_copy(update={"media_state": media_state}))
+        return captured
+
+    async def media_state(self, tab_id: str) -> list[MediaState] | None:
+        """Capture bounded playback state, or ``None`` when the page cannot report it."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            raise TabGoneError(tab_id)
+        try:
+            return _parse_media_state(await page.evaluate(_MEDIA_STATE_JS))
+        except BrowserDriverError as error:
+            logger.warning(
+                "Could not capture media state for tab {}: {}", tab_id, error
+            )
+            return None
+
+    async def activate_tab(self, tab_id: str) -> None:
+        """Bring an owned tab to the front so the visible tab matches the work."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            return
+        try:
+            await page.bring_to_front()
+        except BrowserDriverError as error:
+            logger.debug("Could not bring tab {} to front: {}", tab_id, error)
+
+    async def _highlight(self, handle) -> None:
+        """Outline an action target only when visual debugging is enabled."""
+        if not self._config.highlight or (
+            self._config.headless and not self._config.cdp_url
+        ):
+            return
+        try:
+            await handle.scroll_into_view_if_needed(timeout=1_000)
+            await handle.evaluate(_HIGHLIGHT_JS, _HIGHLIGHT_MS)
+            await asyncio.sleep(_HIGHLIGHT_MS / 1000)
+        except Exception as error:
+            logger.debug("Could not highlight action target: {}", error)
+
+    async def verification_challenge(self, tab_id: str) -> str | None:
+        """Return the provider of a visible, unsolved human-verification challenge."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            raise TabGoneError(tab_id)
+        unsolved_checkbox: str | None = None
+        for frame in page.frames:
+            match = _verification_frame(frame.url)
+            if match is None:
+                continue
+            try:
+                if not await (await frame.frame_element()).is_visible():
+                    continue
+            except BrowserDriverError:
+                continue
+            provider, kind = match
+            if kind == "challenge":
+                return provider
+            unsolved_checkbox = provider
+        if unsolved_checkbox is None:
+            return None
+        try:
+            solved = await page.evaluate(_VERIFICATION_SOLVED_JS)
+        except BrowserDriverError:
+            solved = False
+        return None if solved else unsolved_checkbox
 
     async def tab(self, tab_id: str) -> OpenTab:
         """Return metadata for an active owned tab or raise ``TabGoneError``."""
@@ -366,21 +669,50 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             except Exception as error:
                 logger.warning("Could not close browser tab {}: {}", tab_id, error)
 
+    async def restore_page(self, tab_id: str, url: str) -> OpenTab:
+        """Return an owned page to a previously authorized URL."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            raise TabGoneError(tab_id)
+        await page.goto(
+            url, wait_until="domcontentloaded", timeout=self._config.timeout_ms
+        )
+        await self._settle_page(page)
+        self._revisions[tab_id] += 1
+        return await self.tab(tab_id)
+
     async def content(self, tab_id: str) -> str:
         """Return the current HTML for an owned tab."""
         page = self._owned_pages.get(tab_id)
         if page is None or page.is_closed():
             raise TabGoneError(tab_id)
-        return await page.content()
+        return await self._read_settled(page, page.content)
 
     async def text_content(self, tab_id: str) -> str:
         """Return the rendered visible text for an owned tab."""
         page = self._owned_pages.get(tab_id)
         if page is None or page.is_closed():
             raise TabGoneError(tab_id)
-        return await page.evaluate(
-            "() => (document.body && document.body.innerText) || ''"
+        return await self._read_settled(
+            page,
+            lambda: page.evaluate(
+                "() => (document.body && document.body.innerText) || ''"
+            ),
         )
+
+    async def _read_settled(self, page, read):
+        """Read page state, settling and retrying if a navigation is in flight."""
+        for attempt in range(_READ_ATTEMPTS):
+            try:
+                return await read()
+            except BrowserDriverError as error:
+                message = str(error)
+                if attempt == _READ_ATTEMPTS - 1 or not any(
+                    marker in message for marker in _NAVIGATING_ERRORS
+                ):
+                    raise
+                logger.debug("Page read raced a navigation; retrying: {}", message)
+                await self._settle_page(page)
 
     async def form_state(self, tab_id: str) -> list[str]:
         """Return visible non-credential field values, showing what was submitted."""
@@ -400,20 +732,37 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             raise TabGoneError(tab_id)
         await self._settle_page(page)
 
-    async def _settle_page(self, page) -> None:
+    async def _settle_page(self, page) -> str:
+        """Best-effort wait for a page to stop changing.
+
+        Returns ``"quiet"``, ``"max_wait"`` (page kept changing; expected on
+        dynamic sites), ``"timeout"`` or ``"error"``. Never raises.
+        """
         try:
             await page.wait_for_load_state(
                 "domcontentloaded", timeout=self._settle_timeout_ms
             )
-        except Exception:
-            logger.debug("Browse settle: load state wait timed out")
+        except Exception as exc:
+            logger.debug(f"Browse settle: load state wait failed: {exc}")
         try:
-            await asyncio.wait_for(
-                page.evaluate(_DOM_QUIET_JS, self._settle_idle_ms),
-                timeout=self._settle_timeout_ms / 1000,
+            status = await asyncio.wait_for(
+                page.evaluate(
+                    _DOM_QUIET_JS,
+                    {"idleMs": self._settle_idle_ms, "maxMs": self._settle_max_wait_ms},
+                ),
+                timeout=self._settle_max_wait_ms / 1000 + _SETTLE_GRACE_S,
             )
-        except Exception:
-            logger.debug("Browse settle: DOM quiescence wait timed out")
+        except asyncio.TimeoutError:
+            logger.debug(
+                "Browse settle: DOM quiescence check did not return within "
+                f"{self._settle_max_wait_ms} ms"
+            )
+            return "timeout"
+        except Exception as exc:
+            # Typically "Execution context was destroyed" after a navigation.
+            logger.debug(f"Browse settle: DOM quiescence check failed: {exc}")
+            return "error"
+        return status if status in ("quiet", "max_wait") else "quiet"
 
     async def snapshot(self, tab_id: str) -> BrowserSnapshot:
         """Create a compact accessibility-oriented observation for one owned tab."""
@@ -439,9 +788,33 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 await self._settle_page(page)
         raise TabGoneError(tab_id)
 
+    async def skip_ad(self, tab_id: str) -> bool:
+        """Click a YouTube in-player skip button if an ad is showing."""
+        page = self._owned_pages.get(tab_id)
+        if page is None or page.is_closed():
+            raise TabGoneError(tab_id)
+        if urlparse(page.url).hostname not in _YOUTUBE_HOSTS:
+            return False
+        try:
+            if not await page.locator("#movie_player.ad-showing").count():
+                return False
+            # Locator click waits for the button to become visible and enabled.
+            await page.locator(_AD_SKIP_SELECTOR).first.click(
+                timeout=min(_SHORT_WAIT_MS, self._config.timeout_ms)
+            )
+        except BrowserDriverError as error:
+            logger.debug("No ad skip on {}: {}", tab_id, type(error).__name__)
+            return False
+        self._revisions[tab_id] += 1
+        return True
+
     async def _capture_snapshot(self, tab_id: str, page: Any) -> BrowserSnapshot:
         locator = page.locator("button, a, input, select, textarea, [role]")
         entries = await locator.evaluate_all(_SNAPSHOT_ELEMENTS_JS)
+        batch = await locator.element_handles()
+        # Batched handles are only trusted when the DOM did not change between calls.
+        if len(batch) != len(entries):
+            batch = None
         revision = self._revisions[tab_id]
         snapshot_id = f"snapshot-{uuid4().hex}"
         refs = []
@@ -454,7 +827,11 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             ):
                 continue
             ref = f"e{entry['index']}"
-            handle = await locator.nth(entry["index"]).element_handle()
+            handle = (
+                batch[entry["index"]]
+                if batch is not None
+                else await locator.nth(entry["index"]).element_handle()
+            )
             if handle is None:
                 continue
             refs.append(
@@ -467,6 +844,11 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                     role=entry.get("role"),
                     name=str(entry.get("name") or "")[:1000],
                     tag=entry.get("tag"),
+                    href=(
+                        entry.get("href")
+                        if len(entry.get("href") or "") <= 8192
+                        else None
+                    ),
                     ordinal=entry["index"],
                     bbox_x=entry["bbox_x"],
                     bbox_y=entry["bbox_y"],
@@ -484,14 +866,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             )
             handles[ref] = handle
         digest = hashlib.sha256(repr(entries).encode("utf-8")).hexdigest()
-        viewport = await page.evaluate(
-            """() => ({
-                width: window.innerWidth,
-                height: window.innerHeight,
-                scrollX: window.scrollX,
-                scrollY: window.scrollY
-            })"""
-        )
+        viewport = await page.evaluate(_SNAPSHOT_STATE_JS)
         snapshot = BrowserSnapshot(
             snapshot_id=snapshot_id,
             tab_id=tab_id,
@@ -502,12 +877,65 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             viewport_height=viewport["height"],
             scroll_x=viewport["scrollX"],
             scroll_y=viewport["scrollY"],
+            media_state=_parse_media_state(viewport.get("media_state", [])),
             elements=refs,
             content_hash=digest,
         )
         self._snapshots[snapshot_id] = snapshot
         self._snapshot_handles[snapshot_id] = handles
         return snapshot
+
+    async def _pace_action(self) -> None:
+        """Sleep only when the previous action ended less than the gap ago."""
+        if self._last_action_at is None:
+            return
+        gap = random.uniform(*self._action_gap_s)
+        remaining = gap - (time.monotonic() - self._last_action_at)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+
+    async def _click(self, handle) -> None:
+        """Travel to a jittered point inside the target and press briefly."""
+        box = await handle.bounding_box()
+        position = None
+        if box and box["width"] > 4 and box["height"] > 4:
+            x, y = _jitter_point(box["width"], box["height"])
+            position = {"x": x, "y": y}
+        await handle.click(
+            timeout=self._action_timeout_ms,
+            position=position,
+            steps=random.randint(*_POINTER_STEPS),
+            delay=random.uniform(*_PRESS_MS),
+        )
+
+    async def _move_pointer(self, page, handle) -> None:
+        """Bring the target into view and move the pointer over it in steps."""
+        await handle.scroll_into_view_if_needed(timeout=self._action_timeout_ms)
+        box = await handle.bounding_box()
+        if box is None:
+            raise RuntimeError("target has no visible bounding box")
+        x, y = _jitter_point(box["width"], box["height"])
+        await page.mouse.move(
+            box["x"] + x, box["y"] + y, steps=random.randint(*_POINTER_STEPS)
+        )
+
+    async def _type_keys(self, page, text: str) -> None:
+        """Type into the focused element one key at a time."""
+        for char in text:
+            await page.keyboard.type(char)
+            await asyncio.sleep(random.uniform(*_KEY_GAP_S))
+
+    async def _replace_text(self, page, handle, text: str) -> None:
+        """Focus by clicking, clear any existing value, then type the new value."""
+        await self._click(handle)
+        try:
+            current = await handle.input_value(timeout=self._action_timeout_ms)
+        except BrowserDriverError:
+            current = await handle.text_content() or ""
+        if current:
+            await page.keyboard.press("ControlOrMeta+A")
+            await page.keyboard.press("Backspace")
+        await self._type_keys(page, text)
 
     async def execute(self, action: BrowserAction) -> BrowserActionResult:
         """Execute one current-snapshot action against its exact owned tab."""
@@ -530,6 +958,20 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                 success=False, outcome="tab closed", error_code="tab_gone"
             )
         before_url = page.url
+        if action.kind == "open_tab":
+            try:
+                opened = await self.open_page(action.url or "")
+                await self._settle_page(self._owned_pages[opened.tab_id])
+                opened = await self.tab(opened.tab_id)
+            except Exception as error:
+                return BrowserActionResult(success=False, outcome=str(error)[:1000])
+            return BrowserActionResult(
+                success=True,
+                outcome="opened new tab",
+                before_url=before_url,
+                after_url=opened.url,
+                opened_tab_id=opened.tab_id,
+            )
         try:
             if action.kind in {"click", "type", "select", "hover"} and not action.ref:
                 return BrowserActionResult(
@@ -560,9 +1002,12 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                             outcome="stale reference",
                             error_code="stale_ref",
                         )
+                    await self._highlight(handle)
+            if action.kind != "wait":
+                await self._pace_action()
             if action.kind == "click":
                 assert handle is not None
-                await handle.click(timeout=self._config.timeout_ms)
+                await self._click(handle)
             elif action.kind == "type":
                 assert handle is not None
                 input_type = (element.input_type or "").lower() if element else ""
@@ -574,29 +1019,36 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                         snapshot.tab_id,
                         action.ref,
                     )
-                await handle.fill(action.text or "", timeout=self._config.timeout_ms)
+                await self._replace_text(page, handle, action.text or "")
             elif action.kind == "select":
                 assert handle is not None
                 try:
                     await handle.select_option(label=action.text or "")
                 except Exception:
-                    await handle.click(timeout=self._config.timeout_ms)
+                    await self._click(handle)
+                    if element is not None and element.tag in {"input", "textarea"}:
+                        # Editable comboboxes filter their options as the user types.
+                        await self._type_keys(page, action.text or "")
                     option = page.get_by_role("option", name=action.text or "").first
-                    await option.click(timeout=self._config.timeout_ms)
+                    await option.click(
+                        timeout=self._action_timeout_ms,
+                        steps=random.randint(*_POINTER_STEPS),
+                        delay=random.uniform(*_PRESS_MS),
+                    )
             elif action.kind == "keypress":
                 await page.keyboard.press(action.text or "Enter")
             elif action.kind == "hover":
                 assert handle is not None
-                await handle.hover(timeout=self._config.timeout_ms)
+                await self._move_pointer(page, handle)
             elif action.kind == "scroll":
                 direction = -1 if action.text == "up" else 1
                 if action.ref and handle is not None:
-                    await handle.evaluate(_CONTAINER_SCROLL_JS, direction)
+                    # The wheel scrolls whatever scrollable area is under the pointer.
+                    await self._move_pointer(page, handle)
+                    extent = await handle.evaluate(_SCROLL_EXTENT_JS)
                 else:
-                    await page.evaluate(
-                        "direction => window.scrollBy(0, direction * window.innerHeight)",
-                        direction,
-                    )
+                    extent = await page.evaluate("() => window.innerHeight")
+                await page.mouse.wheel(0, direction * max(extent * 0.8, 100))
             elif action.kind == "navigate":
                 await page.goto(
                     action.url or "",
@@ -604,21 +1056,33 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                     timeout=self._config.timeout_ms,
                 )
             elif action.kind == "back":
-                await page.go_back(timeout=self._config.timeout_ms)
+                await page.go_back(
+                    wait_until="domcontentloaded", timeout=self._config.timeout_ms
+                )
             elif action.kind == "refresh":
-                await page.reload(timeout=self._config.timeout_ms)
+                await page.reload(
+                    wait_until="domcontentloaded", timeout=self._config.timeout_ms
+                )
             elif action.kind == "wait":
                 if action.text:
-                    await page.get_by_text(action.text, exact=False).first.wait_for(
-                        state="visible", timeout=self._config.timeout_ms
+                    await (
+                        page.get_by_text(action.text, exact=False)
+                        .locator("visible=true")
+                        .first.wait_for(
+                            state="visible",
+                            timeout=min(_SHORT_WAIT_MS, self._config.timeout_ms),
+                        )
                     )
                 else:
                     await page.wait_for_timeout(500)
             else:
                 return BrowserActionResult(success=False, outcome="unsupported action")
         except Exception as error:
+            self._last_action_at = time.monotonic()
             return BrowserActionResult(success=False, outcome=str(error)[:1000])
-        await self._settle_page(page)
+        if action.kind != "wait":
+            await self._settle_page(page)
+        self._last_action_at = time.monotonic()
         opened_tab_id: str | None = None
         opened_url: str | None = None
         reused_existing_tab = False

@@ -30,6 +30,7 @@ class BrowseErrorCode(str, Enum):
     CONFIRMATION_REQUIRED = "confirmation_required"
     NAVIGATION_TIMEOUT = "navigation_timeout"
     MODEL_UNSUPPORTED = "model_unsupported"
+    VERIFICATION_REQUIRED = "human_verification_required"
 
 
 class NavigationOutcome(str, Enum):
@@ -180,6 +181,7 @@ class CoverageReport(BaseModel):
         "no_next_action",
         "budget_exhausted",
         "blocked",
+        "verification_required",
     ] = "budget_exhausted"
     answerability: Literal["sufficient", "partial", "insufficient"] = "insufficient"
     gaps: list[str] = Field(default_factory=list, max_length=20)
@@ -193,7 +195,7 @@ class CoverageReport(BaseModel):
 def is_reasoning_model(model: str) -> bool:
     """Return whether a model identifier represents an OpenAI reasoning model."""
     name = model.split("/")[-1].lower()
-    return name.startswith("gpt-5")
+    return name.startswith(("gpt-5", "gpt-6"))
 
 
 class RoleModelConfig(BaseModel):
@@ -313,6 +315,10 @@ class BrowseLimits(BaseModel):
     timeout_ms: int = Field(default=60_000, ge=1_000, le=300_000)
 
 
+# Page geometry (element boxes, scroll offsets) can far exceed the viewport on long pages.
+_MAX_PAGE_PX = 1_000_000
+
+
 class ElementRef(BaseModel):
     """An element reference valid only for the originating snapshot and frame."""
 
@@ -326,11 +332,12 @@ class ElementRef(BaseModel):
     role: str | None = Field(default=None, max_length=128)
     name: str | None = Field(default=None, max_length=1_000)
     tag: str | None = Field(default=None, max_length=64)
+    href: str | None = Field(default=None, max_length=8_192)
     ordinal: int | None = Field(default=None, ge=0)
-    bbox_x: float | None = Field(default=None, ge=-20_000, le=20_000)
-    bbox_y: float | None = Field(default=None, ge=-20_000, le=20_000)
-    bbox_width: float | None = Field(default=None, gt=0, le=20_000)
-    bbox_height: float | None = Field(default=None, gt=0, le=20_000)
+    bbox_x: float | None = Field(default=None, ge=-_MAX_PAGE_PX, le=_MAX_PAGE_PX)
+    bbox_y: float | None = Field(default=None, ge=-_MAX_PAGE_PX, le=_MAX_PAGE_PX)
+    bbox_width: float | None = Field(default=None, gt=0, le=_MAX_PAGE_PX)
+    bbox_height: float | None = Field(default=None, gt=0, le=_MAX_PAGE_PX)
     visible: bool = True
     enabled: bool = True
     checked: bool | None = None
@@ -341,8 +348,22 @@ class ElementRef(BaseModel):
     in_modal: bool = False
 
 
+class MediaState(BaseModel):
+    """Observable playback state for one HTML media element."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    media_type: Literal["audio", "video"]
+    paused: bool
+    current_time: float = Field(ge=0)
+    duration: float | None = Field(default=None, ge=0)
+    ended: bool
+    ready_state: int = Field(ge=0, le=4)
+    ad_showing: bool | None = None
+
+
 class BrowserSnapshot(BaseModel):
-    """Bounded accessibility-first page observation."""
+    """Bounded accessibility-first page and media observation."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -353,9 +374,10 @@ class BrowserSnapshot(BaseModel):
     title: str = Field(default="", max_length=2_000)
     viewport_width: int = Field(ge=1, le=20_000)
     viewport_height: int = Field(ge=1, le=20_000)
-    scroll_x: float = Field(ge=-20_000, le=20_000)
-    scroll_y: float = Field(ge=-20_000, le=20_000)
+    scroll_x: float = Field(ge=-_MAX_PAGE_PX, le=_MAX_PAGE_PX)
+    scroll_y: float = Field(ge=-_MAX_PAGE_PX, le=_MAX_PAGE_PX)
     elements: list[ElementRef] = Field(default_factory=list, max_length=500)
+    media_state: list[MediaState] = Field(default_factory=list, max_length=5)
     truncated: bool = False
     content_hash: str = Field(min_length=1, max_length=128)
 
@@ -373,6 +395,7 @@ class BrowserAction(BaseModel):
         "hover",
         "scroll",
         "navigate",
+        "open_tab",
         "back",
         "refresh",
         "wait",
@@ -404,7 +427,7 @@ class BrowseUsage(BaseModel):
 
 
 class PageArtifact(BaseModel):
-    """Captured, provenance-bearing page material."""
+    """Captured, provenance-bearing page and media state."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -414,6 +437,11 @@ class PageArtifact(BaseModel):
     captured_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     content_hash: str = Field(min_length=1, max_length=128)
     text: str = Field(default="", max_length=2_000_000)
+    media_state: list[MediaState] | None = Field(
+        default=None,
+        max_length=5,
+        description="HTML audio/video state; None when it could not be captured.",
+    )
     truncated: bool = False
 
 
@@ -430,7 +458,7 @@ class EvidenceClaim(BaseModel):
 
 
 class OpenTab(BaseModel):
-    """A retained page."""
+    """Metadata and captured media state for one owned page."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -438,6 +466,11 @@ class OpenTab(BaseModel):
     target_id: str = Field(min_length=1, max_length=256)
     url: str = Field(min_length=1, max_length=8_192)
     title: str = Field(default="", max_length=2_000)
+    media_state: list[MediaState] | None = Field(
+        default=None,
+        max_length=5,
+        description="HTML audio/video state; None when it was not captured.",
+    )
 
 
 class BrowserActionResult(BaseModel):
@@ -458,6 +491,17 @@ class BrowserActionResult(BaseModel):
     target_bbox_width: float | None = None
     target_bbox_height: float | None = None
     opened_tab_id: str | None = None
+
+
+class VerificationRequest(BaseModel):
+    """A site challenge that only a person in the visible browser can complete."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str = Field(min_length=1, max_length=128)
+    tab_id: str = Field(min_length=1, max_length=128)
+    url: str = Field(max_length=8_192)
+    provider: Literal["hcaptcha", "recaptcha"]
 
 
 class BrowserActionTrace(BaseModel):
@@ -487,6 +531,27 @@ class InferredSeed(BaseModel):
     rationale: str = Field(default="", max_length=1_000)
 
 
+class SourceScope(BaseModel):
+    """Enforced source restriction and the user wording that justifies it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["unrestricted", "search_provider_only", "domain_only"] = (
+        "unrestricted"
+    )
+    evidence: str | None = Field(default=None, max_length=500)
+
+    @property
+    def restricted(self) -> bool:
+        return self.mode != "unrestricted"
+
+    @model_validator(mode="after")
+    def _validate_evidence(self) -> Self:
+        if not self.restricted and self.evidence is not None:
+            raise ValueError("unrestricted source scope cannot cite restriction text")
+        return self
+
+
 class BrowseTask(BaseModel):
     """Validated single-task input and execution state."""
 
@@ -505,6 +570,7 @@ class BrowseTask(BaseModel):
     collection: CollectionPlan = Field(default_factory=CollectionPlan)
     stages: list[PlanStage] = Field(default_factory=list, max_length=20)
     allowed_domains: list[str] = Field(min_length=1, max_length=100)
+    source_scope: SourceScope = Field(default_factory=SourceScope)
     limits: BrowseLimits = Field(default_factory=BrowseLimits)
     retain_final_page: bool = True
     status: BrowseTerminalState | None = None
@@ -562,6 +628,13 @@ class BrowseTaskResult(BaseModel):
     assessments: list[SynthesisAssessment] = Field(default_factory=list)
     trace: list[BrowserActionTrace] = Field(default_factory=list)
     retained_tabs: list[OpenTab] = Field(default_factory=list)
+    open_tabs_at_end: list[OpenTab] = Field(
+        default_factory=list,
+        description=(
+            "Allowlisted owned-tab state before cleanup. A drifted tab may revisit "
+            "its last captured URL once before being excluded."
+        ),
+    )
     usage: BrowseUsage = Field(default_factory=BrowseUsage)
     plan_outcome: PlanOutcomeRecord | None = None
 
