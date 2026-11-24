@@ -536,10 +536,14 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         else:
             page = await self._context.new_page()
         tab_id = self._register_page(page)
-        await page.goto(
-            url, wait_until="domcontentloaded", timeout=self._config.timeout_ms
-        )
-        return await self.tab(tab_id)
+        try:
+            await page.goto(
+                url, wait_until="domcontentloaded", timeout=self._config.timeout_ms
+            )
+            return await self.tab(tab_id)
+        except (Exception, asyncio.CancelledError):
+            await self.close_tab(tab_id)
+            raise
 
     async def list_tabs(self) -> list[OpenTab]:
         """Return metadata for all active tabs."""

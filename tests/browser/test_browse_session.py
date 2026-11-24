@@ -1474,6 +1474,37 @@ async def test_observe_skips_ad_before_snapshot(monkeypatch, skipped):
 
 
 @pytest.mark.asyncio
+async def test_open_page_closes_and_unregisters_tab_on_navigation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    root = _FakePageWithPopup()
+    root_id = session._register_page(root, "tab-root")
+    pending_page = _FakePageWithPopup()
+    context = _FakePageContext()
+    session._context = context
+    navigation_error = TimeoutError("navigation timed out")
+
+    async def new_page() -> _FakePageWithPopup:
+        return pending_page
+
+    async def fail_navigation(url: str, **kwargs: object) -> None:
+        raise navigation_error
+
+    monkeypatch.setattr(context, "new_page", new_page)
+    monkeypatch.setattr(pending_page, "goto", fail_navigation)
+
+    with pytest.raises(TimeoutError) as error:
+        await session.open_page("https://example.com/")
+
+    assert error.value is navigation_error
+    assert pending_page.closed
+    assert not root.closed
+    assert list(session._owned_pages) == [root_id]
+    assert list(session._revisions) == [root_id]
+
+
+@pytest.mark.asyncio
 async def test_open_tab_opens_only_allowlisted_url_and_switches_active_tab():
     session = GhostBrowserSession(GhostConfig.from_kwargs(True))
     root = _FakePageWithPopup()
