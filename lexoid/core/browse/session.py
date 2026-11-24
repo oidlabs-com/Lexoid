@@ -717,6 +717,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
                     raise
                 logger.debug("Page read raced a navigation; retrying: {}", message)
                 await self._settle_page(page)
+        raise RuntimeError("Read retries exhausted without result")
 
     async def form_state(self, tab_id: str) -> list[str]:
         """Return visible non-credential field values, showing what was submitted."""
