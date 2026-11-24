@@ -303,6 +303,7 @@ async def run_task(
     ``on_verification_required`` is awaited when a hCaptcha or reCAPTCHA challenge
     blocks a visible browser; without it, or when headless, the task is blocked.
     """
+    task = task.model_copy(deep=True)
     publisher = BrowseEventPublisher(event_listener)
     await publisher.emit(
         BrowserActionTrace(
