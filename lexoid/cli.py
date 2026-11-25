@@ -1,20 +1,27 @@
 #!/usr/bin/env python3
-"""Command-line interface for Lexoid document parsing library."""
+"""Command-line interface for Lexoid document parsing and web-operator."""
 
+import asyncio
 import json
 import os
 from pathlib import Path
 from typing import Optional
 
 import click
-from loguru import logger
-
 from lexoid.api import ParserType
+from lexoid.api import browse as api_browse
 from lexoid.api import parse as api_parse
 from lexoid.api import parse_to_latex as api_parse_to_latex
 from lexoid.api import parse_with_schema as api_parse_with_schema
+from lexoid.core.browse.policy import DEFAULT_SEARCH_URL
+from lexoid.core.browse.schemas import (
+    BrowseLimits,
+    BrowseModelConfig,
+    BrowseResult,
+)
 from lexoid.core.utils import get_default_llm_config
-
+from loguru import logger
+from pydantic import ValidationError
 
 API_KEY_ENV_VARS = {
     "openai": "OPENAI_API_KEY",
@@ -152,6 +159,60 @@ def load_schema_definition(schema: str) -> dict:
         )
 
 
+def resolve_browse_model_config(
+    model: Optional[str], model_config_file: Optional[Path]
+) -> str | BrowseModelConfig | None:
+    """Resolve browse model configuration from --model or a --model-config file."""
+    if model and model_config_file:
+        raise click.UsageError("Provide either --model or --model-config, not both.")
+    if model_config_file is None:
+        return model
+
+    try:
+        config_data = json.loads(model_config_file.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise click.ClickException(
+            f"Could not read model config file {model_config_file}: {error}"
+        )
+    except json.JSONDecodeError as error:
+        raise click.ClickException(
+            f"Invalid JSON in model config file {model_config_file}: {error}"
+        )
+    if not isinstance(config_data, dict):
+        raise click.ClickException(
+            f"Model config file {model_config_file} must contain a JSON object."
+        )
+
+    try:
+        return BrowseModelConfig.model_validate(config_data)
+    except ValidationError as error:
+        raise click.ClickException(
+            f"Invalid model config in {model_config_file}: {error}"
+        )
+
+
+def format_browse_output(result: BrowseResult, output_format: str) -> str:
+    """Format browse output as markdown or JSON."""
+    if output_format == "json":
+        return result.model_dump_json(indent=2)
+    return result.answer
+
+
+def show_browse_summary(
+    result: BrowseResult, output_format: str, to_file: bool = False
+) -> None:
+    """Display browse metadata for markdown output to stderr (for piping)."""
+    if output_format != "markdown" or to_file:
+        return
+
+    if result.task_results:
+        click.echo(f"\n📌 Status: {result.task_results[0].status.value}", err=True)
+    if result.usage.total > 0:
+        click.echo(f"📊 Token Usage: {result.usage.model_dump()}", err=True)
+    for warning in result.warnings:
+        click.secho(f"⚠️  {warning}", fg="yellow", err=True)
+
+
 def format_parse_output(result: dict, output_format: str) -> str:
     """Format parse output as markdown or JSON."""
     if output_format == "json":
@@ -159,9 +220,7 @@ def format_parse_output(result: dict, output_format: str) -> str:
     return result["raw"]
 
 
-def write_output(
-    output_path: Optional[Path], content: str, success_message: str
-) -> None:
+def write_output(output_path: Path | None, content: str, success_message: str) -> None:
     """Write output to a file or stdout.
 
     When outputting to stdout, only the content is written to stdout (for clean piping).
@@ -462,6 +521,159 @@ def schema(
         raise
     except Exception as e:
         handle_cli_error(e, verbose)
+
+
+@app.command()
+@click.argument("query", required=True)
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    default=None,
+    help="Path to output file (default: print to stdout)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["markdown", "json"]),
+    default="markdown",
+    help="Output format: markdown (default, grounded answer) or json (full BrowseResult)",
+)
+@click.option(
+    "--model",
+    "-m",
+    default=None,
+    help="Default LLM model for all browse roles (e.g., gpt-4o-mini, gemini-2.5-flash)",
+)
+@click.option(
+    "--model-config",
+    "model_config_file",
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+    default=None,
+    help="JSON file with per-role model, reasoning, and options settings",
+)
+@click.option(
+    "--cdp-url",
+    type=str,
+    default=None,
+    help="Attach to an existing browser over Chrome DevTools Protocol (e.g., http://localhost:9222)",
+)
+@click.option(
+    "--user-data-dir",
+    type=click.Path(),
+    default=None,
+    help="Dedicated persistent browser profile directory",
+)
+@click.option(
+    "--channel",
+    type=str,
+    default=None,
+    help="Browser distribution channel (e.g., chrome, chromium)",
+)
+@click.option(
+    "--headless/--headed",
+    default=True,
+    help="Run browser in headless mode (default: --headless)",
+)
+@click.option(
+    "--mute-audio/--no-mute-audio",
+    default=True,
+    help="Mute audio in locally launched browsers (default: --mute-audio)",
+)
+@click.option(
+    "--max-steps",
+    type=click.IntRange(min=1, max=150),
+    default=None,
+    help="Maximum total browser actions for the task (default: 50)",
+)
+@click.option(
+    "--max-pages",
+    type=click.IntRange(min=1, max=100),
+    default=None,
+    help="Maximum pages to capture for evidence (default: 5)",
+)
+@click.option(
+    "--timeout-ms",
+    type=click.IntRange(min=1_000, max=300_000),
+    default=None,
+    help="Per-operation browser timeout in milliseconds (default: 60000)",
+)
+@click.option(
+    "--default-search-url",
+    type=str,
+    default=DEFAULT_SEARCH_URL,
+    show_default=True,
+    help="Starting search provider URL for open-ended queries without an explicit source",
+)
+@click.option(
+    "--verbose",
+    "-v",
+    is_flag=True,
+    help="Enable verbose logging",
+)
+def browse(
+    query,
+    output,
+    output_format,
+    model,
+    model_config_file,
+    cdp_url,
+    user_data_dir,
+    channel,
+    headless,
+    mute_audio,
+    max_steps,
+    max_pages,
+    timeout_ms,
+    default_search_url,
+    verbose,
+):
+    """Run an evidence-grounded web-operator task."""
+    configure_logging(verbose)
+
+    try:
+        model_config = resolve_browse_model_config(model, model_config_file)
+        output_path = validate_output_path(output)
+
+        limit_kwargs: dict[str, int] = {}
+        if max_steps is not None:
+            limit_kwargs["max_steps"] = max_steps
+        if max_pages is not None:
+            limit_kwargs["max_pages"] = max_pages
+        if timeout_ms is not None:
+            limit_kwargs["timeout_ms"] = timeout_ms
+        limits = BrowseLimits(**limit_kwargs) if limit_kwargs else None
+
+        click.echo("🔄 Running web-operator task...", err=True)
+        try:
+            result = asyncio.run(
+                api_browse(
+                    query,
+                    model_config=model_config,
+                    cdp_url=cdp_url,
+                    user_data_dir=user_data_dir,
+                    channel=channel,
+                    headless=headless,
+                    mute_audio=mute_audio,
+                    limits=limits,
+                    default_search_url=default_search_url,
+                )
+            )
+        except ValueError as error:
+            raise click.ClickException(str(error))
+        except Exception as error:
+            if isinstance(error, click.ClickException):
+                raise
+            raise click.ClickException(f"Browse task failed: {error}")
+
+        output_content = format_browse_output(result, output_format)
+        write_output(output_path, output_content, "Browse task completed!")
+        show_browse_summary(result, output_format, to_file=output_path is not None)
+
+    except click.ClickException:
+        raise
+    except Exception as error:
+        handle_cli_error(error, verbose)
 
 
 @app.command()

@@ -13,11 +13,12 @@ the module form ``python -m lexoid``.
 Commands
 --------
 
-The CLI exposes three sub-commands:
+The CLI exposes four sub-commands:
 
 * ``lexoid parse`` — Convert a document into markdown (or JSON with metadata).
 * ``lexoid schema`` — Extract structured data conforming to a JSON schema.
 * ``lexoid latex`` — Convert a document into LaTeX.
+* ``lexoid browse`` — Run an evidence-grounded web-operator task.
 
 Common options
 ^^^^^^^^^^^^^^
@@ -90,6 +91,71 @@ Options:
 
 * ``--model, -m``: LLM model. Default: ``gpt-4o-mini``.
 * ``--api``: API provider (auto-detected from model name if omitted).
+
+``lexoid browse``
+^^^^^^^^^^^^^^^^^
+
+Run an evidence-grounded web-operator task from a natural-language query.
+
+.. code-block:: bash
+
+    lexoid browse "Go to https://example.com/ and summarize the pricing page" --model gpt-6.2-sol
+    lexoid browse "Find recent filings" --model-config roles.json --format json --output result.json
+    lexoid browse "Find recent filings" --headed --cdp-url http://localhost:9222
+
+The model config file accepts the same role mapping as the Python API. A ``default``
+entry applies to every role; a role-specific entry overrides it. If ``assessor`` is
+omitted, it uses the ``extractor`` configuration when present, otherwise ``default``.
+Reasoning settings and model options are provider- and model-specific; consult the
+provider documentation for supported fields and values. For OpenAI, see the
+`reasoning guide <https://developers.openai.com/api/docs/guides/reasoning>`_ and
+`Responses API reference <https://developers.openai.com/api/reference/resources/responses/methods/create>`_.
+For example:
+
+.. code-block:: json
+
+        {
+            "planner": {
+                "model": "gpt-6-luna",
+                "reasoning": {"effort": "high", "summary": "detailed"},
+                "options": {"verbosity": "high"}
+            },
+            "navigator": {
+                "model": "gpt-6.2-sol",
+                "reasoning": {"effort": "medium"},
+                "options": {"verbosity": "high"}
+            },
+            "assessor": {
+                "model": "gpt-6.2-sol",
+                "reasoning": {"effort": "medium"}
+            },
+            "extractor": {
+                "model": "gpt-6-luna",
+                "reasoning": {"effort": "high"}
+            },
+            "synthesizer": {
+                "model": "gpt-6-luna",
+                "reasoning": {"effort": "medium"}
+            }
+        }
+
+Options:
+
+* ``QUERY`` (required): Natural-language web-operator query.
+* ``--output, -o``: Path to output file (default: stdout).
+* ``--format``: ``markdown`` (default; grounded answer) or ``json`` (full ``BrowseResult``).
+* ``--model, -m``: Default LLM model for all browse roles.
+* ``--model-config``: Path to a JSON file with per-role models, reasoning, and options (see example above). Unknown keys are rejected. Cannot be combined with ``--model``.
+* ``--cdp-url``: Attach to an existing browser over Chrome DevTools Protocol.
+* ``--user-data-dir``: Dedicated persistent browser profile directory.
+* ``--channel``: Browser distribution channel (e.g. ``chrome``, ``chromium``).
+* ``--headless / --headed``: Run headless (default) or visible browser.
+* ``--mute-audio / --no-mute-audio``: Mute audio in locally launched browsers (default: muted).
+* ``--max-steps``: Maximum total browser actions (default: ``50``).
+* ``--max-pages``: Maximum pages to capture (default: ``5``).
+* ``--timeout-ms``: Per-operation timeout in milliseconds (default: ``60000``).
+* ``--default-search-url``: Starting search provider URL for open-ended queries.
+* ``--verbose, -v``: Enable detailed logging.
 
 API keys
 --------

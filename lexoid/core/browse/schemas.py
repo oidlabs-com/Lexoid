@@ -199,7 +199,7 @@ def is_reasoning_model(model: str) -> bool:
 
 
 class RoleModelConfig(BaseModel):
-    """Configuration for a specific browse role, including model and options."""
+    """Model, reasoning settings, and provider options for one browse role."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -218,7 +218,11 @@ class RoleModelConfig(BaseModel):
 
 
 class BrowseModelConfig(BaseModel):
-    """Configuration mapping roles to LLM model identifiers for browse()."""
+    """Configure a shared default and per-role model, reasoning, and options.
+
+    Roles inherit ``default`` unless explicitly configured. ``assessor`` inherits
+    ``extractor`` when no assessor configuration is provided.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -237,7 +241,7 @@ class BrowseModelConfig(BaseModel):
         return self.default
 
     def for_role(self, role: str) -> str | None:
-        """Get the effective model for a specific role, falling back to default."""
+        """Resolve a role model, falling back from assessor to extractor, then default."""
         if role not in {"planner", "navigator", "assessor", "extractor", "synthesizer"}:
             raise ValueError(f"Unknown browse role: {role}")
         val = getattr(self, role)
@@ -250,7 +254,7 @@ class BrowseModelConfig(BaseModel):
         return val
 
     def options_for_role(self, role: str) -> dict[str, Any]:
-        """Get effective Agent default_options for a specific role."""
+        """Resolve shared and role-specific options for an agent role."""
         if role not in {"planner", "navigator", "assessor", "extractor", "synthesizer"}:
             raise ValueError(f"Unknown browse role: {role}")
         model = self.for_role(role)
