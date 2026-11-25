@@ -197,111 +197,39 @@ Alternatively, use with Python module syntax:
 python -m lexoid --help
 ```
 
-## Parse Documents
+## CLI Quick Start
 
-Convert documents to markdown or JSON:
+The CLI provides `parse`, `schema`, `latex`, and `browse` commands:
 
 ```bash
-# Parse to stdout (default markdown)
-lexoid parse --input document.pdf
-
-# Save to file
-lexoid parse --input document.pdf --output output.md
-
-# Output as JSON (includes metadata, segments, token usage)
+# Parse a document to markdown or JSON
 lexoid parse --input document.pdf --format json --output result.json
 
-# Use specific parser (STATIC_PARSE, LLM_PARSE, or AUTO)
-lexoid parse --input document.pdf --parser-type STATIC_PARSE
+# Extract structured data with a JSON schema
+lexoid schema --input document.pdf --schema schema.json --output result.json
 
-# Use specific LLM model
-lexoid parse --input document.pdf --model gpt-4o
-
-# Enable verbose logging
-lexoid parse --input document.pdf --verbose
-```
-
-## Extract Structured Data with JSON Schema
-
-Extract data conforming to a JSON schema:
-
-```bash
-# Inline schema
-lexoid schema \
-  --input document.pdf \
-  --schema '{"type": "object", "properties": {"title": {"type": "string"}}}' \
-  --output result.json
-
-# Schema from file
-lexoid schema \
-  --input document.pdf \
-  --schema schema.json \
-  --output result.json
-
-# Specify LLM provider
-lexoid schema \
-  --input document.pdf \
-  --schema schema.json \
-  --api openai \
-  --model gpt-4o
-```
-
-## Convert to LaTeX
-
-Convert documents to LaTeX format:
-
-```bash
-# Convert to stdout
-lexoid latex --input document.pdf
-
-# Save to file
+# Convert a document to LaTeX
 lexoid latex --input document.pdf --output output.tex
 
-# Use specific model
-lexoid latex --input document.pdf --model gpt-4o
+# Run an evidence-grounded browser task
+lexoid browse "What is cue-reflex? https://huggingface.co/oidlabs/cue-reflex-4B? " --model gpt-6.2-sol
+
+# Use role-specific models for a browser task
+lexoid browse "Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases." --model-config roles.json --format json --output result.json
 ```
 
-## Command-line Options
+### Useful Options
 
-### Common Options
+- `--input, -i` and `--output, -o`: Choose input and output paths for document commands.
+- `--format`: Select markdown or JSON output for `parse` and `browse`.
+- `--parser-type`: Choose `AUTO`, `LLM_PARSE`, or `STATIC_PARSE` for `parse`.
+- `--model`: Select a model for parsing, extraction, LaTeX conversion, or all browse roles.
+- `--model-config`: Set per-role models and options for `browse`; cannot be combined with `--model`.
+- `--headless / --headed`, `--cdp-url`, `--max-steps`, `--max-pages`, and `--timeout-ms`: Configure browser execution.
 
-- `--input, -i`: Input file path (required) - Supports PDF, images, HTML, DOCX, XLSX, PPTX, or URLs
-- `--output, -o`: Output file path (optional) - If not specified, output is printed to stdout
-- `--verbose, -v`: Enable detailed logging
-
-### Parse Command
-
-```
-lexoid parse --help
-```
-
-- `--parser-type, -p`: Parser type - `AUTO` (default), `LLM_PARSE`, or `STATIC_PARSE`
-- `--model, -m`: LLM model name (default: gemini-3.5-flash-lite, thinking: medium)
-- `--pages-per-split`: Pages per chunk (default: 4)
-- `--max-processes`: Parallel processes (default: 4)
-- `--framework`: Static parser framework - `pdfplumber` or `paddleocr`
-- `--format`: Output format - `markdown` (default, plain markdown text) or `json` (full result with metadata, segments, token usage)
-
-### Schema Command
-
-```
-lexoid schema --help
-```
-
-- `--schema, -s`: JSON schema (file path or inline JSON, required)
-- `--model, -m`: LLM model (default: gpt-4o-mini)
-- `--api`: API provider - openai, gemini, anthropic, ollama, etc. (auto-detected if not specified)
-- `--example-schema`: Provide example data for the schema
-- `--fill-single-schema`: Auto-fill single schemas
-
-### LaTeX Command
-
-```
-lexoid latex --help
-```
-
-- `--model, -m`: LLM model (default: gpt-4o-mini)
-- `--api`: API provider - openai, gemini, anthropic, ollama, etc. (auto-detected if not specified)
+Run `lexoid <command> --help` for command-specific help. See the
+[complete CLI reference](https://oidlabs-com.github.io/Lexoid/cli.html) for all options and the
+role-specific model configuration format.
 
 # Supported API Providers
 

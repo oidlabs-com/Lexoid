@@ -260,7 +260,7 @@ def handle_cli_error(error: Exception, verbose: bool) -> None:
 @click.group(invoke_without_command=False)
 @click.version_option()
 def app():
-    """Lexoid: Convert PDFs, images, web pages, and documents into structured markdown."""
+    """Lexoid: Turn documents and live websites into agent-ready context with parsing and evidence-grounded browser automation."""
     pass
 
 
@@ -543,7 +543,7 @@ def schema(
     "--model",
     "-m",
     default=None,
-    help="Default LLM model for all browse roles (e.g., gpt-4o-mini, gemini-2.5-flash)",
+    help="Default LLM model for all browse roles (e.g., gpt-6.2-sol, gpt-6-luna)",
 )
 @click.option(
     "--model-config",
