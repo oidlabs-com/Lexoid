@@ -33,6 +33,8 @@ To use LLM-based parsing, define the following environment variables or create a
 ```bash
 OPENAI_API_KEY=""
 GOOGLE_API_KEY=""
+HUGGINGFACEHUB_API_TOKEN=""
+ANTHROPIC_API_KEY=""
 ```
 
 For local inference with Ollama, no API key is required. Install Ollama, pull the target model, and keep the local server running:
@@ -172,11 +174,6 @@ The browser agent does not solve CAPTCHAs. A blocking hCaptcha or reCAPTCHA stop
 with `coverage.stop_reason == "verification_required"`, or, with a visible
 browser and `on_verification_required`, waits for a person to complete it to honor the site verification policies. See
 [human verification](docs/api.rst#browse-human-verification).
-
-## Browser evaluation
-
-See [evaluate/](evaluate/README.md) for selecting Odysseys tasks, saving browser
-runs, and provisional per-rubric text grading with explicit review gaps.
 
 # Command Line Usage
 
