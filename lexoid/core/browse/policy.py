@@ -316,8 +316,12 @@ def search_discovery_domain(
             is_allowed_url(source, initial_domains),
         )
         return None
-    link_domain = derive_allowed_domains([link])[0]
-    destination_domain = derive_allowed_domains([destination])[0]
+    link_domains = derive_allowed_domains([link])
+    destination_domains = derive_allowed_domains([destination])
+    if not link_domains or not destination_domains:
+        return None
+    link_domain = link_domains[0]
+    destination_domain = destination_domains[0]
     source_domain = normalize_domain(source)
     if source_domain.startswith("www."):
         source_domain = source_domain[4:]

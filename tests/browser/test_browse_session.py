@@ -1249,10 +1249,11 @@ async def test_toolset_search_discovery(
         assert action_trace.metadata["discovery_check"]["initial_domains"] == [
             "google.com"
         ]
-        assert (
-            "bing.com"
-            in action_trace.metadata["discovery_check"]["fallback_search_domains"]
-        )
+        fallback_domains = action_trace.metadata["discovery_check"][
+            "fallback_search_domains"
+        ]
+        assert isinstance(fallback_domains, (list, tuple, set))
+        assert any(domain == "bing.com" for domain in fallback_domains)
         denied = json.loads(await toolset.navigate("https://unrelated.com/"))
         assert denied["result"]["success"] is False
         # A second outbound click from the discovered site cannot expand scope.
