@@ -92,6 +92,13 @@ def test_browse_limits_default_to_task_and_run_budgets():
 
     assert limits.max_steps == 50
     assert limits.max_steps_per_run == 20
+    assert limits.verification_timeout_ms == 120_000
+
+
+@pytest.mark.parametrize("timeout_ms", [999, 300_001])
+def test_browse_verification_timeout_is_bounded(timeout_ms):
+    with pytest.raises(ValueError):
+        BrowseLimits(verification_timeout_ms=timeout_ms)
 
 
 @pytest.mark.asyncio
@@ -753,6 +760,7 @@ async def test_action_is_denied_when_destination_cannot_be_verified():
         (True, ["hcaptcha", None], "completed_by_user"),
         (True, ["hcaptcha"], "required"),
         (False, ["hcaptcha", None], "required"),
+        ("timeout", ["hcaptcha"], "required"),
     ],
 )
 async def test_action_hands_blocking_verification_to_person_or_blocks(
@@ -807,6 +815,10 @@ async def test_action_hands_blocking_verification_to_person_or_blocks(
 
     async def handler(request: VerificationRequest) -> bool:
         requests.append(request)
+        if handler_result == "timeout":
+            import asyncio
+
+            await asyncio.Event().wait()
         return bool(handler_result)
 
     async def emit(_trace) -> None:
@@ -816,6 +828,11 @@ async def test_action_hands_blocking_verification_to_person_or_blocks(
         seed_urls=["https://example.test/"],
         subject="subject",
         allowed_domains=["example.test"],
+        limits=(
+            BrowseLimits(verification_timeout_ms=1_000)
+            if handler_result == "timeout"
+            else BrowseLimits()
+        ),
     )
     toolset = BrowserToolset(
         cast(Any, _VerificationSession()),
@@ -840,6 +857,8 @@ async def test_action_hands_blocking_verification_to_person_or_blocks(
         assert toolset.verification_required == "hcaptcha"
         assert toolset.outcome is NavigationOutcome.BLOCKED
         assert toolset.last_error_code is BrowseErrorCode.VERIFICATION_REQUIRED
+        if handler_result == "timeout":
+            assert "timed out after 1000 ms" in payload["verification"]["outcome"]
         # A verified result reached another way, e.g. a fallback provider, clears it.
         await toolset.report_outcome("results_ready", "Case details")
         assert toolset.verification_required is None

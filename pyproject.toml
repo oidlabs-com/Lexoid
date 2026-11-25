@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "lexoid"
-version = "0.1.25"
+version = "0.1.26-dev"
 description = "Turn documents and live websites into agent-ready context with parsing and evidence-grounded browser automation."
 authors = []
 readme = "README.md"

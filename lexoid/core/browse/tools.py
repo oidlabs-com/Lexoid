@@ -862,13 +862,23 @@ class BrowserToolset:
                 metadata={"verification_required": request.model_dump()},
             )
         )
+        timeout_ms = self._task.limits.verification_timeout_ms
+        verification_timed_out = False
         if self._verification_handler is not None:
             await self._activate(self._tab_id)
             try:
-                completed = await self._verification_handler(request)
+                completed = await asyncio.wait_for(
+                    self._verification_handler(request), timeout=timeout_ms / 1000
+                )
                 cleared = completed and await detect(self._tab_id) is None
             except TabGoneError:
                 return None
+            except TimeoutError:
+                logger.warning(
+                    "Human verification handler timed out after {} ms", timeout_ms
+                )
+                verification_timed_out = True
+                cleared = False
             except Exception as error:
                 logger.warning("Verification handler failed: {}", error)
                 cleared = False
@@ -893,12 +903,23 @@ class BrowserToolset:
         self.verification_required = provider
         self.outcome = NavigationOutcome.BLOCKED
         self.last_error_code = BrowseErrorCode.VERIFICATION_REQUIRED
+        if verification_timed_out:
+            outcome = (
+                f"the human verification handler timed out after {timeout_ms} ms; "
+                "the challenge was not completed. Do not interact with the "
+                "challenge. Use a permitted alternative only if source_scope "
+                "allows it; otherwise call report_outcome('blocked', ...)"
+            )
+        else:
+            outcome = (
+                "the site requires human verification that was not completed; "
+                "do not interact with the challenge. Use a permitted alternative "
+                "only if source_scope allows it; otherwise call "
+                "report_outcome('blocked', ...)"
+            )
         return {
             "status": "required",
             "provider": provider,
             "error_code": BrowseErrorCode.VERIFICATION_REQUIRED.value,
-            "outcome": "the site requires human verification that was not "
-            "completed; do not interact with the challenge. Use a permitted "
-            "alternative only if source_scope allows it; otherwise call "
-            "report_outcome('blocked', ...)",
+            "outcome": outcome,
         }

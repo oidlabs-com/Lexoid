@@ -223,6 +223,7 @@ lexoid browse "Go to https://tmsearch.uspto.gov/ and retrieve all cases for Aras
 - `--model`: Select a model for parsing, extraction, LaTeX conversion, or all browse roles.
 - `--model-config`: Set per-role models and options for `browse`; cannot be combined with `--model`.
 - `--headless / --headed`, `--cdp-url`, `--max-steps`, `--max-pages`, and `--timeout-ms`: Configure browser execution.
+- `--verification-timeout-ms`: Maximum wait for a person to complete a verification challenge (default: 120 seconds).
 
 Run `lexoid <command> --help` for command-specific help. See the
 [complete CLI reference](https://oidlabs-com.github.io/Lexoid/cli.html) for all options and the

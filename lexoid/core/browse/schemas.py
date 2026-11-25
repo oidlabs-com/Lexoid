@@ -317,6 +317,7 @@ class BrowseLimits(BaseModel):
     max_snapshot_chars: int = Field(default=20_000, ge=1_000, le=200_000)
     max_artifact_chars: int = Field(default=100_000, ge=1_000, le=2_000_000)
     timeout_ms: int = Field(default=60_000, ge=1_000, le=300_000)
+    verification_timeout_ms: int = Field(default=120_000, ge=1_000, le=300_000)
 
 
 # Page geometry (element boxes, scroll offsets) can far exceed the viewport on long pages.

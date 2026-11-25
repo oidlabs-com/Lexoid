@@ -599,6 +599,12 @@ def schema(
     help="Per-operation browser timeout in milliseconds (default: 60000)",
 )
 @click.option(
+    "--verification-timeout-ms",
+    type=click.IntRange(min=1_000, max=300_000),
+    default=None,
+    help="Time to wait for human verification in milliseconds (default: 120000)",
+)
+@click.option(
     "--default-search-url",
     type=str,
     default=DEFAULT_SEARCH_URL,
@@ -625,6 +631,7 @@ def browse(
     max_steps,
     max_pages,
     timeout_ms,
+    verification_timeout_ms,
     default_search_url,
     verbose,
 ):
@@ -642,6 +649,8 @@ def browse(
             limit_kwargs["max_pages"] = max_pages
         if timeout_ms is not None:
             limit_kwargs["timeout_ms"] = timeout_ms
+        if verification_timeout_ms is not None:
+            limit_kwargs["verification_timeout_ms"] = verification_timeout_ms
         limits = BrowseLimits(**limit_kwargs) if limit_kwargs else None
 
         click.echo("🔄 Running web-operator task...", err=True)

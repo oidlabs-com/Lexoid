@@ -154,6 +154,7 @@ Options:
 * ``--max-steps``: Maximum total browser actions (default: ``50``).
 * ``--max-pages``: Maximum pages to capture (default: ``5``).
 * ``--timeout-ms``: Per-operation timeout in milliseconds (default: ``60000``).
+* ``--verification-timeout-ms``: Maximum wait for a person to complete a verification challenge (default: ``120000``; range: ``1000``–``300000``). On timeout, the navigator may use a permitted alternative or report the site as blocked.
 * ``--default-search-url``: Starting search provider URL for open-ended queries.
 * ``--verbose, -v``: Enable detailed logging.
 

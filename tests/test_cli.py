@@ -48,6 +48,7 @@ def run_lexoid_module(*args):
                 "--max-steps",
                 "--max-pages",
                 "--format",
+                "--verification-timeout-ms",
             ],
         ),
     ],
@@ -461,6 +462,8 @@ def test_browse_options_markdown(monkeypatch):
             "3",
             "--timeout-ms",
             "30000",
+            "--verification-timeout-ms",
+            "45000",
             "--default-search-url",
             "https://www.bing.com/",
         ],
@@ -477,7 +480,12 @@ def test_browse_options_markdown(monkeypatch):
     assert kwargs["cdp_url"] == "http://localhost:9222"
     assert kwargs["channel"] == "chrome"
     assert kwargs["default_search_url"] == "https://www.bing.com/"
-    assert kwargs["limits"] == BrowseLimits(max_steps=25, max_pages=3, timeout_ms=30000)
+    assert kwargs["limits"] == BrowseLimits(
+        max_steps=25,
+        max_pages=3,
+        timeout_ms=30000,
+        verification_timeout_ms=45000,
+    )
 
 
 def test_browse_model_config_json(monkeypatch, tmp_path):
