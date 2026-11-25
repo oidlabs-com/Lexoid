@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from urllib.parse import urlparse
 
+from loguru import logger
+
 from lexoid.core.browse.schemas import BrowseErrorCode, BrowserAction
 
 
@@ -37,6 +39,7 @@ _ALLOWED_ACTIONS = {
     "hover",
     "scroll",
     "navigate",
+    "open_tab",
     "back",
     "refresh",
     "wait",
@@ -45,6 +48,22 @@ _ALLOWED_ACTIONS = {
 }
 _DENIED_TEXT_MARKERS = ("password", "passcode", "credential", "credit card")
 _DOMAIN_LABEL_RE = re.compile(r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?$")
+# The first provider is the default; the rest are fallbacks in priority order.
+_SEARCH_PROVIDERS = (
+    ("www.google.com", ("google.com",)),
+    ("www.bing.com", ("bing.com",)),
+    ("search.brave.com", ("brave.com", "www.brave.com")),
+    ("www.duckduckgo.com", ("duckduckgo.com",)),
+)
+SEARCH_PROVIDER_HOSTS = frozenset(
+    host for canonical, aliases in _SEARCH_PROVIDERS for host in (canonical, *aliases)
+)
+DEFAULT_SEARCH_URL = f"https://{_SEARCH_PROVIDERS[0][0]}/"
+_SEARCH_REDIRECT_PATHS = {
+    "google.com": ("/url", "/goto"),
+    "bing.com": ("/ck/a",),
+    "duckduckgo.com": ("/l/",),
+}
 
 PUBLIC_SUFFIXES = {
     "com",
@@ -234,6 +253,93 @@ def is_allowed_url(url: str, allowed_domains: list[str]) -> bool:
     )
 
 
+def fallback_search_domains(
+    seed_urls: list[str],
+    initial_domains: list[str],
+    source_scope: str = "unrestricted",
+) -> list[str]:
+    """Authorize fallback search providers only for an initially seeded provider.
+
+    Domains are returned in priority order; the default provider is not a fallback.
+    These are policy fallbacks, not inferred or user-requested seeds.
+    """
+    if source_scope != "unrestricted":
+        return []
+    if not any(
+        normalize_domain(seed) in SEARCH_PROVIDER_HOSTS
+        and is_allowed_url(seed, initial_domains)
+        for seed in seed_urls
+    ):
+        return []
+    fallback_domains = derive_allowed_domains(
+        [canonical for canonical, _ in _SEARCH_PROVIDERS[1:]]
+    )
+    return [
+        domain
+        for domain in fallback_domains
+        if not is_allowed_url(f"https://{domain}/", initial_domains)
+    ]
+
+
+def search_discovery_domain(
+    source_url: str,
+    link_url: str | None,
+    destination_url: str,
+    initial_domains: list[str],
+    source_scope: str = "unrestricted",
+) -> str | None:
+    """Admit an observed link from an initial or policy-authorized search provider.
+
+    Direct links and known provider redirect paths may admit the validated
+    landing domain. The authorization domains must not include dynamically
+    discovered sites.
+    """
+    if source_scope == "domain_only":
+        return None
+    if not link_url:
+        logger.debug("Search discovery rejected: observed element has no href")
+        return None
+    try:
+        source = validate_seed_url(source_url)
+        link = validate_seed_url(link_url)
+        destination = validate_seed_url(destination_url)
+    except ValueError as error:
+        logger.debug("Search discovery rejected: URL validation failed: {}", error)
+        return None
+    if normalize_domain(source) not in SEARCH_PROVIDER_HOSTS or not is_allowed_url(
+        source, initial_domains
+    ):
+        logger.debug(
+            "Search discovery rejected: source_host={} provider={} source_allowed={}",
+            normalize_domain(source),
+            normalize_domain(source) in SEARCH_PROVIDER_HOSTS,
+            is_allowed_url(source, initial_domains),
+        )
+        return None
+    link_domains = derive_allowed_domains([link])
+    destination_domains = derive_allowed_domains([destination])
+    if not link_domains or not destination_domains:
+        return None
+    link_domain = link_domains[0]
+    destination_domain = destination_domains[0]
+    source_domain = normalize_domain(source)
+    if source_domain.startswith("www."):
+        source_domain = source_domain[4:]
+    link_path = urlparse(link).path
+    known_provider_redirect = link_domain == source_domain and any(
+        link_path == path or (path.endswith("/") and link_path.startswith(path))
+        for path in _SEARCH_REDIRECT_PATHS.get(source_domain, ())
+    )
+    if link_domain != destination_domain and not known_provider_redirect:
+        logger.debug(
+            "Search discovery rejected: link_domain={} differs from landing_domain={} and is not a known provider redirect",
+            link_domain,
+            destination_domain,
+        )
+        return None
+    return destination_domain
+
+
 def authorize(action: BrowserAction, allowed_domains: list[str]) -> PolicyResult:
     """Authorize one action using ``deny > confirm > allow > default``."""
     if action.kind in _CONFIRM_ACTIONS:
@@ -252,7 +358,7 @@ def authorize(action: BrowserAction, allowed_domains: list[str]) -> PolicyResult
             "possible credential entry",
             BrowseErrorCode.POLICY_DENIED,
         )
-    if action.kind == "navigate":
+    if action.kind in {"navigate", "open_tab"}:
         if not action.url or not is_allowed_url(action.url, allowed_domains):
             return PolicyResult(
                 PolicyDecision.DENY,

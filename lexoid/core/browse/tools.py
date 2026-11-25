@@ -2,11 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
+import time
 from collections.abc import Awaitable, Callable
+from typing import Any
 
-from lexoid.core.browse.policy import PolicyDecision, authorize, is_allowed_url
+from lexoid.core.browse.events import VerificationHandler
+from lexoid.core.browse.policy import (
+    PolicyDecision,
+    authorize,
+    fallback_search_domains,
+    is_allowed_url,
+    search_discovery_domain,
+)
 from lexoid.core.browse.schemas import (
     BrowseErrorCode,
     BrowserAction,
@@ -15,11 +25,16 @@ from lexoid.core.browse.schemas import (
     BrowserSnapshot,
     BrowseTask,
     NavigationOutcome,
+    VerificationRequest,
 )
 from lexoid.core.browse.session import GhostBrowserSession, TabGoneError
 from loguru import logger
 
 TraceEmitter = Callable[[BrowserActionTrace], Awaitable[None]]
+_MAX_OPEN_TABS = 10
+# Passive checks may clear on their own; give them one short chance first.
+_VERIFICATION_SETTLE_S = 3.0
+_VERIFICATION_POLL_S = 0.5
 
 
 def _contains_normalized(haystack: str, needle: str) -> bool:
@@ -75,8 +90,9 @@ def _format_action_call(action: BrowserAction, snapshot: BrowserSnapshot | None)
     if action.kind == "scroll":
         direction = action.text or "down"
         return f"scroll {direction} {target}".strip()
-    if action.kind == "navigate":
-        return f"navigate to {action.url or ''}"
+    if action.kind in {"navigate", "open_tab"}:
+        verb = "navigate to" if action.kind == "navigate" else "open new tab at"
+        return f"{verb} {action.url or ''}"
     if action.kind == "wait":
         return f'wait for "{action.text}"' if action.text else "wait"
     if action.kind in {"back", "refresh", "done", "accept_terms"}:
@@ -101,9 +117,21 @@ class BrowserToolset:
         task: BrowseTask,
         tab_id: str,
         emit: TraceEmitter,
+        verification_handler: VerificationHandler | None = None,
     ) -> None:
         self._session = session
+        self._verification_handler = verification_handler
         self._task = task
+        self._initial_domains = list(task.allowed_domains)
+        self._fallback_search_domains = fallback_search_domains(
+            task.seed_urls + [seed.url for seed in task.inferred_seeds],
+            self._initial_domains,
+            task.source_scope.mode,
+        )
+        self._search_discovery_domains = (
+            self._initial_domains + self._fallback_search_domains
+        )
+        task.allowed_domains.extend(self._fallback_search_domains)
         self._tab_id = tab_id
         self._openers: dict[str, str] = {}
         self._emit = emit
@@ -118,6 +146,13 @@ class BrowserToolset:
         # a reported outcome; never derived from model text.
         self.step_limit_reached = False
         self.last_error_code: BrowseErrorCode | None = None
+        # Provider of an uncompleted challenge; persists across navigator runs.
+        self.verification_required: str | None = None
+
+    @property
+    def fallback_search_domains(self) -> list[str]:
+        """Return policy-authorized alternatives, separate from task seeds."""
+        return list(self._fallback_search_domains)
 
     @property
     def tab_id(self) -> str:
@@ -151,6 +186,12 @@ class BrowserToolset:
         self.last_error_code = None
         self.run_action_count = 0
         self.step_limit_reached = False
+
+    async def _activate(self, tab_id: str) -> None:
+        self._tab_id = tab_id
+        activate = getattr(self._session, "activate_tab", None)
+        if activate is not None:
+            await activate(tab_id)
 
     async def _get_tab_url(self, tab_id: str) -> str:
         if hasattr(self._session, "tab_url"):
@@ -195,7 +236,7 @@ class BrowserToolset:
                 bad_tab_id,
                 candidate_id,
             )
-            self._tab_id = candidate_id
+            await self._activate(candidate_id)
             self._snapshot = None
         else:
             logger.warning(
@@ -205,6 +246,32 @@ class BrowserToolset:
             self._quarantined = True
             self.outcome = NavigationOutcome.BLOCKED
             self.last_error_code = BrowseErrorCode.TAB_GONE
+
+    async def _restore_allowed_source(self, tab_id: str, source_url: str) -> str | None:
+        if not is_allowed_url(source_url, self._task.allowed_domains):
+            return None
+        restore_page = getattr(self._session, "restore_page", None)
+        if restore_page is None:
+            return None
+        try:
+            restored_tab = await restore_page(tab_id, source_url)
+        except Exception as error:
+            logger.warning(
+                "Could not restore tab {} to its allowlisted source {}: {}",
+                tab_id,
+                source_url,
+                error,
+            )
+            return None
+        if not is_allowed_url(restored_tab.url, self._task.allowed_domains):
+            logger.warning(
+                "Restoring tab {} landed outside the task allowlist: {}",
+                tab_id,
+                restored_tab.url,
+            )
+            return None
+        self._snapshot = None
+        return restored_tab.url
 
     async def _active_tab_allowed(self) -> bool:
         if self._quarantined:
@@ -242,6 +309,18 @@ class BrowserToolset:
         """Return the current accessible elements available to navigation tools."""
         if not await self._active_tab_allowed():
             return _denied_json("active tab is outside the task allowlist")
+        if self.remaining_actions and await self._session.skip_ad(self._tab_id):
+            self.action_count += 1
+            self.run_action_count += 1
+            logger.info("|   [OK] Skipped ad")
+            await self._emit(
+                BrowserActionTrace(
+                    event="action",
+                    task_id=self._task.task_id,
+                    tab_id=self._tab_id,
+                    metadata={"automatic_ad_skip": True},
+                )
+            )
         snapshot = await self._session.snapshot(self._tab_id)
         if not await self._active_tab_allowed():
             return _denied_json("active tab is outside the task allowlist")
@@ -291,7 +370,7 @@ class BrowserToolset:
         return json.dumps(payload)
 
     async def click(self, ref: str) -> str:
-        """Click one element ref returned by observe."""
+        """Click an observed element; search-provider links can admit their HTTPS destination domain."""
         return await self._run(BrowserAction(kind="click", ref=ref))
 
     async def type(self, ref: str, text: str) -> str:
@@ -303,7 +382,11 @@ class BrowserToolset:
         return await self._run(BrowserAction(kind="select", ref=ref, text=text))
 
     async def keypress(self, keys: str = "Enter") -> str:
-        """Send a keyboard shortcut to the current page."""
+        """Send a case-sensitive Playwright key or shortcut to the current page.
+
+        Use exact key names: Enter, Escape, Tab, Backspace, ArrowDown.
+        Use '+' for shortcuts, e.g. Control+a or Meta+a. Use Enter, not ENTER.
+        """
         return await self._run(BrowserAction(kind="keypress", text=keys))
 
     async def wait(self, text: str = "") -> str:
@@ -329,6 +412,23 @@ class BrowserToolset:
     async def navigate(self, url: str) -> str:
         """Navigate to an allowlisted URL only."""
         return await self._run(BrowserAction(kind="navigate", url=url))
+
+    async def open_tab(self, url: str) -> str:
+        """Open an allowlisted HTTPS URL in a new tab and switch to it."""
+        tabs = await self._session.list_tabs()
+        existing = next(
+            (t for t in tabs if t.url.split("#")[0] == url.split("#")[0]), None
+        )
+        if existing is not None:
+            return await self.switch_tab(existing.tab_id)
+        if len(tabs) >= _MAX_OPEN_TABS:
+            return json.dumps(
+                {
+                    "success": False,
+                    "outcome": f"open-tab limit reached ({_MAX_OPEN_TABS})",
+                }
+            )
+        return await self._run(BrowserAction(kind="open_tab", url=url))
 
     async def list_tabs(self) -> str:
         """List active tabs to inspect open pages."""
@@ -367,7 +467,7 @@ class BrowserToolset:
                     "outcome": f"tab {tab_id} destination outside allowlist",
                 }
             )
-        self._tab_id = tab_id
+        await self._activate(tab_id)
         await self._emit(
             BrowserActionTrace(
                 event="observation",
@@ -416,6 +516,9 @@ class BrowserToolset:
                         "page and quote it exactly",
                     }
                 )
+        if reported in {NavigationOutcome.RESULTS_READY, NavigationOutcome.NO_RESULTS}:
+            # A verified outcome, e.g. via a fallback provider, supersedes the block.
+            self.verification_required = None
         self.outcome = reported
         self.outcome_evidence = evidence[:1000]
         await self._emit(
@@ -442,6 +545,7 @@ class BrowserToolset:
             self.back,
             self.refresh,
             self.navigate,
+            self.open_tab,
             self.list_tabs,
             self.switch_tab,
             self.report_outcome,
@@ -513,6 +617,7 @@ class BrowserToolset:
                             "hover",
                             "scroll",
                             "navigate",
+                            "open_tab",
                             "back",
                             "refresh",
                             "wait",
@@ -526,6 +631,14 @@ class BrowserToolset:
             )
         )
         decision = authorize(action, self._task.allowed_domains)
+        source_url = await self._get_tab_url(self._tab_id)
+        snapshot_url = self._snapshot.url
+        element = next(
+            (item for item in self._snapshot.elements if item.ref == action.ref), None
+        )
+        discovered_domain = None
+        discovery_diagnostics: dict[str, object] = {}
+        restored_after_denial = False
         if decision.decision is PolicyDecision.ALLOW:
             result = await self._session.execute(action)
         else:
@@ -534,7 +647,56 @@ class BrowserToolset:
                 outcome=decision.reason,
                 error_code=decision.error_code,
             )
+
+        def admit_search_destination(destination_url: str) -> str | None:
+            if action.kind != "click":
+                return None
+            discovery_diagnostics.update(
+                {
+                    "source_url": source_url,
+                    "snapshot_url": snapshot_url,
+                    "source_matches_snapshot": source_url == snapshot_url,
+                    "href": element.href if element is not None else None,
+                    "destination_url": destination_url,
+                    "execution_success": result.success,
+                    "initial_domains": list(self._initial_domains),
+                    "source_scope": self._task.source_scope.model_dump(),
+                    "fallback_search_domains": self.fallback_search_domains,
+                    "allowed_domains_before": list(self._task.allowed_domains),
+                }
+            )
+            if not result.success:
+                reason = "action_failed"
+            elif source_url != snapshot_url:
+                reason = "source_snapshot_url_mismatch"
+            elif is_allowed_url(destination_url, self._task.allowed_domains):
+                reason = "destination_already_allowed"
+            else:
+                reason = "checking_search_discovery"
+            discovery_diagnostics["decision"] = reason
+            logger.debug("Search discovery check: {}", discovery_diagnostics)
+            if reason != "checking_search_discovery":
+                return None
+            domain = search_discovery_domain(
+                source_url,
+                element.href if element is not None else None,
+                destination_url,
+                self._search_discovery_domains,
+                self._task.source_scope.mode,
+            )
+            if domain:
+                self._task.allowed_domains.append(domain)
+                logger.info(
+                    "Admitted search-discovered domain {} from {}", domain, source_url
+                )
+            discovery_diagnostics["decision"] = (
+                "admitted" if domain else "search_discovery_policy_rejected"
+            )
+            logger.debug("Search discovery decision: {}", discovery_diagnostics)
+            return domain
+
         if result.opened_tab_id:
+            discovered_domain = admit_search_destination(result.after_url)
             if not is_allowed_url(result.after_url, self._task.allowed_domains):
                 await self._session.close_tab(result.opened_tab_id)
                 result = BrowserActionResult(
@@ -547,14 +709,31 @@ class BrowserToolset:
         else:
             try:
                 current_url = await self._get_tab_url(self._tab_id)
+                discovered_domain = admit_search_destination(current_url)
                 if not is_allowed_url(current_url, self._task.allowed_domains):
-                    await self._handle_bad_tab(self._tab_id)
+                    restored_url = await self._restore_allowed_source(
+                        self._tab_id, source_url
+                    )
+                    if restored_url is None:
+                        await self._handle_bad_tab(self._tab_id)
+                    else:
+                        restored_after_denial = True
                     result = BrowserActionResult(
                         success=False,
-                        outcome="navigation destination outside allowlist",
+                        outcome=(
+                            "navigation destination outside allowlist; "
+                            "restored previous page"
+                            if restored_url
+                            else "navigation destination outside allowlist"
+                        ),
                         error_code=BrowseErrorCode.POLICY_DENIED,
                         before_url=result.before_url,
-                        after_url=current_url,
+                        after_url=restored_url or current_url,
+                        warnings=(
+                            ["Restored the allowlisted source page."]
+                            if restored_url
+                            else []
+                        ),
                     )
             except TabGoneError:
                 await self._handle_bad_tab(self._tab_id)
@@ -597,6 +776,14 @@ class BrowserToolset:
             )
             code_part = f" (code={err_code})" if err_code else ""
             logger.info("|   [FAIL] {}{}", result.outcome, code_part)
+        fallback_used = (
+            result.success
+            and bool(result.after_url)
+            and is_allowed_url(result.after_url, self._fallback_search_domains)
+            and not is_allowed_url(result.after_url, self._initial_domains)
+        )
+        if fallback_used:
+            logger.info("Using policy-authorized search fallback {}", result.after_url)
         await self._emit(
             BrowserActionTrace(
                 event="action",
@@ -607,13 +794,111 @@ class BrowserToolset:
                 else None,
                 action=safe_action,
                 result=result,
-                metadata={"description": call_desc},
+                metadata={
+                    "description": call_desc,
+                    **(
+                        {
+                            "fallback_search_domains": self.fallback_search_domains,
+                            "search_fallback_used": fallback_used,
+                        }
+                        if self._fallback_search_domains
+                        else {}
+                    ),
+                    **(
+                        {"discovery_check": discovery_diagnostics}
+                        if discovery_diagnostics
+                        else {}
+                    ),
+                    **(
+                        {
+                            "discovered_domain": discovered_domain,
+                            "discovery_source": source_url,
+                            "discovery_href": element.href,
+                        }
+                        if discovered_domain and element is not None
+                        else {}
+                    ),
+                },
             )
         )
         payload = {"action": safe_action.model_dump(), "result": result.model_dump()}
-        if result.success:
-            if result.opened_tab_id:
-                self._openers[result.opened_tab_id] = self._tab_id
-                self._tab_id = result.opened_tab_id
+        if (result.success or restored_after_denial) and result.opened_tab_id:
+            self._openers[result.opened_tab_id] = self._tab_id
+            await self._activate(result.opened_tab_id)
+        verification = await self._resolve_verification()
+        if verification is not None:
+            payload["verification"] = verification
+        if verification is not None and verification["status"] == "required":
+            return json.dumps(payload)
+        if result.success or restored_after_denial or verification is not None:
             payload["observation"] = json.loads(await self.observe())
         return json.dumps(payload)
+
+    async def _resolve_verification(self) -> dict[str, Any] | None:
+        """Hand a blocking site challenge to a person, or block the task."""
+        detect = getattr(self._session, "verification_challenge", None)
+        if detect is None:
+            return None
+        try:
+            provider = await detect(self._tab_id)
+            deadline = time.monotonic() + _VERIFICATION_SETTLE_S
+            while provider and time.monotonic() < deadline:
+                await asyncio.sleep(_VERIFICATION_POLL_S)
+                provider = await detect(self._tab_id)
+            if provider is None:
+                return None
+            url = await self._get_tab_url(self._tab_id)
+        except TabGoneError:
+            return None
+        request = VerificationRequest(
+            task_id=self._task.task_id, tab_id=self._tab_id, url=url, provider=provider
+        )
+        logger.warning("Human verification ({}) required on {}", provider, url)
+        await self._emit(
+            BrowserActionTrace(
+                event="warning",
+                task_id=self._task.task_id,
+                tab_id=self._tab_id,
+                metadata={"verification_required": request.model_dump()},
+            )
+        )
+        if self._verification_handler is not None:
+            await self._activate(self._tab_id)
+            try:
+                completed = await self._verification_handler(request)
+                cleared = completed and await detect(self._tab_id) is None
+            except TabGoneError:
+                return None
+            except Exception as error:
+                logger.warning("Verification handler failed: {}", error)
+                cleared = False
+            if cleared:
+                self.verification_required = None
+                self._snapshot = None
+                await self._emit(
+                    BrowserActionTrace(
+                        event="observation",
+                        task_id=self._task.task_id,
+                        tab_id=self._tab_id,
+                        metadata={"verification_completed": provider},
+                    )
+                )
+                return {
+                    "status": "completed_by_user",
+                    "provider": provider,
+                    "outcome": "a person completed the site verification; the page "
+                    "may already show results, so check the observation before "
+                    "repeating any submission",
+                }
+        self.verification_required = provider
+        self.outcome = NavigationOutcome.BLOCKED
+        self.last_error_code = BrowseErrorCode.VERIFICATION_REQUIRED
+        return {
+            "status": "required",
+            "provider": provider,
+            "error_code": BrowseErrorCode.VERIFICATION_REQUIRED.value,
+            "outcome": "the site requires human verification that was not "
+            "completed; do not interact with the challenge. Use a permitted "
+            "alternative only if source_scope allows it; otherwise call "
+            "report_outcome('blocked', ...)",
+        }

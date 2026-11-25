@@ -11,9 +11,10 @@ from time import time
 from typing import Any, Dict, List, Optional, Type, Union
 
 from lexoid.core.browse.agents import plan_task
-from lexoid.core.browse.events import BrowseEventListener
+from lexoid.core.browse.events import BrowseEventListener, VerificationHandler
 from lexoid.core.browse.model_provider import create_chat_client
 from lexoid.core.browse.orchestrator import run_task
+from lexoid.core.browse.policy import DEFAULT_SEARCH_URL
 from lexoid.core.browse.schemas import (
     BrowseErrorCode,
     BrowseLimits,
@@ -80,9 +81,14 @@ async def browse(
     *,
     model_config: str | BrowseModelConfig | dict[str, Any] | None = None,
     cdp_url: str | None = None,
+    user_data_dir: str | os.PathLike[str] | None = None,
+    channel: str | None = None,
     headless: bool = True,
+    mute_audio: bool = True,
     limits: BrowseLimits | None = None,
     event_listener: BrowseEventListener | None = None,
+    on_verification_required: VerificationHandler | None = None,
+    default_search_url: str = DEFAULT_SEARCH_URL,
 ) -> BrowseResult:
     """Run an evidence-grounded browser task automation.
 
@@ -96,6 +102,26 @@ async def browse(
     Pass a single model string to use that model for all roles, or a mapping/BrowseModelConfig
       to override individual roles. Lexoid retains browser lifecycle, policy,
       provenance, pagination, and tab ownership.
+    Pass ``user_data_dir`` (or set ``LEXOID_GHOST_PROFILE_DIR``) to use a
+      dedicated persistent browser profile, and ``channel`` (or
+      ``LEXOID_GHOST_CHANNEL``) to select a specific browser distribution such
+      as ``"chrome"`` (auto-preferred with Chromium fallback when unset).
+    Locally launched Chromium browsers require an environment that supports
+      Chromium sandboxing; CDP-attached browsers retain their own settings.
+    Audio is muted by default for browsers Lexoid launches; set ``mute_audio``
+    to ``False`` to keep audio enabled. This option does not change CDP sessions.
+    When a hCaptcha or reCAPTCHA challenge blocks the task in a visible browser,
+      ``on_verification_required`` is awaited with a ``VerificationRequest`` so a
+      person can complete it in that tab; return ``True`` when done and Lexoid
+      re-checks the page before continuing. Without it, or when headless, the
+      task stops with ``coverage.stop_reason == "verification_required"``. Use a
+      persistent ``user_data_dir`` or ``cdp_url`` to keep the site's session.
+    For planner-based open-ended queries without a supplied source, set
+    ``default_search_url`` to choose the starting search provider. It defaults
+    to Google and must be a supported search provider URL. This setting does
+    not change the conservative no-planner path or explicit source requests.
+    For unrestricted tasks starting with a search provider, the permitted
+    fallbacks are Bing, Brave, and DuckDuckGo; Google is not a fallback.
     """
     cfg = BrowseModelConfig.from_value(model_config)
     resolved_models = {
@@ -132,12 +158,17 @@ async def browse(
             client,
             effective_limits,
             role_options=cfg.options_for_role("planner"),
+            default_search_url=default_search_url,
         )
     return await run_task(
         task,
         cdp_url=cdp_url,
+        user_data_dir=user_data_dir,
+        channel=channel,
         headless=headless,
+        mute_audio=mute_audio,
         event_listener=event_listener,
+        on_verification_required=on_verification_required,
         navigator_client=(
             create_chat_client(resolved_models["navigator"])
             if resolved_models["navigator"]
@@ -384,7 +415,8 @@ def parse(
                 A persistent profile is used when ``LEXOID_GHOST_PROFILE_DIR`` /
                 ``{"user_data_dir": ...}`` is set. Requires the optional
                 ``patchright`` package for the strongest anti-bot stealth; falls
-                back gracefully otherwise.
+                back gracefully otherwise. Locally launched Chromium browsers
+                require an environment that supports Chromium sandboxing.
 
     Returns:
         Dict: Dictionary containing:

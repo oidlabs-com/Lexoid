@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 
-from lexoid.core.browse.schemas import BrowserActionTrace
+from lexoid.core.browse.schemas import BrowserActionTrace, VerificationRequest
 
 BrowseEventListener = Callable[[BrowserActionTrace], Awaitable[None] | None]
+# Returns True once the person reports the challenge done; Lexoid then re-checks.
+VerificationHandler = Callable[[VerificationRequest], Awaitable[bool]]
 
 
 class BrowseEventPublisher:

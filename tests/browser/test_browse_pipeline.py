@@ -1,6 +1,8 @@
 """Tests for the initial typed single-task browse executor."""
 
+import asyncio
 import os
+from pathlib import Path
 
 import pytest
 from lexoid.api import BrowseModelConfig, browse
@@ -12,6 +14,10 @@ from lexoid.core.browse.schemas import (
     PageArtifact,
 )
 from pydantic import ValidationError
+
+_LIVE_PROFILE_DIR = (
+    Path(__file__).resolve().parents[2] / ".cache" / "lexoid-live-profile"
+)
 
 
 @pytest.mark.asyncio
@@ -30,6 +36,63 @@ async def test_browse_rejects_unsupported_model_before_capture():
             "https://tmsearch.uspto.gov/",
             model_config={"navigator": "unknown-model"},
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("mute_audio", "expected"), [(True, True), (False, False)])
+async def test_browse_passes_mute_audio_setting(monkeypatch, mute_audio, expected):
+    task = BrowseTask(
+        seed_urls=["https://example.com/"],
+        subject="Inspect the page",
+        allowed_domains=["example.com"],
+    )
+    captured = {}
+
+    async def fake_run_task(task, **kwargs):
+        captured.update(kwargs)
+        return "result"
+
+    monkeypatch.setattr("lexoid.api.run_task", fake_run_task)
+
+    result = await browse(task, mute_audio=mute_audio)
+
+    assert result == "result"
+    assert captured["mute_audio"] is expected
+
+
+@pytest.mark.asyncio
+async def test_browse_passes_configured_default_search_url_to_planner(monkeypatch):
+    from lexoid import api
+    from lexoid.core.browse.schemas import BrowseUsage
+
+    task = BrowseTask(
+        seed_urls=["https://www.bing.com/"],
+        subject="Lisbon travel",
+        allowed_domains=["bing.com"],
+    )
+    captured = {}
+
+    monkeypatch.setattr(api, "get_api_provider_for_model", lambda _: "openai")
+    monkeypatch.setattr(api, "create_chat_client", lambda _: object())
+
+    async def fake_plan_task(query, client, limits, **kwargs):
+        captured.update(kwargs)
+        return task, BrowseUsage()
+
+    async def fake_run_task(task, **kwargs):
+        return "result"
+
+    monkeypatch.setattr(api, "plan_task", fake_plan_task)
+    monkeypatch.setattr(api, "run_task", fake_run_task)
+
+    result = await api.browse(
+        "Lisbon in March for two",
+        model_config={"planner": "test-model"},
+        default_search_url="https://www.bing.com/",
+    )
+
+    assert result == "result"
+    assert captured["default_search_url"] == "https://www.bing.com/"
 
 
 def test_browse_model_config_resolution():
@@ -112,20 +175,6 @@ def test_browse_model_config_reasoning_effort():
     assert cfg2_str.for_role("planner") == "gpt-5.6-sol"
     assert cfg2_str.reasoning_effort_for_role("planner") == "medium"
 
-    # Case 3: default is non-reasoning, navigator role override has reasoning dict
-    cfg3 = BrowseModelConfig.from_value(
-        {
-            "default": "gpt-6-luna",
-            "navigator": {"model": "gpt-5.6-sol", "reasoning": {"effort": "low"}},
-        }
-    )
-    assert cfg3.for_role("planner") == "gpt-6-luna"
-    assert cfg3.reasoning_effort_for_role("planner") is None
-    assert cfg3.for_role("navigator") == "gpt-5.6-sol"
-    assert cfg3.reasoning_effort_for_role("navigator") == "low"
-    assert cfg3.for_role("extractor") == "gpt-6-luna"
-    assert cfg3.reasoning_effort_for_role("extractor") is None
-
     # Case 4: explicit reasoning dictionary and options
     cfg4 = BrowseModelConfig.from_value(
         {
@@ -168,6 +217,21 @@ def test_browse_model_config_reasoning_effort():
     )
     assert cfg6.for_role("assessor") == "gpt-5.6-sol"
     assert cfg6.reasoning_effort_for_role("assessor") == "high"
+
+
+def test_defaultbrowser_model_config():
+    config = BrowseModelConfig.from_value("gpt-6.2-sol")
+    assert config.options_for_role("assessor") == {"reasoning": {"effort": "medium"}}
+    assert config.options_for_role("navigator") == {"reasoning": {"effort": "medium"}}
+
+    override = BrowseModelConfig.from_value(
+        {
+            "default": "gpt-6.2-sol",
+            "assessor": {"model": "gpt-6.2-sol", "reasoning": {"effort": "low"}},
+        }
+    )
+    assert override.options_for_role("assessor") == {"reasoning": {"effort": "low"}}
+    assert override.options_for_role("navigator") == {"reasoning": {"effort": "medium"}}
 
 
 def test_browse_model_config_validation():
@@ -243,9 +307,40 @@ async def test_run_task_passes_headless_setting_to_browser_config():
         allowed_domains=["tmsearch.uspto.gov"],
     )
 
-    await orchestrator.run_task(task, headless=False, html_fetcher=fetcher)
+    await orchestrator.run_task(
+        task,
+        headless=False,
+        user_data_dir="/tmp/dedicated-lexoid-profile",
+        channel="chrome",
+        html_fetcher=fetcher,
+    )
 
     assert seen_configs[0].headless is False
+    assert seen_configs[0].user_data_dir == "/tmp/dedicated-lexoid-profile"
+    assert seen_configs[0].channel == "chrome"
+
+
+@pytest.mark.asyncio
+async def test_run_task_uses_cdp_url_from_environment(monkeypatch):
+    from lexoid.core.browse import orchestrator
+
+    monkeypatch.setenv("LEXOID_CDP_URL", "http://localhost:9222")
+    seen_configs = []
+
+    def fetcher(url, config):
+        seen_configs.append(config)
+        return "<html>captured evidence</html>", {"input": 0, "output": 0, "total": 0}
+
+    task = BrowseTask(
+        seed_urls=["https://tmsearch.uspto.gov/"],
+        subject="Arash Samadani",
+        allowed_domains=["tmsearch.uspto.gov"],
+    )
+
+    result = await orchestrator.run_task(task, html_fetcher=fetcher)
+
+    assert seen_configs[0].cdp_url == "http://localhost:9222"
+    assert not any("Page retention requires" in w for w in result.warnings)
 
 
 def test_evidence_claim_requires_exact_artifact_quote():
@@ -348,7 +443,8 @@ async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatc
             evaluation_criteria=["likely relevant to the request"]
         ),
         strategy=PlanStrategy(
-            intent="Find all trademark cases where Arash Samadani is listed as attorney."
+            intent="Find all trademark cases where Arash Samadani is listed as attorney.",
+            assumptions=["Treat unspecified record status as unrestricted."],
         ),
     )
     claims = [
@@ -399,6 +495,7 @@ async def test_synthesizer_payload_includes_intent_and_formats_answer(monkeypatc
     assert payload["task"]["constraints"]["evaluation_criteria"] == [
         "likely relevant to the request"
     ]
+    assert payload["task"]["assumptions"] == task.strategy.assumptions
     assert payload["candidate_assessments"][0]["label"] == "Record 1"
     assert answer == "Found 1 matching case for Arash Samadani as attorney."
     assert cited_ids == ["claim-1"]
@@ -486,6 +583,7 @@ async def test_assessor_receives_existing_claim_and_attempt_context(monkeypatch)
         prior_context={
             "captured_urls": [prior.source_url, artifact.url],
             "attempted_objectives": ["Inspect Listing A -> results_ready"],
+            "navigator_report": "Searched unquoted: NVIDIA H200",
         },
     )
 
@@ -494,6 +592,7 @@ async def test_assessor_receives_existing_claim_and_attempt_context(monkeypatch)
     assert payload["prior_claims"][0]["source_url"] == prior.source_url
     assert payload["captured_urls"] == [prior.source_url, artifact.url]
     assert payload["attempted_objectives"] == ["Inspect Listing A -> results_ready"]
+    assert payload["navigator_report"] == "Searched unquoted: NVIDIA H200"
     assert payload["next_claim_id"] == "claim-4"
     assert claims[0].claim_id == "claim-4"
     assert assessment.candidates[0].criteria_support[0].claim_ids == ["claim-4"]
@@ -522,6 +621,24 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
     assert task_result.retained_tabs[0].url.startswith("https://tmsearch.uspto.gov/")
 
 
+async def _ask_person_to_verify(request) -> bool:
+    """Wait for a person to complete the challenge; requires ``pytest -s``."""
+    prompt = f"Complete the {request.provider} check at {request.url}, then press Enter"
+    await asyncio.to_thread(input, prompt)
+    return True
+
+
+def _assert_expected_text(answer: str, expected_text: str | list[str]) -> None:
+    expected_texts = (
+        [expected_text] if isinstance(expected_text, str) else expected_text
+    )
+    normalized_answer = answer.replace("–", "-")
+    for text in expected_texts:
+        assert text.replace("–", "-") in normalized_answer, (
+            f"Expected {text!r} in response"
+        )
+
+
 # End-to-end evaluation needs further refinement
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
@@ -533,12 +650,19 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
         ),
         (
             """Go to https://tmsearch.uspto.gov/ and retrieve all cases for Arash Samadani as attorney, filter only live cases.""",
-            "44",
+            "39 results",
         ),
-        (
-            """Got to EOIR, https://acis.eoir.justice.gov, and get the updated case
+        (  # Resolved with HITL (be mindful of the site verification policies)
+            """Got to EOIR, https://acis.eoir.justice.gov, and get the last updated case
             information for alien number: 123-456-789, country of origin - Mexico""",
             "No case found",
+        ),
+        (
+            """Go to sec.gov, run a full-text search for the exact phrase 'NVIDIA H200' in Form 10-Q filings submitted between 2026-07-01 and 2026-11-19,
+            sort or pick the most recent 2nd non-NVIDIA filer in the results,
+            open its filing document, and extract the exact paragraph and dollar commitment mentioning NVIDIA H200 clusters.
+            """,
+            "Bit Digital, Inc (BTBT)",
         ),
         (
             """Use https://www.loopnet.com/search/commercial-real-estate/irvine-ca/for-lease/ and shortlist 3 properties likely suited for opening a Korean BBQ restaurant.
@@ -551,7 +675,7 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
         (
             """I’m trying to decide whether driving this week is a bad idea,
                 so can you build me a quick weather risk snapshot that starts with what it feels like right now and then widens out to the bigger trouble spots?
-                First, on Google (https://www.google.com/), search for Baltimore, Maryland weather and grab the current temperature plus the plain-English condition like cloudy, sunny, rain, or whatever it says,
+                First, on Google, search for Baltimore, Maryland weather and grab the current temperature plus the plain-English condition like cloudy, sunny, rain, or whatever it says,
                 just so I have a baseline for home conditions.
                 Then go to Wunderground (https://www.wunderground.com/) and look up Syracuse, New York, and check the 10-day/7-day style forecast to find the lowest temperature expected over the next 7 days, including which day it happens, because I want to compare that colder destination against Baltimore.
                 After that, use the National Weather Service forecast page for the Rittman, Ohio area near Marshallville and tell me what the current forecast says and whether there are any active alerts posted there, since that would really affect an Ohio leg of the drive; please open the actual forecast page and leave it visible so I can see the alert area and forecast text myself.
@@ -568,46 +692,47 @@ async def test_browse_live_cdp_captures_and_retains_uspto_page():
             """,
             "Morgan & Morgan",
         ),
+        (
+            """LAX to Lisbon in March for two, foodies, no layovers""",
+            ["LAX–LIS", "Lisbon Airport"],
+        ),
     ],
 )
-async def test_end_to_end(query, expected_text):
-    """Full planner->navigator->extractor->synthesizer pipeline against a live browser."""
+async def test_end_to_end(query: str, expected_text: str | list[str]):
+    """Run the live pipeline with a persistent profile.
+
+    Set LEXOID_GHOST_PROFILE_DIR to override the default .cache profile.
+    All strings in ``expected_text`` must appear in the answer.
+    """
     if not os.getenv("RUN_BROWSE_LIVE_TESTS"):
         pytest.skip("RUN_BROWSE_LIVE_TESTS is not enabled")
 
-    # _mc = {
-    #     "planner": {
-    #         "model": "gpt-6-luna",
-    #         "reasoning": {"effort": "high", "summary": "detailed"},
-    #         "options": {"verbosity": "high"},
-    #     },
-    #     "navigator": {
-    #         "model": "gpt-5.6-sol",
-    #         "reasoning": {"effort": "medium"},
-    #         "options": {"verbosity": "high"},
-    #     },
-    #     "assessor": {"model": "gpt-5.6-sol", "reasoning": {"effort": "medium"}},
-    #     "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
-    #     "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
-    # }
+    _mc = {
+        "planner": {
+            "model": "gpt-6-luna",
+            "reasoning": {"effort": "high", "summary": "detailed"},
+            "options": {"verbosity": "high"},
+        },
+        "navigator": {
+            "model": "gpt-6.2-sol",
+            "reasoning": {"effort": "medium"},
+            "options": {"verbosity": "high"},
+        },
+        "assessor": {"model": "gpt-6.2-sol", "reasoning": {"effort": "medium"}},
+        "extractor": {"model": "gpt-6-luna", "reasoning": {"effort": "high"}},
+        "synthesizer": {"model": "gpt-6-luna", "reasoning": {"effort": "medium"}},
+    }
     # or
-    _mc = "gpt-5.6-sol"
+    # _mc = "gpt-6.2-sol"
     result = await browse(
         query,
         model_config=_mc,
         headless=False,
+        user_data_dir=os.getenv("LEXOID_GHOST_PROFILE_DIR") or _LIVE_PROFILE_DIR,
+        on_verification_required=_ask_person_to_verify,
     )
 
     task_result = result.task_results[0]
     assert task_result.artifacts
-    norm_expected = expected_text.replace("–", "-")
     print("Response:\n", result.answer)
-    assert (
-        expected_text in result.answer
-        or norm_expected in result.answer.replace("–", "-")
-        or any(
-            expected_text in artifact.text
-            or norm_expected in artifact.text.replace("–", "-")
-            for artifact in task_result.artifacts
-        )
-    )
+    _assert_expected_text(result.answer, expected_text)

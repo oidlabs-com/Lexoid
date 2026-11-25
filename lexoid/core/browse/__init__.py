@@ -8,6 +8,8 @@ from lexoid.core.browse.schemas import (
     PlanOutcomeRecord,
     PlanStrategy,
     RoleModelConfig,
+    SourceScope,
+    VerificationRequest,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "PlanOutcomeRecord",
     "PlanStrategy",
     "RoleModelConfig",
+    "SourceScope",
+    "VerificationRequest",
 ]
