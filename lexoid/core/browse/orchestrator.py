@@ -473,6 +473,7 @@ async def run_task(
                     toolset.step_limit_reached and not toolset.is_quarantined
                 )
                 artifacts: list[PageArtifact] = []
+                seen_hashes: set[str] = set()
                 if toolset.is_quarantined:
                     stop_reason = "blocked"
                     warnings.append(
@@ -512,7 +513,6 @@ async def run_task(
                         stop_reason = "budget_exhausted"
 
                     capture_outcome = navigation_outcome
-                    seen_hashes: set[str] = set()
                     for index in range(max_iterations):
                         current_tab = await session.tab(toolset.tab_id)
                         if not is_allowed_url(current_tab.url, task.allowed_domains):
@@ -711,6 +711,95 @@ async def run_task(
                         ):
                             stop_reason = "no_next_action"
                             break
+
+                # Retain evidence already opened in other allowlisted tabs. A
+                # blocked or exhausted active-tab loop must not discard those pages.
+                captured_tab_ids = {artifact.tab_id for artifact in artifacts}
+                tabs = (
+                    await session.list_tabs() if hasattr(session, "list_tabs") else []
+                )
+                for tab in tabs:
+                    if len(artifacts) >= task.limits.max_pages:
+                        break
+                    if tab.tab_id in captured_tab_ids:
+                        continue
+                    if not is_allowed_url(tab.url, task.allowed_domains):
+                        continue
+                    try:
+                        await session.settle(tab.tab_id)
+                        artifact = await capture_page(
+                            session,
+                            tab.tab_id,
+                            len(artifacts) + 1,
+                            task.limits.max_artifact_chars,
+                        )
+                    except (TabGoneError, *BrowserDriverError):
+                        continue
+                    if artifact.content_hash in seen_hashes:
+                        continue
+                    seen_hashes.add(artifact.content_hash)
+                    captured_tab_ids.add(tab.tab_id)
+                    artifacts.append(artifact)
+                    if effective_assessor_client is not None:
+                        assessment, new_claims, assess_usage = await assess_page(
+                            effective_assessor_client,
+                            task,
+                            artifact,
+                            claims,
+                            gaps,
+                            prior_context={
+                                "captured_urls": [item.url for item in artifacts],
+                                "attempted_objectives": list(attempted_objectives),
+                                "navigator_report": toolset.outcome_evidence,
+                            },
+                            role_options=effective_assessor_options,
+                        )
+                        agent_usage = _add_usage(agent_usage, assess_usage)
+                        claims = validated_claims(claims + new_claims, artifacts)
+                        assessment, assessment_warnings = _validate_assessment(
+                            assessment,
+                            task,
+                            claims,
+                            len(new_claims),
+                        )
+                        warnings.extend(assessment_warnings)
+                        candidate_assessments = assessment.candidates
+                        gaps = assessment.gaps
+                        await publisher.emit(
+                            BrowserActionTrace(
+                                event="decision",
+                                task_id=task.task_id,
+                                tab_id=artifact.tab_id,
+                                metadata={
+                                    "role": "assessor",
+                                    "question": "Is the evidence sufficient, what facts remain missing, and which candidate evidence supports each criterion?",
+                                    "state_ref": {
+                                        "artifact_id": artifact.artifact_id,
+                                        "source_url": artifact.url,
+                                    },
+                                    "options": {
+                                        "answerability": [
+                                            "sufficient",
+                                            "partial",
+                                            "insufficient",
+                                        ],
+                                        "next_action": [
+                                            "paginate",
+                                            "investigate",
+                                            "stop",
+                                        ],
+                                    },
+                                    "selected": assessment.model_dump(mode="json"),
+                                },
+                            ),
+                        )
+                        if assessment.answerability == "sufficient":
+                            stop_reason = "sufficient"
+                            break
+                        if assessment.next_action == "stop":
+                            stop_reason = "no_next_action"
+                            break
+
                 html = artifacts[0].text if artifacts else None
                 captured_urls = {
                     artifact.tab_id: artifact.url for artifact in artifacts

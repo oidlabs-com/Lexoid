@@ -2113,9 +2113,9 @@ async def test_orchestrator_captures_and_paginates_on_switched_active_tab(
         extractor_client=object(),
     )
 
-    assert captured_tab_ids == ["tab-listing"]
+    assert captured_tab_ids == ["tab-listing", "tab-seed"]
     assert advanced_tab_ids == ["tab-listing"]
-    assert settled_tab_ids == ["tab-listing"]
+    assert settled_tab_ids == ["tab-listing", "tab-seed"]
     task_result = result.task_results[0]
     expected_tabs = ["tab-seed"]
     if revisit_outcome in {"not_needed", "restored"}:
