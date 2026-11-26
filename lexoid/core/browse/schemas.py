@@ -506,7 +506,7 @@ class VerificationRequest(BaseModel):
     task_id: str = Field(min_length=1, max_length=128)
     tab_id: str = Field(min_length=1, max_length=128)
     url: str = Field(max_length=8_192)
-    provider: Literal["hcaptcha", "recaptcha"]
+    provider: Literal["hcaptcha", "recaptcha", "perimeterx", "turnstile", "datadome"]
 
 
 class BrowserActionTrace(BaseModel):

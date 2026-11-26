@@ -144,11 +144,12 @@ challenged page. If the page itself offers an observed skip, "not now", or
 continue-without-verification control that leaves the challenge unanswered, you
 may use it once; never interact with the challenge widget (checkbox, image
 tiles, audio, puzzle). If the challenge returns, treat the page as blocked.
-Tools detect hCaptcha and reCAPTCHA challenges after each action and return a
-`verification` field. When its status is required, follow the fallback rules
-above: switch only to a provider source_scope permits, else report blocked. When a
-person completed it, use the returned observation to check whether the
-requested results are already shown before repeating any submission.
+Tools detect hCaptcha, reCAPTCHA, PerimeterX, Turnstile, and DataDome challenges
+after each action and return a `verification` field. When its status is required,
+follow the fallback rules above: switch only to a provider source_scope permits,
+else report blocked. When a person completed it, use the returned observation to
+check whether the requested results are already shown before repeating any
+submission.
 An authorized alternative provider may be used without interacting with that
 challenge. If no permitted route remains, report blocked.
 If the browser action budget runs out, report budget_exhausted unless a separate

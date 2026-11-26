@@ -574,6 +574,62 @@ async def test_deadline_is_explicit_failure():
     assert record["error"]["type"] == "TimeoutError"
 
 
+@pytest.mark.parametrize(
+    ("flag_args", "expected"),
+    [([], True), (["--no-interactive-verification"], False)],
+)
+def test_run_cli_interactive_verification_default_and_override(
+    monkeypatch, flag_args, expected
+):
+    async def fake_run(args):
+        assert args.interactive_verification is expected
+        return False
+
+    monkeypatch.setattr(odysseys_judge, "run", fake_run)
+    monkeypatch.setattr(
+        sys, "argv", ["odysseys_judge", "run", "--output", "unused", *flag_args]
+    )
+    with pytest.raises(SystemExit) as exc:
+        odysseys_judge.main()
+    assert exc.value.code == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("headful", "cdp_url", "interactive", "expect_handler"),
+    [
+        (False, None, True, False),
+        (True, None, True, True),
+        (False, "http://127.0.0.1:9222", True, True),
+        (True, None, False, False),
+    ],
+)
+async def test_execute_task_attaches_verification_handler_when_visible(
+    headful, cdp_url, interactive, expect_handler
+):
+    captured = {}
+
+    async def browse(query, **kwargs):
+        captured.update(kwargs)
+        return model_dump({"answer": "A fact", "task_results": []})
+
+    args = argparse.Namespace(
+        model="model",
+        cdp_url=cdp_url,
+        headful=headful,
+        interactive_verification=interactive,
+        deadline=1,
+    )
+    await execute_task(task(), args, browse, object())
+
+    if expect_handler:
+        assert (
+            captured["on_verification_required"] is odysseys_judge._ask_person_to_verify
+        )
+    else:
+        assert "on_verification_required" not in captured
+
+
 @pytest.mark.live
 @pytest.mark.asyncio
 async def test_end_to_end(tmp_path):

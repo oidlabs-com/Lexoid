@@ -716,7 +716,11 @@ async def run_task(
                 # blocked or exhausted active-tab loop must not discard those pages.
                 captured_tab_ids = {artifact.tab_id for artifact in artifacts}
                 tabs = (
-                    await session.list_tabs() if hasattr(session, "list_tabs") else []
+                    await session.list_tabs()
+                    if not toolset.is_quarantined
+                    and stop_reason != "sufficient"
+                    and hasattr(session, "list_tabs")
+                    else []
                 )
                 for tab in tabs:
                     if len(artifacts) >= task.limits.max_pages:
@@ -755,12 +759,13 @@ async def run_task(
                             role_options=effective_assessor_options,
                         )
                         agent_usage = _add_usage(agent_usage, assess_usage)
+                        validated_new_claims = validated_claims(new_claims, artifacts)
                         claims = validated_claims(claims + new_claims, artifacts)
                         assessment, assessment_warnings = _validate_assessment(
                             assessment,
                             task,
                             claims,
-                            len(new_claims),
+                            len(new_claims) - len(validated_new_claims),
                         )
                         warnings.extend(assessment_warnings)
                         candidate_assessments = assessment.candidates

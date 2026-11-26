@@ -170,6 +170,19 @@ def select(args: argparse.Namespace) -> None:
     )
 
 
+async def _ask_person_to_verify(request: Any) -> bool:
+    """Wait for a person to complete a visible-browser verification challenge."""
+    prompt = (
+        f"Complete the {request.provider} check at {request.url}, "
+        "then press Enter (or type 'skip'): "
+    )
+    try:
+        response = await asyncio.to_thread(input, prompt)
+    except EOFError:
+        return False
+    return response.strip().lower() not in {"skip", "n", "no"}
+
+
 async def execute_task(
     task: dict[str, Any], args: argparse.Namespace, browse: Any, limits: Any
 ) -> dict[str, Any]:
@@ -199,6 +212,10 @@ async def execute_task(
             browse_kwargs["user_data_dir"] = args.user_data_dir
         if getattr(args, "channel", None) is not None:
             browse_kwargs["channel"] = args.channel
+        if getattr(args, "interactive_verification", True) and (
+            args.headful or args.cdp_url
+        ):
+            browse_kwargs["on_verification_required"] = _ask_person_to_verify
         async with asyncio.timeout(args.deadline):
             result = await browse(
                 task["confirmed_task"],
@@ -241,6 +258,10 @@ async def run(args: argparse.Namespace) -> bool:
             "limits": limits.model_dump(),
             "deadline_seconds": args.deadline,
             "headless": not args.headful,
+            "interactive_verification": bool(
+                getattr(args, "interactive_verification", True)
+                and (args.headful or args.cdp_url)
+            ),
             "browser_mode": (
                 "cdp"
                 if args.cdp_url
@@ -508,6 +529,12 @@ def main() -> None:
         help="Browser distribution channel (e.g. chrome, chromium, bundled)",
     )
     runner.add_argument("--headful", action="store_true")
+    runner.add_argument(
+        "--interactive-verification",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Pause for human verification in a visible browser (default: true)",
+    )
     runner.add_argument("--max-steps", type=positive_int, default=100)
     runner.add_argument("--max-steps-per-run", type=positive_int, default=20)
     runner.add_argument("--max-pages", type=positive_int, default=20)

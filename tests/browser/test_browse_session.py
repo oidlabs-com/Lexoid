@@ -950,14 +950,22 @@ class _FakeFrame:
 
 
 class _FakeVerificationPage(_FakeSnapshotPage):
-    def __init__(self, frames: list[_FakeFrame], solved: bool) -> None:
+    def __init__(
+        self,
+        frames: list[_FakeFrame],
+        solved: bool,
+        dom_provider: str | None = None,
+    ) -> None:
         super().__init__()
         self.frames = frames
         self.solved = solved
+        self.dom_provider = dom_provider
 
     async def evaluate(self, script: str, *args: object) -> object:
         if "captcha-response" in script:
             return self.solved
+        if "px-captcha-modal" in script:
+            return self.dom_provider
         return await super().evaluate(script, *args)
 
 
@@ -965,27 +973,36 @@ _HCAPTCHA = (
     "https://newassets.hcaptcha.com/captcha/v1/x/static/hcaptcha.html#frame={}&id=0"
 )
 _RECAPTCHA = "https://www.google.com/recaptcha/api2/{}?k=key&size={}"
+_TURNSTILE = "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/turnstile/if/ov2/av0/rcv0/0/key/auto/normal"
+_DATADOME = "https://geo.captcha-delivery.com/captcha/?initialCid=abc"
+_PERIMETERX = "https://captcha.px-cdn.net/PXd/captcha.html"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("frames", "solved", "expected"),
+    ("frames", "solved", "dom_provider", "expected"),
     [
-        ([_FakeFrame(_HCAPTCHA.format("challenge"))], True, "hcaptcha"),
-        ([_FakeFrame(_HCAPTCHA.format("challenge"), visible=False)], False, None),
-        ([_FakeFrame(_HCAPTCHA.format("checkbox"))], False, "hcaptcha"),
-        ([_FakeFrame(_HCAPTCHA.format("checkbox"))], True, None),
-        ([_FakeFrame(_RECAPTCHA.format("anchor", "invisible"))], False, None),
-        ([_FakeFrame(_RECAPTCHA.format("anchor", "normal"))], False, "recaptcha"),
-        ([_FakeFrame(_RECAPTCHA.format("bframe", "normal"))], True, "recaptcha"),
-        ([_FakeFrame("https://example.com/embed")], False, None),
+        ([_FakeFrame(_HCAPTCHA.format("challenge"))], True, None, "hcaptcha"),
+        ([_FakeFrame(_HCAPTCHA.format("challenge"), visible=False)], False, None, None),
+        ([_FakeFrame(_HCAPTCHA.format("checkbox"))], False, None, "hcaptcha"),
+        ([_FakeFrame(_HCAPTCHA.format("checkbox"))], True, None, None),
+        ([_FakeFrame(_RECAPTCHA.format("anchor", "invisible"))], False, None, None),
+        ([_FakeFrame(_RECAPTCHA.format("anchor", "normal"))], False, None, "recaptcha"),
+        ([_FakeFrame(_RECAPTCHA.format("bframe", "normal"))], True, None, "recaptcha"),
+        ([_FakeFrame(_TURNSTILE)], False, None, "turnstile"),
+        ([_FakeFrame(_TURNSTILE)], True, None, None),
+        ([_FakeFrame(_DATADOME)], False, None, "datadome"),
+        ([_FakeFrame(_PERIMETERX)], False, None, "perimeterx"),
+        ([_FakeFrame("about:blank")], False, "perimeterx", "perimeterx"),
+        ([_FakeFrame("about:blank")], False, "datadome", "datadome"),
+        ([_FakeFrame("https://example.com/embed")], False, None, None),
     ],
 )
 async def test_verification_challenge_reports_only_visible_unsolved_challenges(
-    frames, solved, expected
+    frames, solved, dom_provider, expected
 ):
     session = GhostBrowserSession(GhostConfig.from_kwargs(True))
-    session._owned_pages["tab-1"] = _FakeVerificationPage(frames, solved)
+    session._owned_pages["tab-1"] = _FakeVerificationPage(frames, solved, dom_provider)
 
     assert await session.verification_challenge("tab-1") == expected
 

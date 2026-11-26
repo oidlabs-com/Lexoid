@@ -364,11 +364,46 @@ _RECAPTCHA_HOSTS = {
     "recaptcha.net",
     "www.recaptcha.net",
 }
-# A solved hCaptcha/reCAPTCHA widget writes its token into this page-level field.
+_PERIMETERX_HOST_SUFFIXES = (".px-cdn.net", ".px-cloud.net", ".pxchk.net")
+_VERIFICATION_DOM_PROVIDERS = {"perimeterx", "datadome"}
+# Solved checkbox widgets write their token into one of these page-level fields.
 _VERIFICATION_SOLVED_JS = """
 () => Array.from(document.querySelectorAll(
-    'textarea[name="h-captcha-response"], textarea[name="g-recaptcha-response"]'
+    'textarea[name="h-captcha-response"], textarea[name="g-recaptcha-response"], input[name="cf-turnstile-response"]'
 )).some(field => field.value.trim().length > 0)
+"""
+# PerimeterX/DataDome modals may render in about:blank or same-origin frames.
+_VERIFICATION_DOM_JS = """
+() => {
+  const isVisible = (el) => {
+    if (!el) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+      return false;
+    }
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  if (
+    Array.from(
+      document.querySelectorAll(
+        '#px-captcha, #px-captcha-modal, iframe[id*="px-captcha"]'
+      )
+    ).some(isVisible)
+  ) {
+    return 'perimeterx';
+  }
+  if (
+    Array.from(
+      document.querySelectorAll(
+        '#dd-captcha-container, iframe[src*="captcha-delivery.com"]'
+      )
+    ).some(isVisible)
+  ) {
+    return 'datadome';
+  }
+  return null;
+}
 """
 
 
@@ -386,6 +421,16 @@ def _verification_frame(url: str) -> tuple[str, str] | None:
         # The invisible-mode badge is an anchor frame that never asks for input.
         if leaf == "anchor" and parse_qs(parsed.query).get("size") != ["invisible"]:
             return "recaptcha", "checkbox"
+    if host == "challenges.cloudflare.com" and (
+        "/cdn-cgi/challenge-platform/" in parsed.path or "/turnstile/" in parsed.path
+    ):
+        return "turnstile", "checkbox"
+    if (
+        host == "captcha-delivery.com" or host.endswith(".captcha-delivery.com")
+    ) and "/captcha/" in parsed.path:
+        return "datadome", "challenge"
+    if any(host.endswith(suffix) for suffix in _PERIMETERX_HOST_SUFFIXES):
+        return "perimeterx", "challenge"
     return None
 
 
@@ -623,13 +668,23 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             if kind == "challenge":
                 return provider
             unsolved_checkbox = provider
-        if unsolved_checkbox is None:
-            return None
+        if unsolved_checkbox is not None:
+            try:
+                solved = await page.evaluate(_VERIFICATION_SOLVED_JS)
+            except BrowserDriverError:
+                solved = False
+            if not solved:
+                return unsolved_checkbox
         try:
-            solved = await page.evaluate(_VERIFICATION_SOLVED_JS)
+            dom_provider = await page.evaluate(_VERIFICATION_DOM_JS)
         except BrowserDriverError:
-            solved = False
-        return None if solved else unsolved_checkbox
+            dom_provider = None
+        if (
+            isinstance(dom_provider, str)
+            and dom_provider in _VERIFICATION_DOM_PROVIDERS
+        ):
+            return dom_provider
+        return None
 
     async def tab(self, tab_id: str) -> OpenTab:
         """Return metadata for an active owned tab or raise ``TabGoneError``."""
