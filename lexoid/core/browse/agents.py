@@ -106,8 +106,11 @@ source_scope.mode is an enforced policy: for search_provider_only, use only
 the requested search provider(s), never a fallback provider, but observed direct
 result links may lead to external source pages. For domain_only, stay within the
 initially allowed domains and do not open external links. If a permitted source
-is blocked by CAPTCHA or remains inaccessible, do not bypass it or change scope;
-report the blocker and any evidence already collected.
+is blocked by CAPTCHA or remains inaccessible, do not bypass it or change scope.
+When the task needs several sites, a block on one site does not end the task:
+skip that site, continue with the remaining sites, and report blocked only when
+no remaining site can make progress; name each blocked site in report_outcome.
+Never retry a site listed in `blocked_sources`.
 When a target site is already in seed_urls or allowed_domains, navigate directly
 to its HTTPS root/seed URL and use its own navigation or on-site search rather
 than querying a general search engine for it, unless external search is
@@ -146,8 +149,9 @@ may use it once; never interact with the challenge widget (checkbox, image
 tiles, audio, puzzle). If the challenge returns, treat the page as blocked.
 Tools detect hCaptcha, reCAPTCHA, PerimeterX, Turnstile, and DataDome challenges
 after each action and return a `verification` field. When its status is required,
-follow the fallback rules above: switch only to a provider source_scope permits,
-else report blocked. When a person completed it, use the returned observation to
+continue with other sites the task needs, or follow the fallback rules above:
+switch only to a provider source_scope permits, else report blocked. When a
+person completed it, use the returned observation to
 check whether the requested results are already shown before repeating any
 submission.
 An authorized alternative provider may be used without interacting with that
@@ -268,7 +272,9 @@ supported with valid claim references. Additional candidates may be listed as
 incomplete; they do not invalidate enough qualifying candidates. List missing
 facts as concrete browsable evidence goals; never use
 "suitability unconfirmed" as a gap. Do not repeat URLs already captured or
-objectives already attempted.
+objectives already attempted. Never propose an objective on a domain listed in
+`blocked_sources`; when the task spans several sites, prefer an objective for a
+requested site or step that has no captured evidence yet.
 `navigator_report` is the navigator's account of how the current page was
 reached, such as the search query form used. Use it as context for judging
 result coverage and ordering, never as evidence for claims or hard filters.
@@ -351,6 +357,7 @@ class AssessorPriorContext(TypedDict):
     captured_urls: list[str]
     attempted_objectives: list[str]
     navigator_report: NotRequired[str]
+    blocked_sources: NotRequired[list[str]]
 
 
 def _next_claim_number(prior_claims: list[EvidenceClaim]) -> int:
@@ -776,6 +783,10 @@ async def navigate_with_tools(
             "planner_guidance": task.strategy.navigation_guidance,
             "planner_assumptions": task.strategy.assumptions,
             "unresolved_gaps": gaps or [],
+            "blocked_sources": [
+                item.model_dump(mode="json", include={"domain", "reason", "provider"})
+                for item in toolset.blocked_sources.values()
+            ],
             "investigation_reason": reason or "",
             "remaining_browser_actions": toolset.remaining_actions,
             "remaining_task_browser_actions": toolset.remaining_task_actions,
@@ -904,6 +915,9 @@ async def assess_page(
         "captured_urls": captured_urls,
         "attempted_objectives": attempted_objectives,
         "navigator_report": navigator_report,
+        "blocked_sources": (
+            prior_context.get("blocked_sources", []) if prior_context else []
+        ),
         "next_claim_id": f"claim-{_next_claim_number(prior_claims)}",
         "prior_gaps": prior_gaps,
         "new_artifact": {

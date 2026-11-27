@@ -759,6 +759,8 @@ async def test_action_is_denied_when_destination_cannot_be_verified():
         (None, ["hcaptcha"], "required"),
         (True, ["hcaptcha", None], "completed_by_user"),
         (True, ["hcaptcha"], "required"),
+        # The challenge disappears briefly, then returns after the page reloads.
+        (True, ["hcaptcha", None, "hcaptcha"], "required"),
         (False, ["hcaptcha", None], "required"),
         ("timeout", ["hcaptcha"], "required"),
     ],
@@ -770,6 +772,9 @@ async def test_action_hands_blocking_verification_to_person_or_blocks(
     from lexoid.core.browse.schemas import VerificationRequest
 
     monkeypatch.setattr(browse_tools, "_VERIFICATION_SETTLE_S", 0)
+    monkeypatch.setattr(browse_tools, "_VERIFICATION_POLL_S", 0)
+    monkeypatch.setattr(browse_tools, "_VERIFICATION_CLEAR_STABLE_S", 0.01)
+    monkeypatch.setattr(browse_tools, "_VERIFICATION_CLEAR_MAX_S", 0.2)
     snapshot = BrowserSnapshot(
         snapshot_id="snapshot-1",
         tab_id="tab-1",
@@ -851,17 +856,31 @@ async def test_action_hands_blocking_verification_to_person_or_blocks(
     if expected_status == "completed_by_user":
         assert "observation" in payload
         assert toolset.verification_required is None
+        assert toolset.blocked_sources == {}
         assert toolset.outcome is NavigationOutcome.UNKNOWN
     else:
         assert "observation" not in payload
         assert toolset.verification_required == "hcaptcha"
+        assert toolset.blocked_sources["example.test"].provider == "hcaptcha"
         assert toolset.outcome is NavigationOutcome.BLOCKED
         assert toolset.last_error_code is BrowseErrorCode.VERIFICATION_REQUIRED
         if handler_result == "timeout":
             assert "timed out after 1000 ms" in payload["verification"]["outcome"]
+        actions_before = toolset.action_count
+        retry = json.loads(await toolset.navigate("https://example.test/other"))
+        assert retry["error_code"] == BrowseErrorCode.SOURCE_BLOCKED.value
+        assert toolset.action_count == actions_before
+        assert toolset.has_unblocked_source() is False
         # A verified result reached another way, e.g. a fallback provider, clears it.
         await toolset.report_outcome("results_ready", "Case details")
         assert toolset.verification_required is None
+        # Progress elsewhere does not unblock the challenged source.
+        assert "example.test" in toolset.blocked_sources
+        prompts_before = len(requests)
+        if challenges[-1] is not None:
+            again = json.loads(await toolset.click("e1"))
+            assert again["verification"]["status"] == "required"
+            assert len(requests) == prompts_before
 
 
 @pytest.mark.asyncio
@@ -1836,6 +1855,162 @@ async def test_no_results_respects_assessment_and_actual_limits(
         else BrowseTerminalState.LIMIT_REACHED
     )
     assert task_result.plan_outcome.stop_reason == expected_stop
+
+
+@pytest.mark.asyncio
+async def test_leave_blocked_tab_switches_to_unblocked_allowlisted_tab():
+    class _Session(_FinalTabsMixin):
+        async def list_tabs(self):
+            return [
+                OpenTab(tab_id="tab-1", target_id="t1", url="https://b.test/blocked"),
+                OpenTab(tab_id="tab-2", target_id="t2", url="https://outside.test/"),
+                OpenTab(tab_id="tab-3", target_id="t3", url="https://a.test/item"),
+            ]
+
+        async def tab(self, tab_id):
+            return next(t for t in await self.list_tabs() if t.tab_id == tab_id)
+
+    async def emit(_trace):
+        return None
+
+    task = BrowseTask(
+        seed_urls=["https://a.test/"],
+        subject="subject",
+        allowed_domains=["a.test", "b.test"],
+    )
+    toolset = BrowserToolset(cast(Any, _Session()), task, "tab-1", emit)
+    await toolset.leave_blocked_tab()
+    assert toolset.tab_id == "tab-1"
+
+    toolset.record_blocked("https://b.test/blocked", "blocked")
+    await toolset.leave_blocked_tab()
+    assert toolset.tab_id == "tab-3"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "scenario,expected_objectives,expected_blocked,warning",
+    [
+        (
+            "continue",
+            [None, "Check B", "Check A detail"],
+            ["b.test"],
+            "skipping that source",
+        ),
+        (
+            "cap",
+            [None, "Check B", "Check C"],
+            ["b.test", "c.test"],
+            "continuing with evidence captured so far",
+        ),
+        ("repeat", [None, "Check B"], ["b.test"], "already blocked"),
+    ],
+)
+async def test_blocked_source_does_not_end_multi_site_task(
+    monkeypatch, scenario, expected_objectives, expected_blocked, warning
+):
+    from lexoid.core.browse import orchestrator
+    from lexoid.core.browse.schemas import EvidenceAssessment, PageArtifact
+
+    class _Session(_FinalTabsMixin):
+        current_url = "https://a.test/"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_):
+            return None
+
+        async def open_page(self, url):
+            return await self.tab("tab-1")
+
+        async def tab(self, tab_id):
+            return OpenTab(tab_id=tab_id, target_id="t1", url=self.current_url)
+
+        async def settle(self, tab_id):
+            return None
+
+    session = _Session()
+    monkeypatch.setattr(orchestrator, "GhostBrowserSession", lambda cfg: session)
+
+    async def observe(self):
+        return "{}"
+
+    monkeypatch.setattr(orchestrator.BrowserToolset, "observe", observe)
+    objectives: list[str | None] = []
+    destinations = {
+        "Check B": "https://b.test/blocked",
+        "Check C": "https://c.test/blocked",
+        "Check A detail": "https://a.test/detail",
+    }
+
+    async def navigate(_client, toolset, *_args, objective=None, **_kwargs):
+        objectives.append(objective)
+        toolset.begin_run()
+        toolset.action_count += 1
+        toolset.successful_action_count += 1
+        if objective is None:
+            return NavigationOutcome.RESULTS_READY, BrowseUsage()
+        session.current_url = destinations[objective]
+        if "/blocked" in session.current_url:
+            return NavigationOutcome.BLOCKED, BrowseUsage()
+        return NavigationOutcome.RESULTS_READY, BrowseUsage()
+
+    monkeypatch.setattr(orchestrator, "navigate_with_tools", navigate)
+
+    async def capture(_session, tab_id, index, _max_chars):
+        return PageArtifact(
+            artifact_id=f"artifact-{index}",
+            url=session.current_url,
+            tab_id=tab_id,
+            content_hash=f"hash-{index}",
+            text=f"Page {index}",
+        )
+
+    monkeypatch.setattr(orchestrator, "capture_page", capture)
+    next_objectives = {
+        "continue": ["Check B", "Check A detail", None],
+        "cap": ["Check B", "Check C", "Check A detail"],
+        "repeat": ["Check B", "Check B"],
+    }[scenario]
+    seen_blocked: list[list[str]] = []
+
+    async def assess(_client, _task, _artifact, *_args, prior_context, **_kwargs):
+        seen_blocked.append(prior_context["blocked_sources"])
+        objective = next_objectives.pop(0)
+        return (
+            EvidenceAssessment(
+                answerability="partial",
+                next_action="investigate" if objective else "stop",
+                objective=objective or "",
+            ),
+            [],
+            BrowseUsage(),
+        )
+
+    monkeypatch.setattr(orchestrator, "assess_page", assess)
+    task = BrowseTask(
+        seed_urls=["https://a.test/"],
+        subject="Compare items across sites",
+        allowed_domains=["a.test", "b.test", "c.test"],
+        limits=BrowseLimits(max_steps=10, max_pages=5),
+        retain_final_page=False,
+    )
+
+    result = await orchestrator.run_task(
+        task, navigator_client=object(), assessor_client=object()
+    )
+
+    task_result = result.task_results[0]
+    assert objectives == expected_objectives
+    assert [
+        source.domain for source in task_result.coverage.blocked_sources
+    ] == expected_blocked
+    assert task_result.coverage.stop_reason == "blocked"
+    assert task_result.status is BrowseTerminalState.LIMIT_REACHED
+    assert seen_blocked[0] == [] and seen_blocked[1] == ["b.test"]
+    assert any(warning in w for w in result.warnings)
+    assert any("Source b.test was not covered" in w for w in result.warnings)
 
 
 @pytest.mark.asyncio

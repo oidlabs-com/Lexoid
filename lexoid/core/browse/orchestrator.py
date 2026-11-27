@@ -10,6 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from lexoid.core.browse.agents import (
+    AssessorPriorContext,
     assess_page,
     extract_claims,
     navigate_with_tools,
@@ -26,6 +27,7 @@ from lexoid.core.browse.model_provider import ChatClient
 from lexoid.core.browse.policy import is_allowed_url
 from lexoid.core.browse.profiles import find_profile
 from lexoid.core.browse.schemas import (
+    BlockedSource,
     BrowserActionTrace,
     BrowseResult,
     BrowseTask,
@@ -52,6 +54,7 @@ from lexoid.core.ghost import GhostConfig, ghost_get_html
 from loguru import logger
 
 HtmlFetcher = Callable[[str, GhostConfig], tuple[str | None, dict[str, int]]]
+_MAX_CONSECUTIVE_BLOCKED_INVESTIGATIONS = 2
 
 
 def _add_usage(left: BrowseUsage, right: BrowseUsage) -> BrowseUsage:
@@ -61,6 +64,94 @@ def _add_usage(left: BrowseUsage, right: BrowseUsage) -> BrowseUsage:
         output=left.output + right.output,
         total=left.total + right.total,
     )
+
+
+async def _attribute_block(
+    session: GhostBrowserSession,
+    toolset: BrowserToolset,
+    outcome: NavigationOutcome,
+    *,
+    blocked_before: set[str],
+) -> None:
+    """Record the active tab's source when a blocked run named no source."""
+    if set(toolset.blocked_sources) - blocked_before:
+        return
+    try:
+        tab = await session.tab(toolset.tab_id)
+    except (TabGoneError, *BrowserDriverError):
+        return
+    toolset.record_blocked(tab.url, outcome.value)
+
+
+def _assessor_context(
+    artifacts: list[PageArtifact],
+    attempted_objectives: list[str],
+    toolset: BrowserToolset,
+) -> AssessorPriorContext:
+    return {
+        "captured_urls": [item.url for item in artifacts],
+        "attempted_objectives": list(attempted_objectives),
+        "navigator_report": toolset.outcome_evidence,
+        "blocked_sources": list(toolset.blocked_sources),
+    }
+
+
+async def _assess_artifact(
+    client: ChatClient,
+    role_options: dict[str, Any] | None,
+    task: BrowseTask,
+    artifact: PageArtifact,
+    artifacts: list[PageArtifact],
+    claims: list[EvidenceClaim],
+    gaps: list[str],
+    prior_context: AssessorPriorContext,
+    publisher: BrowseEventPublisher,
+) -> tuple[EvidenceAssessment, list[EvidenceClaim], list[str], BrowseUsage]:
+    """Assess one captured page and return the validated cumulative state."""
+    assessment, new_claims, usage = await assess_page(
+        client,
+        task,
+        artifact,
+        claims,
+        gaps,
+        prior_context=prior_context,
+        role_options=role_options,
+    )
+    validated_new_claims = validated_claims(new_claims, artifacts)
+    claims = validated_claims(claims + new_claims, artifacts)
+    assessment, assessment_warnings = _validate_assessment(
+        assessment,
+        task,
+        claims,
+        len(new_claims) - len(validated_new_claims),
+    )
+    await publisher.emit(
+        BrowserActionTrace(
+            event="decision",
+            task_id=task.task_id,
+            tab_id=artifact.tab_id,
+            metadata={
+                "role": "assessor",
+                "question": "Is the evidence sufficient, what facts remain missing, and which candidate evidence supports each criterion?",
+                "state_ref": {
+                    "artifact_id": artifact.artifact_id,
+                    "source_url": artifact.url,
+                },
+                "options": {
+                    "answerability": ["sufficient", "partial", "insufficient"],
+                    "next_action": ["paginate", "investigate", "stop"],
+                },
+                "selected": assessment.model_dump(mode="json"),
+            },
+        )
+    )
+    logger.debug(
+        "Browse task {} assessment after page {}: {}",
+        task.task_id,
+        len(artifacts),
+        assessment.model_dump(mode="json"),
+    )
+    return assessment, claims, assessment_warnings, usage
 
 
 def _validate_assessment(
@@ -347,6 +438,7 @@ async def run_task(
     retained_tabs: list[OpenTab] = []
     assessment: EvidenceAssessment | None = None
     verification_provider: str | None = None
+    blocked_sources: list[BlockedSource] = []
     url = task.seed_urls[0] if task.seed_urls else task.inferred_seeds[0].url
     if not task.seed_urls and task.inferred_seeds:
         warnings.append(
@@ -461,7 +553,7 @@ async def run_task(
                             "Navigator did not report a verified outcome; collected "
                             "page state may not reflect the requested search."
                         )
-                if toolset.is_quarantined:
+                if toolset.is_quarantined or not await toolset.ensure_live_tab():
                     navigation_outcome = NavigationOutcome.BLOCKED
                     current_tab = None
                 else:
@@ -502,18 +594,35 @@ async def run_task(
                         # Navigation self-reported blocked/timeout, but the page was
                         # reached; capture the reached page as evidence rather than
                         # discarding it based solely on model self-report.
-                        max_iterations = 1
+                        await _attribute_block(
+                            session, toolset, navigation_outcome, blocked_before=set()
+                        )
                         stop_reason = "blocked"
                         warnings.append(
                             f"Navigation reported {navigation_outcome.value}, but reached "
                             "page was captured for evidence assessment."
                         )
+                        if toolset.has_unblocked_source():
+                            max_iterations = task.limits.max_pages
+                            warnings.append(
+                                "Continuing with permitted sources that did not block "
+                                "access."
+                            )
+                        else:
+                            max_iterations = 1
                     else:
                         max_iterations = task.limits.max_pages
                         stop_reason = "budget_exhausted"
 
                     capture_outcome = navigation_outcome
+                    consecutive_blocked = 0
+                    blocked_objectives: set[str] = set()
+                    captured_tab_urls: dict[str, str] = {}
                     for index in range(max_iterations):
+                        if not await toolset.ensure_live_tab():
+                            stop_reason = "blocked"
+                            warnings.append("No open browser tab remained to capture.")
+                            break
                         current_tab = await session.tab(toolset.tab_id)
                         if not is_allowed_url(current_tab.url, task.allowed_domains):
                             logger.debug(
@@ -529,98 +638,90 @@ async def run_task(
                                 "Page capture skipped: current tab URL is outside the HTTPS task allowlist."
                             )
                             break
-                        artifact = await capture_page(
-                            session,
-                            toolset.tab_id,
-                            len(artifacts) + 1,
-                            task.limits.max_artifact_chars,
-                        )
-                        # A repeated page means capture stopped progressing, not
-                        # that it finished.
-                        if artifact.content_hash in seen_hashes:
-                            stop_reason = "no_progress"
-                            break
-                        seen_hashes.add(artifact.content_hash)
-                        artifacts.append(artifact)
-                        if effective_assessor_client is not None:
+                        # Pages the navigator left in other tabs are evidence too.
+                        capture_targets = [current_tab]
+                        if hasattr(session, "list_tabs"):
+                            capture_targets += [
+                                tab
+                                for tab in await session.list_tabs()
+                                if tab.tab_id != current_tab.tab_id
+                                and captured_tab_urls.get(tab.tab_id) != tab.url
+                                and is_allowed_url(tab.url, task.allowed_domains)
+                                and not toolset.is_blocked_url(tab.url)
+                            ]
+                        new_pages = 0
+                        assessed_sufficient = False
+                        for target in capture_targets:
+                            if len(artifacts) >= task.limits.max_pages:
+                                break
+                            is_active = target.tab_id == current_tab.tab_id
+                            try:
+                                if not is_active:
+                                    await session.settle(target.tab_id)
+                                artifact = await capture_page(
+                                    session,
+                                    target.tab_id,
+                                    len(artifacts) + 1,
+                                    task.limits.max_artifact_chars,
+                                )
+                            except (TabGoneError, *BrowserDriverError):
+                                if is_active:
+                                    raise
+                                continue
+                            captured_tab_urls[target.tab_id] = target.url
+                            # A repeated page means capture stopped progressing, not
+                            # that it finished.
+                            if artifact.content_hash in seen_hashes:
+                                continue
+                            seen_hashes.add(artifact.content_hash)
+                            artifacts.append(artifact)
+                            new_pages += 1
+                            if effective_assessor_client is None:
+                                continue
                             (
                                 assessment,
-                                new_claims,
+                                claims,
+                                assessment_warnings,
                                 assess_usage,
-                            ) = await assess_page(
+                            ) = await _assess_artifact(
                                 effective_assessor_client,
+                                effective_assessor_options,
                                 task,
                                 artifact,
+                                artifacts,
                                 claims,
                                 gaps,
-                                prior_context={
-                                    "captured_urls": [item.url for item in artifacts],
-                                    "attempted_objectives": list(attempted_objectives),
-                                    "navigator_report": toolset.outcome_evidence,
-                                },
-                                role_options=effective_assessor_options,
+                                _assessor_context(
+                                    artifacts, attempted_objectives, toolset
+                                ),
+                                publisher,
                             )
                             agent_usage = _add_usage(agent_usage, assess_usage)
-                            validated_new_claims = validated_claims(
-                                new_claims, artifacts
-                            )
-                            claims = validated_claims(claims + new_claims, artifacts)
-                            assessment, assessment_warnings = _validate_assessment(
-                                assessment,
-                                task,
-                                claims,
-                                len(new_claims) - len(validated_new_claims),
-                            )
                             warnings.extend(assessment_warnings)
                             candidate_assessments = assessment.candidates
                             gaps = assessment.gaps
-                            await publisher.emit(
-                                BrowserActionTrace(
-                                    event="decision",
-                                    task_id=task.task_id,
-                                    tab_id=artifact.tab_id,
-                                    metadata={
-                                        "role": "assessor",
-                                        "question": "Is the evidence sufficient, what facts remain missing, and which candidate evidence supports each criterion?",
-                                        "state_ref": {
-                                            "artifact_id": artifact.artifact_id,
-                                            "source_url": artifact.url,
-                                        },
-                                        "options": {
-                                            "answerability": [
-                                                "sufficient",
-                                                "partial",
-                                                "insufficient",
-                                            ],
-                                            "next_action": [
-                                                "paginate",
-                                                "investigate",
-                                                "stop",
-                                            ],
-                                        },
-                                        "selected": assessment.model_dump(mode="json"),
-                                    },
-                                )
-                            )
-                            logger.debug(
-                                "Browse task {} assessment after page {}: {}",
-                                task.task_id,
-                                len(artifacts),
-                                assessment.model_dump(mode="json"),
-                            )
                             if assessment.answerability == "sufficient":
-                                stop_reason = "sufficient"
+                                assessed_sufficient = True
                                 break
-                            if assessment.next_action == "stop":
-                                stop_reason = "no_next_action"
-                                break
+                        if assessed_sufficient:
+                            stop_reason = "sufficient"
+                            break
+                        if new_pages == 0:
+                            stop_reason = "no_progress"
+                            break
+                        if assessment is not None and assessment.next_action == "stop":
+                            stop_reason = "no_next_action"
+                            break
                         if (
                             assessment is None
                             and capture_outcome is NavigationOutcome.NO_RESULTS
                         ):
                             stop_reason = "no_next_action"
                             break
-                        if index == max_iterations - 1:
+                        if (
+                            index == max_iterations - 1
+                            or len(artifacts) >= task.limits.max_pages
+                        ):
                             if stop_reason != "blocked":
                                 stop_reason = "budget_exhausted"
                             break
@@ -645,6 +746,19 @@ async def run_task(
                                 )
                                 stop_reason = "no_next_action"
                                 break
+                            objective_key = " ".join(
+                                assessment.objective.lower().split()
+                            )
+                            if objective_key in blocked_objectives:
+                                warnings.append(
+                                    "Assessor repeated an objective that was already "
+                                    "blocked; stopping."
+                                )
+                                stop_reason = "blocked"
+                                break
+                            blocked_before = set(toolset.blocked_sources)
+                            if hasattr(session, "list_tabs"):
+                                await toolset.leave_blocked_tab()
                             fresh_observation = await toolset.observe()
                             (
                                 investigate_outcome,
@@ -681,11 +795,33 @@ async def run_task(
                                 # Investigation failed, but evidence captured so
                                 # far remains valid and must not be discarded.
                                 stop_reason = "blocked"
+                                if not toolset.is_quarantined:
+                                    await _attribute_block(
+                                        session,
+                                        toolset,
+                                        investigate_outcome,
+                                        blocked_before=blocked_before,
+                                    )
+                                    blocked_objectives.add(objective_key)
+                                    consecutive_blocked += 1
+                                if (
+                                    toolset.is_quarantined
+                                    or consecutive_blocked
+                                    >= _MAX_CONSECUTIVE_BLOCKED_INVESTIGATIONS
+                                    or not toolset.has_unblocked_source()
+                                ):
+                                    warnings.append(
+                                        f"Investigation objective reported {investigate_outcome.value}; "
+                                        "continuing with evidence captured so far."
+                                    )
+                                    break
                                 warnings.append(
                                     f"Investigation objective reported {investigate_outcome.value}; "
-                                    "continuing with evidence captured so far."
+                                    "skipping that source and continuing with other "
+                                    "permitted sources."
                                 )
-                                break
+                                continue
+                            consecutive_blocked = 0
                             if (
                                 investigate_outcome
                                 is NavigationOutcome.BUDGET_EXHAUSTED
@@ -727,7 +863,9 @@ async def run_task(
                         break
                     if tab.tab_id in captured_tab_ids:
                         continue
-                    if not is_allowed_url(tab.url, task.allowed_domains):
+                    if not is_allowed_url(
+                        tab.url, task.allowed_domains
+                    ) or toolset.is_blocked_url(tab.url):
                         continue
                     try:
                         await session.settle(tab.tab_id)
@@ -745,59 +883,26 @@ async def run_task(
                     captured_tab_ids.add(tab.tab_id)
                     artifacts.append(artifact)
                     if effective_assessor_client is not None:
-                        assessment, new_claims, assess_usage = await assess_page(
+                        (
+                            assessment,
+                            claims,
+                            assessment_warnings,
+                            assess_usage,
+                        ) = await _assess_artifact(
                             effective_assessor_client,
+                            effective_assessor_options,
                             task,
                             artifact,
+                            artifacts,
                             claims,
                             gaps,
-                            prior_context={
-                                "captured_urls": [item.url for item in artifacts],
-                                "attempted_objectives": list(attempted_objectives),
-                                "navigator_report": toolset.outcome_evidence,
-                            },
-                            role_options=effective_assessor_options,
+                            _assessor_context(artifacts, attempted_objectives, toolset),
+                            publisher,
                         )
                         agent_usage = _add_usage(agent_usage, assess_usage)
-                        validated_new_claims = validated_claims(new_claims, artifacts)
-                        claims = validated_claims(claims + new_claims, artifacts)
-                        assessment, assessment_warnings = _validate_assessment(
-                            assessment,
-                            task,
-                            claims,
-                            len(new_claims) - len(validated_new_claims),
-                        )
                         warnings.extend(assessment_warnings)
                         candidate_assessments = assessment.candidates
                         gaps = assessment.gaps
-                        await publisher.emit(
-                            BrowserActionTrace(
-                                event="decision",
-                                task_id=task.task_id,
-                                tab_id=artifact.tab_id,
-                                metadata={
-                                    "role": "assessor",
-                                    "question": "Is the evidence sufficient, what facts remain missing, and which candidate evidence supports each criterion?",
-                                    "state_ref": {
-                                        "artifact_id": artifact.artifact_id,
-                                        "source_url": artifact.url,
-                                    },
-                                    "options": {
-                                        "answerability": [
-                                            "sufficient",
-                                            "partial",
-                                            "insufficient",
-                                        ],
-                                        "next_action": [
-                                            "paginate",
-                                            "investigate",
-                                            "stop",
-                                        ],
-                                    },
-                                    "selected": assessment.model_dump(mode="json"),
-                                },
-                            ),
-                        )
                         if assessment.answerability == "sufficient":
                             stop_reason = "sufficient"
                             break
@@ -862,6 +967,7 @@ async def run_task(
                 else:
                     retained_tabs = []
                 verification_provider = toolset.verification_required
+                blocked_sources = list(toolset.blocked_sources.values())[:20]
                 usage = {"input": 0, "output": 0, "total": 0}
     except asyncio.CancelledError:
         logger.debug("Browse task {} cancelled", task.task_id)
@@ -926,7 +1032,9 @@ async def run_task(
                     status=task.status,
                     navigation_outcome=navigation_outcome,
                     site_profile_id=profile.profile_id if profile else None,
-                    coverage=CoverageReport(stop_reason=early_stop),
+                    coverage=CoverageReport(
+                        stop_reason=early_stop, blocked_sources=blocked_sources
+                    ),
                     trace=publisher.events,
                     usage=blocked_usage,
                     plan_outcome=plan_outcome,
@@ -1005,6 +1113,20 @@ async def run_task(
             f"The site required {verification_provider} human verification that was "
             "not completed; the requested lookup was not verified."
         )
+    for source in blocked_sources:
+        cause = (
+            f"{source.provider} human verification was not completed"
+            if source.provider
+            else f"navigation reported {source.reason}"
+        )
+        warnings.append(f"Source {source.domain} was not covered: {cause}.")
+    # A blocked source leaves the task incomplete unless the evidence suffices.
+    if blocked_sources and stop_reason != "sufficient":
+        stop_reason = (
+            "verification_required"
+            if any(source.provider for source in blocked_sources)
+            else "blocked"
+        )
     # Completeness must follow the executor's stop reason, never model narration.
     capture_complete = stop_reason == "sufficient" and not any(
         artifact.truncated for artifact in artifacts
@@ -1017,6 +1139,7 @@ async def run_task(
         artifacts_truncated=any(item.truncated for item in artifacts),
         validated_claims=len(claims),
         constraint_checks=verify_constraints(task.constraints.filters, claims),
+        blocked_sources=blocked_sources,
     )
     for check in coverage.constraint_checks:
         if not check.value_present:

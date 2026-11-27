@@ -31,6 +31,7 @@ class BrowseErrorCode(str, Enum):
     NAVIGATION_TIMEOUT = "navigation_timeout"
     MODEL_UNSUPPORTED = "model_unsupported"
     VERIFICATION_REQUIRED = "human_verification_required"
+    SOURCE_BLOCKED = "source_blocked"
 
 
 class NavigationOutcome(str, Enum):
@@ -169,6 +170,23 @@ class SynthesisAssessment(BaseModel):
     based_on_claim_ids: list[str] = Field(default_factory=list, max_length=100)
 
 
+VerificationProvider = Literal[
+    "hcaptcha", "recaptcha", "perimeterx", "turnstile", "datadome"
+]
+
+
+class BlockedSource(BaseModel):
+    """A source domain that stopped access during this task."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    domain: str = Field(min_length=1, max_length=253)
+    url: str = Field(max_length=8_192)
+    reason: Literal["verification_required", "blocked", "timeout"]
+    provider: VerificationProvider | None = None
+    detail: str = Field(default="", max_length=500)
+
+
 class CoverageReport(BaseModel):
     """Deterministic account of what was captured and what stayed unverified."""
 
@@ -190,6 +208,7 @@ class CoverageReport(BaseModel):
     constraint_checks: list[ConstraintCheck] = Field(
         default_factory=list, max_length=20
     )
+    blocked_sources: list[BlockedSource] = Field(default_factory=list, max_length=20)
 
 
 def is_reasoning_model(model: str) -> bool:
@@ -506,7 +525,7 @@ class VerificationRequest(BaseModel):
     task_id: str = Field(min_length=1, max_length=128)
     tab_id: str = Field(min_length=1, max_length=128)
     url: str = Field(max_length=8_192)
-    provider: Literal["hcaptcha", "recaptcha", "perimeterx", "turnstile", "datadome"]
+    provider: VerificationProvider
 
 
 class BrowserActionTrace(BaseModel):

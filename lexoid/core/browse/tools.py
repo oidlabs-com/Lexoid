@@ -15,9 +15,11 @@ from lexoid.core.browse.policy import (
     authorize,
     fallback_search_domains,
     is_allowed_url,
+    normalize_domain,
     search_discovery_domain,
 )
 from lexoid.core.browse.schemas import (
+    BlockedSource,
     BrowseErrorCode,
     BrowserAction,
     BrowserActionResult,
@@ -35,6 +37,9 @@ _MAX_OPEN_TABS = 10
 # Passive checks may clear on their own; give them one short chance first.
 _VERIFICATION_SETTLE_S = 3.0
 _VERIFICATION_POLL_S = 0.5
+# Challenges often reload the page after success; require a stable clear state.
+_VERIFICATION_CLEAR_STABLE_S = 2.0
+_VERIFICATION_CLEAR_MAX_S = 15.0
 
 
 def _contains_normalized(haystack: str, needle: str) -> bool:
@@ -148,6 +153,56 @@ class BrowserToolset:
         self.last_error_code: BrowseErrorCode | None = None
         # Provider of an uncompleted challenge; persists across navigator runs.
         self.verification_required: str | None = None
+        # Sources that stopped access, keyed by allowlist domain; never cleared by
+        # progress on another source.
+        self.blocked_sources: dict[str, BlockedSource] = {}
+
+    def source_domain(self, url: str) -> str:
+        """Return the allowlist domain covering a URL, else its bare host."""
+        matches = [
+            normalize_domain(domain)
+            for domain in self._task.allowed_domains
+            if is_allowed_url(url, [domain])
+        ]
+        if matches:
+            return max(matches, key=len)
+        return normalize_domain(url).removeprefix("www.")
+
+    def record_blocked(
+        self,
+        url: str,
+        reason: str,
+        *,
+        provider: str | None = None,
+        detail: str = "",
+    ) -> None:
+        """Remember that a source stopped access so it is not retried."""
+        domain = self.source_domain(url)
+        if not domain:
+            return
+        self.blocked_sources[domain] = BlockedSource.model_validate(
+            {
+                "domain": domain,
+                "url": url[:8_192],
+                "reason": reason,
+                "provider": provider,
+                "detail": detail[:500],
+            }
+        )
+
+    def is_blocked_url(self, url: str) -> bool:
+        """Return whether a URL belongs to a source that already blocked access."""
+        return bool(self.blocked_sources) and is_allowed_url(
+            url, list(self.blocked_sources)
+        )
+
+    def has_unblocked_source(self) -> bool:
+        """Return whether any allowlisted source has not blocked access."""
+        return any(
+            not self.is_blocked_url(f"https://{normalize_domain(domain)}/")
+            for domain in self._task.allowed_domains
+            if normalize_domain(domain)
+        )
 
     @property
     def fallback_search_domains(self) -> list[str]:
@@ -411,10 +466,14 @@ class BrowserToolset:
 
     async def navigate(self, url: str) -> str:
         """Navigate to an allowlisted URL only."""
+        if self.is_blocked_url(url):
+            return self._blocked_source_json(url)
         return await self._run(BrowserAction(kind="navigate", url=url))
 
     async def open_tab(self, url: str) -> str:
         """Open an allowlisted HTTPS URL in a new tab and switch to it."""
+        if self.is_blocked_url(url):
+            return self._blocked_source_json(url)
         tabs = await self._session.list_tabs()
         existing = next(
             (t for t in tabs if t.url.split("#")[0] == url.split("#")[0]), None
@@ -429,6 +488,47 @@ class BrowserToolset:
                 }
             )
         return await self._run(BrowserAction(kind="open_tab", url=url))
+
+    def _blocked_source_json(self, url: str) -> str:
+        domain = self.source_domain(url)
+        return json.dumps(
+            {
+                "success": False,
+                "error_code": BrowseErrorCode.SOURCE_BLOCKED.value,
+                "outcome": f"{domain} already blocked access in this task; do not "
+                "retry it. Continue with other permitted sources, or report the "
+                "block if none remain.",
+            }
+        )
+
+    async def ensure_live_tab(self) -> bool:
+        """Move off a closed or crashed active tab; return whether a live tab remains."""
+        if self._quarantined:
+            return False
+        try:
+            await self._get_tab_url(self._tab_id)
+            return True
+        except TabGoneError:
+            logger.warning("Active tab {} is gone; switching tabs", self._tab_id)
+            await self._handle_bad_tab(self._tab_id)
+            return not self._quarantined
+
+    async def leave_blocked_tab(self) -> None:
+        """Switch off a blocked source's tab to an open, unblocked allowlisted tab."""
+        if self._quarantined:
+            return
+        try:
+            if not self.is_blocked_url(await self._get_tab_url(self._tab_id)):
+                return
+        except TabGoneError:
+            pass
+        for tab in await self._session.list_tabs():
+            if is_allowed_url(
+                tab.url, self._task.allowed_domains
+            ) and not self.is_blocked_url(tab.url):
+                await self._activate(tab.tab_id)
+                self._snapshot = None
+                return
 
     async def list_tabs(self) -> str:
         """List active tabs to inspect open pages."""
@@ -519,6 +619,11 @@ class BrowserToolset:
         if reported in {NavigationOutcome.RESULTS_READY, NavigationOutcome.NO_RESULTS}:
             # A verified outcome, e.g. via a fallback provider, supersedes the block.
             self.verification_required = None
+        elif reported in {NavigationOutcome.BLOCKED, NavigationOutcome.TIMEOUT}:
+            blocked_url = await self._get_tab_url(self._tab_id)
+            # Keep a more specific verification record for the same source.
+            if self.source_domain(blocked_url) not in self.blocked_sources:
+                self.record_blocked(blocked_url, reported.value, detail=evidence)
         self.outcome = reported
         self.outcome_evidence = evidence[:1000]
         await self._emit(
@@ -834,6 +939,36 @@ class BrowserToolset:
             payload["observation"] = json.loads(await self.observe())
         return json.dumps(payload)
 
+    async def _challenge_cleared(
+        self, detect: Callable[[str], Awaitable[str | None]]
+    ) -> bool:
+        """Return whether the challenge stays gone after the page settles."""
+        deadline = time.monotonic() + _VERIFICATION_CLEAR_MAX_S
+        settle = getattr(self._session, "settle", None)
+        try:
+            if settle is not None:
+                await asyncio.wait_for(
+                    settle(self._tab_id), timeout=_VERIFICATION_CLEAR_MAX_S
+                )
+            clear_since: float | None = None
+            while True:
+                remaining = max(deadline - time.monotonic(), 0.1)
+                provider = await asyncio.wait_for(
+                    detect(self._tab_id), timeout=remaining
+                )
+                now = time.monotonic()
+                if provider is None:
+                    clear_since = now if clear_since is None else clear_since
+                    if now - clear_since >= _VERIFICATION_CLEAR_STABLE_S:
+                        return True
+                else:
+                    clear_since = None
+                if now >= deadline:
+                    return False
+                await asyncio.sleep(_VERIFICATION_POLL_S)
+        except TimeoutError:
+            return False
+
     async def _resolve_verification(self) -> dict[str, Any] | None:
         """Hand a blocking site challenge to a person, or block the task."""
         detect = getattr(self._session, "verification_challenge", None)
@@ -864,13 +999,15 @@ class BrowserToolset:
         )
         timeout_ms = self._task.limits.verification_timeout_ms
         verification_timed_out = False
-        if self._verification_handler is not None:
+        # A person already had their chance on this source; don't prompt again.
+        already_blocked = self.is_blocked_url(url)
+        if self._verification_handler is not None and not already_blocked:
             await self._activate(self._tab_id)
             try:
                 completed = await asyncio.wait_for(
                     self._verification_handler(request), timeout=timeout_ms / 1000
                 )
-                cleared = completed and await detect(self._tab_id) is None
+                cleared = completed and await self._challenge_cleared(detect)
             except TabGoneError:
                 return None
             except TimeoutError:
@@ -884,6 +1021,7 @@ class BrowserToolset:
                 cleared = False
             if cleared:
                 self.verification_required = None
+                self.blocked_sources.pop(self.source_domain(url), None)
                 self._snapshot = None
                 await self._emit(
                     BrowserActionTrace(
@@ -901,21 +1039,24 @@ class BrowserToolset:
                     "repeating any submission",
                 }
         self.verification_required = provider
+        self.record_blocked(url, "verification_required", provider=provider)
         self.outcome = NavigationOutcome.BLOCKED
         self.last_error_code = BrowseErrorCode.VERIFICATION_REQUIRED
+        next_step = (
+            "Do not interact with the challenge or retry this site. If the task "
+            "needs other sites, continue with them; otherwise use a permitted "
+            "alternative only if source_scope allows it, else call "
+            "report_outcome('blocked', ...)"
+        )
         if verification_timed_out:
             outcome = (
                 f"the human verification handler timed out after {timeout_ms} ms; "
-                "the challenge was not completed. Do not interact with the "
-                "challenge. Use a permitted alternative only if source_scope "
-                "allows it; otherwise call report_outcome('blocked', ...)"
+                f"the challenge was not completed. {next_step}"
             )
         else:
             outcome = (
-                "the site requires human verification that was not completed; "
-                "do not interact with the challenge. Use a permitted alternative "
-                "only if source_scope allows it; otherwise call "
-                "report_outcome('blocked', ...)"
+                "the site requires human verification that was not completed. "
+                f"{next_step}"
             )
         return {
             "status": "required",

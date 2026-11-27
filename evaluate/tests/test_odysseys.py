@@ -630,6 +630,28 @@ async def test_execute_task_attaches_verification_handler_when_visible(
         assert "on_verification_required" not in captured
 
 
+@pytest.mark.asyncio
+async def test_verification_prompt_stops_listening_after_timeout(monkeypatch):
+    read_fd, write_fd = os.pipe()
+    stdin = os.fdopen(read_fd)
+    monkeypatch.setattr(sys, "stdin", stdin)
+    request = types.SimpleNamespace(provider="perimeterx", url="https://x.test/")
+    try:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(
+                odysseys_judge._ask_person_to_verify(request), timeout=0.05
+            )
+        # A later prompt gets the next line; the timed-out one no longer listens.
+        os.write(write_fd, b"skip\n")
+        assert await odysseys_judge._ask_person_to_verify(request) is False
+        os.write(write_fd, b"\n")
+        assert await odysseys_judge._ask_person_to_verify(request) is True
+        os.close(write_fd)
+        assert await odysseys_judge._ask_person_to_verify(request) is False
+    finally:
+        stdin.close()
+
+
 @pytest.mark.live
 @pytest.mark.asyncio
 async def test_end_to_end(tmp_path):

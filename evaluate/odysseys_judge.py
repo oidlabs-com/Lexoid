@@ -170,6 +170,29 @@ def select(args: argparse.Namespace) -> None:
     )
 
 
+async def _read_line(prompt: str) -> str:
+    """Read one stdin line; cancellation stops listening instead of leaking a thread."""
+    loop = asyncio.get_running_loop()
+    try:
+        fd = sys.stdin.fileno()
+        line: asyncio.Future[str] = loop.create_future()
+
+        def on_ready() -> None:
+            if not line.done():
+                line.set_result(sys.stdin.readline())
+
+        loop.add_reader(fd, on_ready)
+    except (AttributeError, OSError, NotImplementedError, ValueError):
+        # No selectable stdin (e.g. Windows); a blocked input() thread cannot be killed.
+        response = await asyncio.to_thread(input, prompt)
+        return f"{response}\n"
+    try:
+        print(prompt, end="", flush=True)
+        return await line
+    finally:
+        loop.remove_reader(fd)
+
+
 async def _ask_person_to_verify(request: Any) -> bool:
     """Wait for a person to complete a visible-browser verification challenge."""
     prompt = (
@@ -177,8 +200,10 @@ async def _ask_person_to_verify(request: Any) -> bool:
         "then press Enter (or type 'skip'): "
     )
     try:
-        response = await asyncio.to_thread(input, prompt)
+        response = await _read_line(prompt)
     except EOFError:
+        return False
+    if not response:
         return False
     return response.strip().lower() not in {"skip", "n", "no"}
 
@@ -549,7 +574,7 @@ def main() -> None:
         default="claude-opus-5-5",
         help="Judge model, independent of browser model (default: claude-opus-5-5)",
     )
-    grader.add_argument("--max-evidence-chars", type=positive_int, default=200_000)
+    grader.add_argument("--max-evidence-chars", type=positive_int, default=400_000)
     args = parser.parse_args()
     if args.command == "select":
         select(args)

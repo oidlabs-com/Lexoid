@@ -366,6 +366,9 @@ _RECAPTCHA_HOSTS = {
 }
 _PERIMETERX_HOST_SUFFIXES = (".px-cdn.net", ".px-cloud.net", ".pxchk.net")
 _VERIFICATION_DOM_PROVIDERS = {"perimeterx", "datadome"}
+# Shared budget for one detection pass; calls are normally milliseconds, but a
+# wedged frame or slow challenge load must not stall every action.
+_VERIFICATION_CHECK_TIMEOUT_S = 10.0
 # Solved checkbox widgets write their token into one of these page-level fields.
 _VERIFICATION_SOLVED_JS = """
 () => Array.from(document.querySelectorAll(
@@ -434,6 +437,16 @@ def _verification_frame(url: str) -> tuple[str, str] | None:
     return None
 
 
+def _is_perimeterx_block_page(url: str, title: str) -> bool:
+    """Recognize a PerimeterX full-page block, e.g. ``/blocked?...&uuid=...``."""
+    parsed = urlparse(url)
+    if parsed.path.rstrip("/") == "/blocked" and {"uuid", "vid"} & set(
+        parse_qs(parsed.query)
+    ):
+        return True
+    return " ".join(title.split()).casefold() == "robot or human?"
+
+
 def _jitter_point(width: float, height: float) -> tuple[float, float]:
     """Pick a point near, but not exactly at, the center of a box."""
     return width * random.uniform(0.3, 0.7), height * random.uniform(0.3, 0.7)
@@ -465,6 +478,7 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         self._effective_mode: str = "fresh"
         self._effective_channel: str | None = None
         self._owned_pages: dict[str, object] = {}
+        self._crashed_pages: list[Any] = []
         self._retained_tabs: set[str] = set()
         self._revisions: dict[str, int] = {}
         self._snapshots: dict[str, BrowserSnapshot] = {}
@@ -568,7 +582,18 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         self._owned_pages[tid] = page
         self._revisions[tid] = 0
         page.on("popup", lambda popup: self._on_popup(tid, popup))
+        page.on("crash", lambda _page: self._on_crash(tid))
         return tid
+
+    def _on_crash(self, tab_id: str) -> None:
+        # A crashed page still reports is_closed() == False; drop it so callers see
+        # TabGoneError and move to another tab.
+        page = self._owned_pages.pop(tab_id, None)
+        self._revisions.pop(tab_id, None)
+        self._retained_tabs.discard(tab_id)
+        if page is not None:
+            self._crashed_pages.append(page)
+            logger.warning("Browser tab {} crashed; treating it as closed", tab_id)
 
     async def open_page(self, url: str) -> OpenTab:
         """Open and navigate a page without adopting user tabs."""
@@ -655,14 +680,22 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         if page is None or page.is_closed():
             raise TabGoneError(tab_id)
         unsolved_checkbox: str | None = None
+        deadline = time.monotonic() + _VERIFICATION_CHECK_TIMEOUT_S
+
+        async def bounded(awaitable):
+            return await asyncio.wait_for(
+                awaitable, max(deadline - time.monotonic(), 0.1)
+            )
+
         for frame in page.frames:
             match = _verification_frame(frame.url)
             if match is None:
                 continue
             try:
-                if not await (await frame.frame_element()).is_visible():
+                element = await bounded(frame.frame_element())
+                if not await bounded(element.is_visible()):
                     continue
-            except BrowserDriverError:
+            except (TimeoutError, *BrowserDriverError):
                 continue
             provider, kind = match
             if kind == "challenge":
@@ -670,14 +703,21 @@ class GhostBrowserSession(AbstractAsyncContextManager):
             unsolved_checkbox = provider
         if unsolved_checkbox is not None:
             try:
-                solved = await page.evaluate(_VERIFICATION_SOLVED_JS)
-            except BrowserDriverError:
+                solved = await bounded(page.evaluate(_VERIFICATION_SOLVED_JS))
+            except (TimeoutError, *BrowserDriverError):
                 solved = False
             if not solved:
                 return unsolved_checkbox
         try:
-            dom_provider = await page.evaluate(_VERIFICATION_DOM_JS)
-        except BrowserDriverError:
+            title = await bounded(page.title())
+        except (TimeoutError, *BrowserDriverError):
+            title = ""
+        if _is_perimeterx_block_page(page.url, title):
+            return "perimeterx"
+        try:
+            dom_provider = await bounded(page.evaluate(_VERIFICATION_DOM_JS))
+        except (TimeoutError, *BrowserDriverError):
+            logger.debug("Verification DOM check did not complete on tab {}", tab_id)
             dom_provider = None
         if (
             isinstance(dom_provider, str)
@@ -1210,6 +1250,13 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         for tab_id, page in list(self._owned_pages.items()):
             if tab_id not in self._retained_tabs and not page.is_closed():
                 await page.close()
+        for page in self._crashed_pages:
+            try:
+                if not page.is_closed():
+                    await page.close()
+            except BrowserDriverError as error:
+                logger.debug("Could not close crashed tab: {}", error)
+        self._crashed_pages.clear()
 
     async def advance_to_next_result_page(self, tab_id: str) -> bool:
         """Click a standard enabled next-page control, returning whether one existed."""

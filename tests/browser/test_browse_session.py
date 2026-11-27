@@ -17,6 +17,7 @@ from lexoid.core.browse.session import (
     _AD_SKIP_SELECTOR,
     BrowserDriverError,
     GhostBrowserSession,
+    TabGoneError,
 )
 from lexoid.core.browse.tools import BrowserToolset
 from lexoid.core.ghost import GhostConfig
@@ -1003,6 +1004,64 @@ async def test_verification_challenge_reports_only_visible_unsolved_challenges(
 ):
     session = GhostBrowserSession(GhostConfig.from_kwargs(True))
     session._owned_pages["tab-1"] = _FakeVerificationPage(frames, solved, dom_provider)
+
+    assert await session.verification_challenge("tab-1") == expected
+
+
+@pytest.mark.asyncio
+async def test_crashed_tab_is_treated_as_gone():
+    class _CrashablePage(_FakeSnapshotPage):
+        def __init__(self) -> None:
+            super().__init__()
+            self.handlers: dict[str, object] = {}
+            self.closed = False
+
+        def on(self, event: str, handler) -> None:
+            self.handlers[event] = handler
+
+        async def close(self) -> None:
+            self.closed = True
+
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _CrashablePage()
+    tab_id = session._register_page(page)
+    assert (await session.tab(tab_id)).url == page.url
+
+    page.handlers["crash"](page)
+
+    with pytest.raises(TabGoneError):
+        await session.tab(tab_id)
+    assert await session.list_tabs() == []
+    await session.cleanup()
+    assert page.closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("url", "title", "expected"),
+    [
+        (
+            "https://www.walmart.com/blocked?url=Lw==&uuid=abc&vid=def",
+            "Robot or human?",
+            "perimeterx",
+        ),
+        ("https://www.walmart.com/blocked?uuid=abc", "Walmart", "perimeterx"),
+        ("https://shop.example/page", "Robot or Human?", "perimeterx"),
+        ("https://shop.example/blocked", "Blocked numbers", None),
+    ],
+)
+async def test_verification_challenge_detects_perimeterx_block_page(
+    url, title, expected
+):
+    page = _FakeVerificationPage([], solved=False)
+    page.url = url
+
+    async def page_title() -> str:
+        return title
+
+    page.title = page_title
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    session._owned_pages["tab-1"] = page
 
     assert await session.verification_challenge("tab-1") == expected
 
