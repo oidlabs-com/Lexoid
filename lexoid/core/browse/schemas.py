@@ -313,7 +313,7 @@ class BrowseLimits(BaseModel):
 
     max_steps: int = Field(default=50, ge=1, le=150)
     max_steps_per_run: int = Field(default=20, ge=1, le=150)
-    max_pages: int = Field(default=5, ge=1, le=100)
+    max_pages: int = Field(default=10, ge=1, le=100)
     max_snapshot_chars: int = Field(default=20_000, ge=1_000, le=200_000)
     max_artifact_chars: int = Field(default=100_000, ge=1_000, le=2_000_000)
     timeout_ms: int = Field(default=60_000, ge=1_000, le=300_000)
