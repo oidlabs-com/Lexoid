@@ -196,7 +196,7 @@ def test_category_prefix_has_boundary():
 
 
 @pytest.mark.parametrize(
-    ("model_args", "expected"), [([], "gpt-6.2-sol"), (["--model", "custom"], "custom")]
+    ("model_args", "expected"), [([], None), (["--model", "custom"], "custom")]
 )
 def test_run_cli_model_default_and_override(monkeypatch, model_args, expected):
     async def fake_run(args):

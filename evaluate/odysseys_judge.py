@@ -21,6 +21,7 @@ from loguru import logger
 
 CATEGORIES = ("Ecommerce & Shopping", "Law and Government")
 DEFAULT_INPUT = Path("evaluate/data/odysseys.json")
+DEFAULT_BROWSER_MODEL = "gpt-6.2-sol"
 DEFAULT_PROFILE_DIR = Path(
     os.getenv(
         "ODYSSEYS_SMOKE_PROFILE_DIR",
@@ -129,6 +130,36 @@ def selection_digest(selection: dict[str, Any]) -> str:
     ).hexdigest()
 
 
+def resolve_browse_model_config(model: str | None, config_path: Path | None) -> Any:
+    """Resolve the browser model shorthand or validate a Lexoid model config file."""
+    from lexoid.core.browse.schemas import BrowseModelConfig
+    from pydantic import ValidationError
+
+    if config_path is None:
+        return BrowseModelConfig(default=model or DEFAULT_BROWSER_MODEL)
+
+    try:
+        config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise ValueError(
+            f"Could not read browser model config {config_path}: {error}"
+        ) from error
+    except json.JSONDecodeError as error:
+        raise ValueError(
+            f"Invalid JSON in browser model config {config_path}: {error}"
+        ) from error
+    if not isinstance(config_data, dict):
+        raise TypeError(
+            f"Browser model config {config_path} must contain a JSON object"
+        )
+    try:
+        return BrowseModelConfig.model_validate(config_data)
+    except ValidationError as error:
+        raise ValueError(
+            f"Invalid browser model config {config_path}: {error}"
+        ) from error
+
+
 def load_selection(args: argparse.Namespace) -> dict[str, Any]:
     raw = args.input.read_bytes()
     categories: list[str] = (
@@ -209,7 +240,11 @@ async def _ask_person_to_verify(request: Any) -> bool:
 
 
 async def execute_task(
-    task: dict[str, Any], args: argparse.Namespace, browse: Any, limits: Any
+    task: dict[str, Any],
+    args: argparse.Namespace,
+    browse: Any,
+    limits: Any,
+    model_config: Any | None = None,
 ) -> dict[str, Any]:
     events: list[dict[str, Any]] = []
 
@@ -227,7 +262,7 @@ async def execute_task(
     started = time.monotonic()
     try:
         browse_kwargs: dict[str, Any] = {
-            "model_config": args.model,
+            "model_config": model_config if model_config is not None else args.model,
             "cdp_url": args.cdp_url,
             "headless": not args.headful,
             "limits": limits,
@@ -266,6 +301,10 @@ async def run(args: argparse.Namespace) -> bool:
     from lexoid.api import browse
     from lexoid.core.browse.schemas import BrowseLimits
 
+    model_config = resolve_browse_model_config(
+        args.model, getattr(args, "model_config_file", None)
+    )
+
     limits = BrowseLimits(
         max_steps=args.max_steps,
         max_steps_per_run=args.max_steps_per_run,
@@ -279,7 +318,8 @@ async def run(args: argparse.Namespace) -> bool:
             "format_version": 1,
             "started_at": timestamp(),
             "selection_sha256": selection_digest(selection),
-            "model": args.model,
+            "model": model_config.default_model,
+            "model_config": model_config.model_dump(mode="json", exclude_none=True),
             "limits": limits.model_dump(),
             "deadline_seconds": args.deadline,
             "headless": not args.headful,
@@ -299,7 +339,7 @@ async def run(args: argparse.Namespace) -> bool:
     failed = False
     for index, task in enumerate(tasks, 1):
         print(f"[{index}/{len(tasks)}] {task['task_id']}", flush=True)
-        record = await execute_task(task, args, browse, limits)
+        record = await execute_task(task, args, browse, limits, model_config)
         write_json(args.output / "tasks" / f"{task['task_id']}.json", record)
         failed |= record["status"] == "error"
     return failed
@@ -537,10 +577,16 @@ def main() -> None:
             help="Select from filtered tasks in dataset order (default: all; zero-based, stop excluded)",
         )
     runner.add_argument("--output", type=Path, required=True, help="New run directory")
-    runner.add_argument(
+    model_group = runner.add_mutually_exclusive_group()
+    model_group.add_argument(
         "--model",
-        default="gpt-6.2-sol",
-        help="Lexoid browse model (default: %(default)s)",
+        help=f"Lexoid browse model for all roles (default: {DEFAULT_BROWSER_MODEL})",
+    )
+    model_group.add_argument(
+        "--model-config",
+        dest="model_config_file",
+        type=Path,
+        help="JSON file with per-role model, reasoning, and options settings",
     )
     runner.add_argument("--cdp-url")
     runner.add_argument(
