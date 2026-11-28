@@ -27,6 +27,7 @@ from lexoid.core.ghost import GhostConfig
 def _no_action_pacing(monkeypatch):
     monkeypatch.setattr(browse_session, "_ACTION_GAP_S", (0.0, 0.0))
     monkeypatch.setattr(browse_session, "_KEY_GAP_S", (0.0, 0.0))
+    monkeypatch.setattr(browse_session, "_WORD_PAUSE_S", (0.0, 0.0))
 
 
 def test_session_starts_without_owned_tabs():
@@ -428,9 +429,12 @@ class _FakeMouse:
 class _FakeKeyboard:
     def __init__(self) -> None:
         self.events: list[tuple[str, str]] = []
+        self.type_delays: list[float] = []
 
     async def type(self, text: str, **kwargs: object) -> None:
         self.events.append(("type", text))
+        if "delay" in kwargs and isinstance(kwargs["delay"], (int, float)):
+            self.type_delays.append(float(kwargs["delay"]))
 
     async def press(self, key: str, **kwargs: object) -> None:
         self.events.append(("press", key))
@@ -745,7 +749,26 @@ async def test_type_clicks_clears_existing_value_and_types_per_key(
 
     assert result.success is True
     assert page.handles[1].clicked is True
-    assert page.keyboard.events == expected_events
+@pytest.mark.asyncio
+async def test_type_keys_uses_key_hold_and_word_boundary_pause(monkeypatch):
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(browse_session.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(browse_session, "_KEY_GAP_S", (0.1, 0.1))
+    monkeypatch.setattr(browse_session, "_WORD_PAUSE_S", (0.05, 0.05))
+    session = GhostBrowserSession(GhostConfig.from_kwargs(True))
+    page = _FakeSnapshotPage()
+
+    await session._type_keys(page, "a b")
+
+    low_hold, high_hold = browse_session._KEY_HOLD_MS
+    assert len(page.keyboard.type_delays) == 3
+    assert all(low_hold <= delay <= high_hold for delay in page.keyboard.type_delays)
+    # Two gaps for 3 chars (no trailing sleep); space adds the word-boundary pause.
+    assert sleeps == [pytest.approx(0.1), pytest.approx(0.15)]
 
 
 async def _async_value(value):

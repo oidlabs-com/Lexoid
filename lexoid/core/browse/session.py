@@ -50,10 +50,12 @@ _ACTION_TIMEOUT_MS = 10_000
 # Minimum randomized gap between consecutive page actions to avoid burst patterns.
 _ACTION_GAP_S = (0.8, 1.5)
 # Human-like input: pointer travel in interpolated steps, a short button hold,
-# and per-key gaps instead of instant value injection.
+# and per-key hold + inter-key/word gaps (~80-120 WPM) instead of instant injection.
 _POINTER_STEPS = (8, 20)
 _PRESS_MS = (40.0, 110.0)
-_KEY_GAP_S = (0.04, 0.12)
+_KEY_HOLD_MS = (30.0, 75.0)
+_KEY_GAP_S = (0.06, 0.14)
+_WORD_PAUSE_S = (0.04, 0.12)
 _YOUTUBE_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com"}
 _AD_SKIP_SELECTOR = (
     "#movie_player.ad-showing button:is(.ytp-skip-ad-button, "
@@ -1020,10 +1022,15 @@ class GhostBrowserSession(AbstractAsyncContextManager):
         )
 
     async def _type_keys(self, page, text: str) -> None:
-        """Type into the focused element one key at a time."""
-        for char in text:
-            await page.keyboard.type(char)
-            await asyncio.sleep(random.uniform(*_KEY_GAP_S))
+        """Type into the focused element one key at a time with human-like pacing."""
+        last = len(text) - 1
+        for index, char in enumerate(text):
+            await page.keyboard.type(char, delay=random.uniform(*_KEY_HOLD_MS))
+            if index < last:
+                gap = random.uniform(*_KEY_GAP_S)
+                if char == " ":
+                    gap += random.uniform(*_WORD_PAUSE_S)
+                await asyncio.sleep(gap)
 
     async def _replace_text(self, page, handle, text: str) -> None:
         """Focus by clicking, clear any existing value, then type the new value."""
